@@ -72,11 +72,6 @@ class ChatsRepository {
                     }
                 }
             }
-            val lastMsg = chatEntity.lastMessageId?.let { 
-                // We might not have the full message object easily, let's try to get it from messageDao
-                // For now, if it's missing from messageDao, we'll just have null last message in UI until sync
-                null // simplified for now, as we want to focus on structure
-            }
             // Actually, we can get the last message directly from messageDao for this chat
             val realLastMsg = messageDao.getLastMessageForChat(chatEntity.id)?.toMessage()
             val decryptedLastMsg = realLastMsg?.let { com.example.util.CryptoManager.decryptMessageIfNeeded(it) }
@@ -88,11 +83,11 @@ class ChatsRepository {
                 unreadCount = chatEntity.unreadCount
             ))
         }
-            localList.sortWith(
-                compareByDescending<ChatWithDetails> { it.chat.isPinned }
-                    .thenByDescending { it.chat.pinnedAt ?: "" }
-                    .thenByDescending { it.lastMessage?.createdAt ?: it.chat.createdAt ?: "" }
-            )
+        localList.sortWith(
+            compareByDescending<ChatWithDetails> { it.chat.isPinned }
+                .thenByDescending { it.chat.pinnedAt ?: "" }
+                .thenByDescending { it.lastMessage?.createdAt ?: it.chat.createdAt ?: "" }
+        )
 
         if (!SupabaseClient.isConfigured) {
             if (localList.isEmpty()) {
@@ -128,14 +123,21 @@ class ChatsRepository {
             return@withContext Result.success(localList)
         }
 
+        return@withContext Result.success(localList)
+    }
+
+    suspend fun syncChatsWithSupabase(): Result<Unit> = withContext(Dispatchers.IO) {
+        val currentUid = SupabaseClient.currentUser?.id ?: return@withContext Result.failure(Exception("Not authenticated"))
+        if (!SupabaseClient.isConfigured) return@withContext Result.success(Unit)
+
         try {
-            val service = SupabaseClient.apiService ?: return@withContext Result.success(localList)
+            val service = SupabaseClient.apiService ?: return@withContext Result.failure(Exception("Supabase not configured"))
             SessionManager.validateAndRefreshSessionIfNeeded()
-            var token = SupabaseClient.currentToken ?: return@withContext Result.success(localList)
+            var token = SupabaseClient.currentToken ?: return@withContext Result.failure(Exception("Not authenticated"))
             var bearer = "Bearer $token"
             val apiKey = SupabaseClient.supabaseAnonKey
 
-            suspend fun <R> runCall(call: suspend (String) -> retrofit2.Response<R>): retrofit2.Response<R>? {
+            suspend fun <R> runCallLocal(call: suspend (String) -> retrofit2.Response<R>): retrofit2.Response<R>? {
                 var response = try {
                     call(bearer)
                 } catch (e: Exception) {
@@ -159,11 +161,11 @@ class ChatsRepository {
             }
 
             // Load from network
-            val threadsResponse = runCall { b ->
+            val threadsResponse = runCallLocal { b ->
                 service.getOneToOneThreads(apiKey = apiKey, authorization = b, orFilter = "(user_a.eq.$currentUid,user_b.eq.$currentUid)")
             }
 
-            val membersResponse = runCall { b ->
+            val membersResponse = runCallLocal { b ->
                 service.getChatMembers(apiKey = apiKey, authorization = b, userIdFilter = "eq.$currentUid")
             }
             val membersMap = membersResponse?.body()?.associateBy { it.chatId } ?: emptyMap()
@@ -197,7 +199,6 @@ class ChatsRepository {
                     emptyMap()
                 }
 
-                val finalList = mutableListOf<ChatWithDetails>()
                 for (thread in threads) {
                     val myMember = membersMap[thread.id]
                     if (myMember?.isHidden == true) {
@@ -213,7 +214,7 @@ class ChatsRepository {
                     val otherMemberId = if (thread.userA == currentUid) thread.userB else thread.userA
                     val otherProfile = profilesMap[otherMemberId]
 
-                    val msgResponse = runCall { b -> service.getThreadMessages(apiKey = apiKey, authorization = b, threadIdFilter = "eq.${thread.id}", order = "created_at.desc", limit = 1) }
+                    val msgResponse = runCallLocal { b -> service.getThreadMessages(apiKey = apiKey, authorization = b, threadIdFilter = "eq.${thread.id}", order = "created_at.desc", limit = 1) }
                     val lastMsg = if (msgResponse != null && msgResponse.isSuccessful && !msgResponse.body().isNullOrEmpty()) {
                         val msg = msgResponse.body()!![0].toMessage()
                         val msgsRepo = com.example.data.repository.MessagesRepository.getInstance()
@@ -246,27 +247,18 @@ class ChatsRepository {
                     val isPinned = myMember?.isPinned == true || (localChatEntity?.isPinned == true)
                     val pinnedAt = myMember?.pinnedAt ?: localChatEntity?.pinnedAt
                     val chat = thread.toChat(isMuted = isMuted, isPinned = isPinned, pinnedAt = pinnedAt)
-                    val decryptedLastMsg = lastMsg?.let { com.example.util.CryptoManager.decryptMessageIfNeeded(it) }
-                    finalList.add(ChatWithDetails(chat, otherProfile, decryptedLastMsg, unreadCount))
 
                     // Sync to DB
                     chatDao.insertChat(ChatEntity.fromChat(chat, otherMemberId, lastMsg?.id, unreadCount))
                     otherProfile?.let { profileDao.insertProfile(com.example.data.database.ProfileEntity.fromProfile(it)) }
                 }
-
-                finalList.sortWith(
-                    compareByDescending<ChatWithDetails> { it.chat.isPinned }
-                        .thenByDescending { it.chat.pinnedAt ?: "" }
-                        .thenByDescending { it.lastMessage?.createdAt ?: it.chat.createdAt ?: "" }
-                )
-                return@withContext Result.success(finalList)
+                Result.success(Unit)
+            } else {
+                Result.failure(Exception("Sync failed: Threads query unsuccessful"))
             }
-
-            // If network failed, return local list
-            Result.success(localList)
         } catch (e: Exception) {
-            Log.e(TAG, "getChatsWithDetails exception", e)
-            Result.success(localList)
+            Log.e(TAG, "syncChatsWithSupabase exception", e)
+            Result.failure(e)
         }
     }
 

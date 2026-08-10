@@ -161,11 +161,12 @@ class ChatsViewModel(
                         }
                     }
                     val lastMsg = messageDao.getMessagesForChat(chatEntity.id).maxByOrNull { it.createdAt }?.toMessage()
+                    val decryptedLastMsg = lastMsg?.let { com.example.util.CryptoManager.decryptMessageIfNeeded(it) }
                     
                     ChatWithDetails(
                         chat = chatEntity.toChat(),
                         otherMember = otherProfile,
-                        lastMessage = lastMsg,
+                        lastMessage = decryptedLastMsg,
                         unreadCount = chatEntity.unreadCount
                     )
                 }.sortedWith(
@@ -193,27 +194,31 @@ class ChatsViewModel(
         isChatsLoading = true
         observeLocalChats()
         
-        // Read from cache immediately for Instant-On / Offline-first experience
-        val cached = com.example.data.supabase.SessionManager.getCacheList("cached_chats", ChatWithDetails::class.java)
-        if (cached.isNotEmpty() && _chatsState.value !is ChatsUiState.Success) {
-            _chatsState.value = ChatsUiState.Success(cached)
-        } else if (_chatsState.value !is ChatsUiState.Success) {
+        if (_chatsState.value !is ChatsUiState.Success) {
             _chatsState.value = ChatsUiState.Loading
         }
 
         viewModelScope.launch(exceptionHandler) {
+            // First, load chats from local Room immediately to keep UI response instant-on
             chatsRepository.getChatsWithDetails()
-                .onSuccess { details ->
-                    _chatsState.value = ChatsUiState.Success(details)
-                    isChatsLoading = false
+                .onSuccess { localDetails ->
+                    if (_chatsState.value !is ChatsUiState.Success) {
+                        _chatsState.value = ChatsUiState.Success(localDetails)
+                    }
                 }
                 .onFailure { error ->
                     if (_chatsState.value !is ChatsUiState.Success) {
-                        // Silently fail to an empty list instead of showing a red error string to the user
                         _chatsState.value = ChatsUiState.Success(emptyList())
-                    } else {
-                        android.util.Log.e("ChatsViewModel", "Background refresh chats failed", error)
                     }
+                }
+
+            // Second, execute background sync with Supabase asynchronously
+            chatsRepository.syncChatsWithSupabase()
+                .onSuccess {
+                    isChatsLoading = false
+                }
+                .onFailure { error ->
+                    android.util.Log.e("ChatsViewModel", "Background refresh chats failed", error)
                     isChatsLoading = false
                 }
         }
