@@ -3334,6 +3334,7 @@ fun ContactsTabContent(
         }
         is ContactsUiState.Success -> {
             val contacts = contactsState.contacts
+            android.util.Log.d("CONTACTS_DEBUG", "cantidad finalmente mostrada por la UI: ${contacts.size}")
             val requestsState by chatsViewModel.friendRequestsState.collectAsState()
 
             LazyColumn(modifier = Modifier.fillMaxSize()) {

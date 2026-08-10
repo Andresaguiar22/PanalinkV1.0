@@ -227,6 +227,7 @@ class ChatsViewModel(
                 .onSuccess { list ->
                     com.example.data.supabase.SessionManager.saveCacheList("cached_contacts", list, Profile::class.java)
                     _contactsState.value = ContactsUiState.Success(list)
+                    android.util.Log.d("CONTACTS_DEBUG", "ChatsViewModel: _contactsState updated with ${list.size} contacts")
                     isContactsLoading = false
                 }
                 .onFailure { error ->

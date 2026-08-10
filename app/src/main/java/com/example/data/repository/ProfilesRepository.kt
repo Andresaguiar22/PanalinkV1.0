@@ -489,12 +489,28 @@ class ProfilesRepository {
     }
 
     suspend fun getMyContacts(forceRefresh: Boolean = false): Result<List<Profile>> = withContext(Dispatchers.IO) {
-        val currentUid = SupabaseClient.currentUser?.id ?: return@withContext Result.failure(Exception("Not authenticated"))
-        
+        val currentUid = SupabaseClient.currentUser?.id ?: run {
+            Log.d("CONTACTS_DEBUG", "[CONTACTS_DEBUG_START]")
+            Log.d("CONTACTS_DEBUG", "currentUserId: NULL (Not authenticated)")
+            Log.d("CONTACTS_DEBUG", "[CONTACTS_DEBUG_END]")
+            return@withContext Result.failure(Exception("Not authenticated"))
+        }
+
+        Log.d("CONTACTS_DEBUG", "[CONTACTS_DEBUG_START]")
+        Log.d("CONTACTS_DEBUG", "currentUserId: $currentUid")
+        Log.d("CONTACTS_DEBUG", "forceRefresh: $forceRefresh")
+
         if (!forceRefresh) {
             val cached = SessionManager.getCacheList("cached_contacts", Profile::class.java)
             if (cached.isNotEmpty()) {
                 Log.d(TAG, "getMyContacts: Returning ${cached.size} cached contacts")
+                Log.d("CONTACTS_DEBUG", "Returned from cache! Cached contacts count: ${cached.size}")
+                for (contact in cached) {
+                    val finalAvatarUrl = CdnManager.resolveAvatarUrl(contact.avatarUrl)
+                    Log.d("CONTACTS_DEBUG", "Cached contact detail -> contact_user_id: ${contact.id}, resolvedDisplayName: ${contact.displayName}, raw avatar_url: ${contact.avatarUrl}, avatar URL final: $finalAvatarUrl")
+                }
+                Log.d("CONTACTS_DEBUG", "cantidad final entregada al ViewModel: ${cached.size}")
+                Log.d("CONTACTS_DEBUG", "[CONTACTS_DEBUG_END]")
                 return@withContext Result.success(cached)
             }
         }
@@ -502,16 +518,33 @@ class ProfilesRepository {
         if (!SupabaseClient.isConfigured) {
             delay(500)
             val results = SupabaseClient.demoProfiles.values.filter { it.id != currentUid }
+            Log.d("CONTACTS_DEBUG", "Supabase not configured, returning demo profiles count: ${results.size}")
+            Log.d("CONTACTS_DEBUG", "[CONTACTS_DEBUG_END]")
             return@withContext Result.success(results)
         }
         try {
-            val service = SupabaseClient.apiService ?: return@withContext Result.failure(Exception("Supabase not configured"))
+            val service = SupabaseClient.apiService ?: run {
+                Log.d("CONTACTS_DEBUG", "Supabase apiService is NULL")
+                Log.d("CONTACTS_DEBUG", "[CONTACTS_DEBUG_END]")
+                return@withContext Result.failure(Exception("Supabase not configured"))
+            }
             val apiKey = SupabaseClient.supabaseAnonKey
 
             val response = runCall { b -> service.getContactsWithProfiles(apiKey, b, ownerFilter = "eq.$currentUid") }
-            if (response != null && response.isSuccessful) {
-                val data = response.body() ?: emptyList()
+            val statusCode = response?.code() ?: -1
+            val isSuccess = response != null && response.isSuccessful
+            Log.d("CONTACTS_DEBUG", "HTTP status de la petición contacts: $statusCode")
+
+            if (isSuccess) {
+                val data = response!!.body() ?: emptyList()
                 Log.d(TAG, "getMyContacts: Fetched ${data.size} contacts from server")
+                Log.d("CONTACTS_DEBUG", "cantidad de contactos recibidos de Supabase: ${data.size}")
+                Log.d("CONTACTS_DEBUG", "cantidad de contactos antes de mapear: ${data.size}")
+
+                val embeddedProfilesCount = data.count { it.rawProfile != null }
+                val missingProfilesCount = data.count { it.rawProfile == null }
+                Log.d("CONTACTS_DEBUG", "cantidad de perfiles embebidos: $embeddedProfilesCount")
+                Log.d("CONTACTS_DEBUG", "cantidad de perfiles faltantes: $missingProfilesCount")
 
                 val missingUserIds = data
                     .filter { it.rawProfile == null && it.contactUserId.isNotBlank() }
@@ -523,24 +556,33 @@ class ProfilesRepository {
                     try {
                         val filter = "in.(${missingUserIds.joinToString(",")})"
                         val profResponse = runCall { b -> service.getProfiles(apiKey, b, idFilter = filter) }
+                        Log.d("CONTACTS_DEBUG", "Batch profiles request status: ${profResponse?.code()}")
                         if (profResponse != null && profResponse.isSuccessful) {
                             profResponse.body()?.associateBy { it.id } ?: emptyMap()
-                        } else emptyMap()
+                        } else {
+                            Log.d("CONTACTS_DEBUG", "Batch profiles request failed errorBody: ${profResponse?.errorBody()?.string()}")
+                            emptyMap()
+                        }
                     } catch (e: Exception) {
                         Log.e(TAG, "Error fetching batch profiles for contacts", e)
                         emptyMap()
                     }
                 } else emptyMap()
 
+                Log.d("CONTACTS_DEBUG", "cantidad de perfiles recuperados mediante batch: ${batchProfilesMap.size}")
+
+                var fallbackProfilesCount = 0
                 val contactProfiles = data.map { contact ->
                     val embedded = contact.rawProfile
-                    if (embedded != null) {
+                    val hasEmbedded = embedded != null
+                    val profileToUse = if (embedded != null) {
                         embedded
                     } else {
                         val fallback = batchProfilesMap[contact.contactUserId]
                         if (fallback != null) {
                             fallback
                         } else {
+                            fallbackProfilesCount++
                             Log.w(TAG, "getMyContacts: No profile row found for contact_user_id=${contact.contactUserId}, creating base profile model")
                             Profile(
                                 id = contact.contactUserId,
@@ -549,29 +591,52 @@ class ProfilesRepository {
                             )
                         }
                     }
+
+                    val rawAvatar = profileToUse.avatarUrl
+                    val finalAvatarUrl = CdnManager.resolveAvatarUrl(rawAvatar)
+                    Log.d("CONTACTS_DEBUG", "Contact detail -> contact_user_id: ${contact.contactUserId}, hasEmbeddedProfile: $hasEmbedded, resolvedDisplayName: ${profileToUse.displayName}, raw avatar_url: $rawAvatar, avatar URL final: $finalAvatarUrl")
+
+                    profileToUse
                 }
+
+                Log.d("CONTACTS_DEBUG", "cantidad de contactos después del JOIN: ${contactProfiles.size}")
+                Log.d("CONTACTS_DEBUG", "cantidad de contactos descartados: 0")
+                Log.d("CONTACTS_DEBUG", "razón exacta de cada descarte: N/A")
+                Log.d("CONTACTS_DEBUG", "cantidad de perfiles que quedaron en fallback: $fallbackProfilesCount")
+                Log.d("CONTACTS_DEBUG", "cantidad final entregada al ViewModel: ${contactProfiles.size}")
+                Log.d("CONTACTS_DEBUG", "[CONTACTS_DEBUG_END]")
 
                 SessionManager.saveCacheList("cached_contacts", contactProfiles, Profile::class.java)
                 SessionManager.setOffline(false)
                 Result.success(contactProfiles)
             } else {
-                Log.e(TAG, "getMyContacts: Failed to fetch contacts, code: ${response?.code()}, error: ${response?.errorBody()?.string()}")
+                val errBody = response?.errorBody()?.string() ?: ""
+                Log.e(TAG, "getMyContacts: Failed to fetch contacts, code: $statusCode, error: $errBody")
+                Log.d("CONTACTS_DEBUG", "errorBody completo si HTTP != 2xx: $errBody")
+                Log.d("CONTACTS_DEBUG", "cantidad de contactos recibidos de Supabase: 0")
+                Log.d("CONTACTS_DEBUG", "cantidad final entregada al ViewModel: 0")
+
                 val cached = SessionManager.getCacheList("cached_contacts", Profile::class.java)
                 if (cached.isNotEmpty()) {
                     Log.i(TAG, "Request failed, returning cached contacts")
+                    Log.d("CONTACTS_DEBUG", "Returned ${cached.size} cached contacts on failure")
+                    Log.d("CONTACTS_DEBUG", "[CONTACTS_DEBUG_END]")
                     SessionManager.setOffline(true)
                     return@withContext Result.success(cached)
                 }
-                Result.failure(Exception("Error loading contacts: ${response?.errorBody()?.string()}"))
+                Log.d("CONTACTS_DEBUG", "[CONTACTS_DEBUG_END]")
+                Result.failure(Exception("Error loading contacts: $errBody"))
             }
         } catch (e: Exception) {
             Log.e(TAG, "getMyContacts exception", e)
+            Log.d("CONTACTS_DEBUG", "Exception in getMyContacts: ${e.message}")
             val cached = SessionManager.getCacheList("cached_contacts", Profile::class.java)
             if (cached.isNotEmpty()) {
-                Log.i(TAG, "Exception caught, returning cached contacts")
-                SessionManager.setOffline(true)
+                Log.d("CONTACTS_DEBUG", "Returned ${cached.size} cached contacts on exception")
+                Log.d("CONTACTS_DEBUG", "[CONTACTS_DEBUG_END]")
                 return@withContext Result.success(cached)
             }
+            Log.d("CONTACTS_DEBUG", "[CONTACTS_DEBUG_END]")
             Result.failure(e)
         }
     }
