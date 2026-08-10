@@ -8,6 +8,8 @@ import com.example.data.model.PublicProfileDto
 import com.example.data.repository.PublicProfileFetchResult
 import com.example.data.repository.PublicProfileRepository
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.async
+import kotlinx.coroutines.Dispatchers
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -125,7 +127,8 @@ class PublicProfileArchitectureTest {
             override suspend fun getByIds(ids: List<String>): List<PublicProfileEntity> {
                 daoCalls.add(ids)
                 return listOf(
-                    PublicProfileEntity("usr_1", "User One", "User", "One", null, null)
+                    PublicProfileEntity("usr_1", "User One", "User", "One", null, null),
+                    PublicProfileEntity("usr_2", "User Two", "User", "Two", null, null)
                 )
             }
 
@@ -220,6 +223,7 @@ class PublicProfileArchitectureTest {
 
     @Test
     fun testAuthErrorWhenNoSessionToken() = runBlocking {
+        com.example.data.supabase.SupabaseClient.currentToken = null
         val fakeDao = object : PublicProfileDao {
             override suspend fun getById(id: String): PublicProfileEntity? = null
             override suspend fun searchLocal(query: String): List<PublicProfileEntity> = emptyList()
@@ -317,72 +321,69 @@ class PublicProfileArchitectureTest {
 
     @Test
     fun testConcurrentSingleFlightDeduplication() = runBlocking {
-        val httpCallCount = java.util.concurrent.atomic.AtomicInteger(0)
-        com.example.data.supabase.SupabaseClient.currentToken = "valid_test_token"
+        try {
+            val httpCallCount = java.util.concurrent.atomic.AtomicInteger(0)
+            com.example.data.supabase.SupabaseClient.currentToken = "valid_test_token"
 
-        val fakeDao = object : PublicProfileDao {
-            override suspend fun getById(id: String): PublicProfileEntity? = null
-            override suspend fun searchLocal(query: String): List<PublicProfileEntity> = emptyList()
-            override suspend fun getByIds(ids: List<String>): List<PublicProfileEntity> = emptyList()
-            override suspend fun upsert(entity: PublicProfileEntity) {}
-            override suspend fun upsertAll(entities: List<PublicProfileEntity>) {}
-            override suspend fun delete(id: String) {}
-            override suspend fun deleteAll() {}
-        }
-
-        val fakeApiService = object : com.example.data.supabase.SupabaseApiService {
-            override suspend fun getPublicProfiles(
-                apiKey: String,
-                authorization: String,
-                idFilter: String
-            ): retrofit2.Response<List<PublicProfileDto>> {
-                httpCallCount.incrementAndGet()
-                kotlinx.coroutines.delay(100) // Simulate network delay
-                val dto = PublicProfileDto(
-                    id = "concurrent_user",
-                    displayName = "Concurrent Test",
-                    firstName = "Concurrent",
-                    lastName = "Test",
-                    avatarUrl = "avatar.jpg",
-                    updatedAt = "2026-08-10T12:00:00Z"
-                )
-                return retrofit2.Response.success(listOf(dto))
+            val fakeDao = object : PublicProfileDao {
+                override suspend fun getById(id: String): PublicProfileEntity? = null
+                override suspend fun searchLocal(query: String): List<PublicProfileEntity> = emptyList()
+                override suspend fun getByIds(ids: List<String>): List<PublicProfileEntity> = emptyList()
+                override suspend fun upsert(entity: PublicProfileEntity) {}
+                override suspend fun upsertAll(entities: List<PublicProfileEntity>) {}
+                override suspend fun delete(id: String) {}
+                override suspend fun deleteAll() {}
             }
 
-            override suspend fun getProfiles(
-                apiKey: String,
-                authorization: String,
-                idFilter: String
-            ): retrofit2.Response<List<com.example.data.model.Profile>> {
-                throw IllegalStateException("getProfiles should NOT be called directly for third-party profiles in Realtime!")
+            val fakeApiService = java.lang.reflect.Proxy.newProxyInstance(
+                com.example.data.supabase.SupabaseApiService::class.java.classLoader,
+                arrayOf(com.example.data.supabase.SupabaseApiService::class.java),
+                object : java.lang.reflect.InvocationHandler {
+                    override fun invoke(proxy: Any, method: java.lang.reflect.Method, args: Array<out Any>?): Any {
+                        if (method.name == "getPublicProfiles") {
+                            httpCallCount.incrementAndGet()
+                            Thread.sleep(100) // Simulate network delay
+                            val dto = PublicProfileDto(
+                                id = "concurrent_user",
+                                displayName = "Concurrent Test",
+                                firstName = "Concurrent",
+                                lastName = "Test",
+                                avatarUrl = "avatar.jpg",
+                                updatedAt = "2026-08-10T12:00:00Z"
+                            )
+                            return retrofit2.Response.success(listOf(dto))
+                        } else if (method.name == "getProfiles") {
+                            throw IllegalStateException("getProfiles should NOT be called directly for third-party profiles in Realtime!")
+                        } else {
+                            throw UnsupportedOperationException("Method ${method.name} not mocked")
+                        }
+                    }
+                }
+            ) as com.example.data.supabase.SupabaseApiService
+
+            val repository = PublicProfileRepository(
+                publicProfileDao = fakeDao,
+                apiServiceSupplier = { fakeApiService }
+            )
+
+            val deferreds = (1..10).map {
+                this@runBlocking.async(kotlinx.coroutines.Dispatchers.IO) {
+                    repository.getPublicProfile("concurrent_user", forceRefresh = true)
+                }
             }
 
-            override suspend fun updateProfile(apiKey: String, authorization: String, idFilter: String, body: Map<String, Any?>): retrofit2.Response<List<com.example.data.model.Profile>> = throw NotImplementedError()
-            override suspend fun getE2EEPublicKey(apiKey: String, authorization: String, userIdFilter: String): retrofit2.Response<List<Map<String, Any>>> = throw NotImplementedError()
-            override suspend fun upsertE2EEPublicKey(apiKey: String, authorization: String, body: Map<String, Any>): retrofit2.Response<Unit> = throw NotImplementedError()
-            override suspend fun sendNotification(apiKey: String, authorization: String, body: Map<String, Any>): retrofit2.Response<Unit> = throw NotImplementedError()
-            override suspend fun createPublication(apiKey: String, authorization: String, body: Map<String, Any>): retrofit2.Response<List<Map<String, Any>>> = throw NotImplementedError()
-        }
+            val results = deferreds.map { it.await() }
 
-        val repository = PublicProfileRepository(
-            publicProfileDao = fakeDao,
-            apiServiceSupplier = { fakeApiService }
-        )
-
-        val deferreds = (1..10).map {
-            kotlinx.coroutines.async(kotlinx.coroutines.Dispatchers.IO) {
-                repository.getPublicProfile("concurrent_user", forceRefresh = true)
+            assertEquals(1, httpCallCount.get())
+            assertEquals(10, results.size)
+            results.forEach { res ->
+                assertTrue(res is PublicProfileFetchResult.Success<*>)
+                val successRes = res as PublicProfileFetchResult.Success<PublicProfile>
+                assertEquals("concurrent_user", successRes.data.id)
+                assertEquals("Concurrent Test", successRes.data.displayName)
             }
-        }
-
-        val results = deferreds.map { it.await() }
-
-        assertEquals(1, httpCallCount.get())
-        assertEquals(10, results.size)
-        results.forEach { res ->
-            assertTrue(res is PublicProfileFetchResult.Success)
-            assertEquals("concurrent_user", (res as PublicProfileFetchResult.Success).data.id)
-            assertEquals("Concurrent Test", res.data.displayName)
+        } finally {
+            com.example.data.supabase.SupabaseClient.currentToken = null
         }
     }
 }

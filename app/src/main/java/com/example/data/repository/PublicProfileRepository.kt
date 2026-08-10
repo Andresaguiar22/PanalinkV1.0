@@ -108,7 +108,7 @@ class PublicProfileRepository(
         }
 
         // 4. Single-flight deduplication check
-        coroutineScope {
+        val scopeResult = coroutineScope {
             var newDeferred: Deferred<PublicProfileFetchResult<Map<String, PublicProfile>>>? = null
             var idsToFetch: List<String> = emptyList()
             val existingDeferredsMap = mutableMapOf<String, Deferred<PublicProfileFetchResult<Map<String, PublicProfile>>>>()
@@ -139,19 +139,22 @@ class PublicProfileRepository(
                 val createdDef = newDeferred
                 if (createdDef != null) {
                     val res = createdDef.await()
-                    if (res is PublicProfileFetchResult.Success<*>) {
-                        @Suppress("UNCHECKED_CAST")
-                        resultMap.putAll(res.data as Map<String, PublicProfile>)
+                    if (res !is PublicProfileFetchResult.Success<*>) {
+                        return@coroutineScope res
                     }
+                    @Suppress("UNCHECKED_CAST")
+                    resultMap.putAll(res.data as Map<String, PublicProfile>)
                 }
                 // Await existing in-flight deferreds
                 for ((_, def) in existingDeferredsMap) {
                     val res = def.await()
-                    if (res is PublicProfileFetchResult.Success<*>) {
-                        @Suppress("UNCHECKED_CAST")
-                        resultMap.putAll(res.data as Map<String, PublicProfile>)
+                    if (res !is PublicProfileFetchResult.Success<*>) {
+                        return@coroutineScope res
                     }
+                    @Suppress("UNCHECKED_CAST")
+                    resultMap.putAll(res.data as Map<String, PublicProfile>)
                 }
+                null
             } finally {
                 val createdDef = newDeferred
                 if (createdDef != null && idsToFetch.isNotEmpty()) {
@@ -164,6 +167,13 @@ class PublicProfileRepository(
                     }
                 }
             }
+        }
+
+        if (scopeResult is PublicProfileFetchResult.AuthError) {
+            return@withContext scopeResult
+        }
+        if (scopeResult is PublicProfileFetchResult.NetworkError) {
+            return@withContext scopeResult
         }
 
         if (resultMap.isNotEmpty()) {
