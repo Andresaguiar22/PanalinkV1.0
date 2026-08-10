@@ -22,7 +22,7 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.panalink.app.gbwzdn"
+        applicationId = "com.panalink.app"
         minSdk = 24
         targetSdk = 35
         versionCode = 1
