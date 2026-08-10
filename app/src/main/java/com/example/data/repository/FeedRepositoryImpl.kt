@@ -100,15 +100,7 @@ class FeedRepositoryImpl : FeedRepository {
                                 posts = posts.map { post ->
                                     val pub = if (post.userId != null) publicProfilesMap[post.userId] else null
                                     if (pub != null) {
-                                        post.copy(
-                                            profile = Profile(
-                                                id = pub.id,
-                                                displayName = pub.displayName ?: pub.firstName ?: pub.id,
-                                                firstName = pub.firstName,
-                                                lastName = pub.lastName,
-                                                avatarUrl = CdnManager.resolveAvatarUrl(pub.avatarUrl)
-                                            )
-                                        )
+                                        post.copy(profile = PublicProfileResolver.toProfile(pub))
                                     } else {
                                         post
                                     }
@@ -321,13 +313,7 @@ class FeedRepositoryImpl : FeedRepository {
                         if (publicResult is PublicProfileFetchResult.Success) {
                             val pub = publicResult.data
                             post = post.copy(
-                                profile = Profile(
-                                    id = pub.id,
-                                    displayName = pub.displayName ?: pub.firstName ?: pub.id,
-                                    firstName = pub.firstName,
-                                    lastName = pub.lastName,
-                                    avatarUrl = CdnManager.resolveAvatarUrl(pub.avatarUrl)
-                                )
+                                profile = PublicProfileResolver.toProfile(pub)
                             )
                         }
                     }

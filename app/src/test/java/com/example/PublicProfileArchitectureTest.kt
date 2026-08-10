@@ -12,7 +12,10 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
 
+@RunWith(RobolectricTestRunner::class)
 class PublicProfileArchitectureTest {
 
     @Test
@@ -144,5 +147,93 @@ class PublicProfileArchitectureTest {
 
         // Verify IDs were deduplicated and trimmed before querying DAO
         assertEquals(listOf("usr_1", "usr_2"), queriedIdsInDao)
+    }
+
+    @Test
+    fun testFullProfileResolution() {
+        val pub = PublicProfile(
+            id = "usr_100",
+            displayName = "Ana Martinez",
+            firstName = "Ana",
+            lastName = "Martinez",
+            avatarUrl = "avatars/ana.png"
+        )
+        val profile = com.example.data.repository.PublicProfileResolver.toProfile(pub)
+        assertEquals("usr_100", profile.id)
+        assertEquals("Ana Martinez", profile.displayName)
+        assertEquals("https://tivqjfgjdxgzicrridaz.supabase.co/storage/v1/object/public/avatars/ana.png", profile.avatarUrl)
+    }
+
+    @Test
+    fun testProfileWithoutAvatarResolution() {
+        val pub = PublicProfile(
+            id = "usr_101",
+            displayName = "Pedro Sanchez",
+            firstName = "Pedro",
+            lastName = "Sanchez",
+            avatarUrl = null
+        )
+        val profile = com.example.data.repository.PublicProfileResolver.toProfile(pub)
+        assertEquals("usr_101", profile.id)
+        assertEquals("Pedro Sanchez", profile.displayName)
+        assertNull(profile.avatarUrl)
+    }
+
+    @Test
+    fun testProfileWithoutDisplayNameResolutionDoesNotExposeUuid() {
+        val rawUuid = "123e4567-e89b-12d3-a456-426614174000"
+        val pub = PublicProfile(
+            id = rawUuid,
+            displayName = null,
+            firstName = null,
+            lastName = null,
+            avatarUrl = null
+        )
+        val resolvedName = com.example.data.repository.PublicProfileResolver.resolveDisplayName(pub, fallbackName = rawUuid, userId = rawUuid)
+        assertEquals("", resolvedName)
+
+        val uiFormatted = com.example.data.repository.PublicProfileResolver.formatForUi(resolvedName)
+        assertEquals("Contacto", uiFormatted)
+    }
+
+    @Test
+    fun testGenericPlaceholderFiltering() {
+        assertTrue(com.example.data.repository.PublicProfileResolver.isGenericOrUuid("Usuario"))
+        assertTrue(com.example.data.repository.PublicProfileResolver.isGenericOrUuid("Usuario Desconocido"))
+        assertTrue(com.example.data.repository.PublicProfileResolver.isGenericOrUuid("Pana"))
+        assertTrue(com.example.data.repository.PublicProfileResolver.isGenericOrUuid("123e4567-e89b-12d3-a456-426614174000"))
+        assertTrue(!com.example.data.repository.PublicProfileResolver.isGenericOrUuid("Carlos Ruiz"))
+    }
+
+    @Test
+    fun testAvatarUrlResolutionVariants() {
+        val cdn = com.example.data.repository.CdnManager
+        assertEquals("https://cdn.example.com/pic.jpg", cdn.resolveAvatarUrl("https://cdn.example.com/pic.jpg"))
+        assertEquals("content://media/external/images/1", cdn.resolveAvatarUrl("content://media/external/images/1"))
+        assertEquals("https://tivqjfgjdxgzicrridaz.supabase.co/storage/v1/object/public/avatars/test.jpg", cdn.resolveAvatarUrl("avatars/test.jpg"))
+        assertNull(cdn.resolveAvatarUrl(null))
+        assertNull(cdn.resolveAvatarUrl(""))
+        assertNull(cdn.resolveAvatarUrl("null"))
+        assertNull(cdn.resolveAvatarUrl("undefined"))
+    }
+
+    @Test
+    fun testAuthErrorWhenNoSessionToken() = runBlocking {
+        val fakeDao = object : PublicProfileDao {
+            override suspend fun getById(id: String): PublicProfileEntity? = null
+            override suspend fun getByIds(ids: List<String>): List<PublicProfileEntity> = emptyList()
+            override suspend fun upsert(entity: PublicProfileEntity) {}
+            override suspend fun upsertAll(entities: List<PublicProfileEntity>) {}
+            override suspend fun delete(id: String) {}
+            override suspend fun deleteAll() {}
+        }
+
+        val repository = PublicProfileRepository(
+            publicProfileDao = fakeDao,
+            apiServiceSupplier = { null }
+        )
+
+        val result = repository.getPublicProfiles(listOf("user_test"), forceRefresh = true)
+        assertTrue(result is PublicProfileFetchResult.AuthError)
     }
 }

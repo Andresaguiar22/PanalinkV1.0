@@ -214,15 +214,13 @@ private var chatJob: kotlinx.coroutines.Job? = null
                 val cachedPublic = publicProfileRepo.getPublicProfile(otherUserId, forceRefresh = false)
                 if (cachedPublic is com.example.data.repository.PublicProfileFetchResult.Success) {
                     val pub = cachedPublic.data
-                    currentOtherProfile = Profile(
-                        id = pub.id,
-                        displayName = pub.displayName ?: pub.firstName ?: pub.id,
-                        firstName = pub.firstName,
-                        lastName = pub.lastName,
-                        avatarUrl = com.example.data.repository.CdnManager.resolveAvatarUrl(pub.avatarUrl)
-                    )
+                    currentOtherProfile = com.example.data.repository.PublicProfileResolver.toProfile(pub)
                 } else {
-                    currentOtherProfile = profilesRepo.getCachedProfile(otherUserId)
+                    currentOtherProfile = profilesRepo.getCachedProfile(otherUserId)?.let { p ->
+                        val cleanName = com.example.data.repository.PublicProfileResolver.resolveDisplayName(null, p.displayName, p.id)
+                        val cleanAvatar = com.example.data.repository.CdnManager.resolveAvatarUrl(p.avatarUrl)
+                        p.copy(displayName = cleanName, avatarUrl = cleanAvatar)
+                    }
                 }
             }
 
@@ -247,13 +245,7 @@ private var chatJob: kotlinx.coroutines.Job? = null
                         val result = publicProfileRepo.getPublicProfile(otherUserId, forceRefresh = true)
                         if (result is com.example.data.repository.PublicProfileFetchResult.Success) {
                             val pub = result.data
-                            val remoteProfile = Profile(
-                                id = pub.id,
-                                displayName = pub.displayName ?: pub.firstName ?: pub.id,
-                                firstName = pub.firstName,
-                                lastName = pub.lastName,
-                                avatarUrl = com.example.data.repository.CdnManager.resolveAvatarUrl(pub.avatarUrl)
-                            )
+                            val remoteProfile = com.example.data.repository.PublicProfileResolver.toProfile(pub)
                             currentOtherProfile = remoteProfile
                             profilesRepo.saveProfileToCache(remoteProfile)
                             

@@ -857,7 +857,7 @@ class StatesRepository {
                     val pub = publicProfilesMap[dto.viewerId]
                     StatusViewer(
                         viewerId = dto.viewerId,
-                        name = pub?.displayName ?: pub?.firstName ?: dto.profiles?.displayName ?: "Usuario",
+                        name = PublicProfileResolver.resolveDisplayName(pub, dto.profiles?.displayName, dto.viewerId),
                         avatarUrl = CdnManager.resolveAvatarUrl(pub?.avatarUrl ?: dto.profiles?.avatarUrl),
                         viewedAt = dto.createdAt
                     )

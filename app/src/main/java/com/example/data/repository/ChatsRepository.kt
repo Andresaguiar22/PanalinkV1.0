@@ -167,19 +167,17 @@ class ChatsRepository {
                     val map = mutableMapOf<String, Profile>()
                     if (publicResult is PublicProfileFetchResult.Success) {
                         for ((id, pub) in publicResult.data) {
-                            map[id] = Profile(
-                                id = pub.id,
-                                displayName = pub.displayName ?: pub.firstName ?: pub.id,
-                                firstName = pub.firstName,
-                                lastName = pub.lastName,
-                                avatarUrl = CdnManager.resolveAvatarUrl(pub.avatarUrl)
-                            )
+                            map[id] = PublicProfileResolver.toProfile(pub)
                         }
                     }
                     // Fallback to local profileDao if missing
                     for (id in otherMemberIds) {
                         if (!map.containsKey(id)) {
-                            profileDao.getProfileById(id)?.toProfile()?.let { map[id] = it }
+                            profileDao.getProfileById(id)?.toProfile()?.let { p ->
+                                val cleanName = PublicProfileResolver.resolveDisplayName(null, p.displayName, p.id)
+                                val cleanAvatar = CdnManager.resolveAvatarUrl(p.avatarUrl)
+                                map[id] = p.copy(displayName = cleanName, avatarUrl = cleanAvatar)
+                            }
                         }
                     }
                     map

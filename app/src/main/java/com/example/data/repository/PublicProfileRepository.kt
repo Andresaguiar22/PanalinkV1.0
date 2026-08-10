@@ -103,6 +103,16 @@ class PublicProfileRepository(
         }
 
         // 4. Batch fetch from remote API
+        val sessionToken = SupabaseClient.currentToken
+        if (sessionToken.isNullOrBlank()) {
+            Log.e(TAG, "No valid session JWT available for PublicProfile request")
+            return@withContext if (resultMap.isNotEmpty()) {
+                PublicProfileFetchResult.Success(resultMap)
+            } else {
+                PublicProfileFetchResult.AuthError("No valid session token")
+            }
+        }
+
         val service = apiServiceSupplier()
         if (service == null) {
             return@withContext if (resultMap.isNotEmpty()) {
@@ -113,7 +123,8 @@ class PublicProfileRepository(
         }
 
         val apiKey = SupabaseClient.supabaseAnonKey
-        val bearerToken = "Bearer ${SupabaseClient.currentToken ?: apiKey}"
+
+        val bearerToken = "Bearer $sessionToken"
         val idFilter = "in.(${missingIds.joinToString(",")})"
 
         try {

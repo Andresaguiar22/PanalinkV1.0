@@ -449,15 +449,17 @@ class ProfilesRepository {
                 val contacts = contactsResponse.body() ?: emptyList()
                 val contactIds = contacts.map { it.contactUserId }.toSet()
 
-                val response = runCall { b -> service.getProfiles(apiKey, b, "*") }
-                if (response != null && response.isSuccessful) {
-                    val list = response.body() ?: emptyList()
-                    val filtered = list.filter {
-                        contactIds.contains(it.id) && it.displayName.contains(query, ignoreCase = true) && it.id != currentUid
-                    }
+                val publicProfileRepo = PublicProfileRepository.getInstance()
+                val fetchResult = publicProfileRepo.getPublicProfiles(contactIds.toList())
+                if (fetchResult is PublicProfileFetchResult.Success) {
+                    val publicProfilesMap = fetchResult.data
+                    val filtered = publicProfilesMap.values
+                        .filter { it.id != currentUid }
+                        .map { PublicProfileResolver.toProfile(it) }
+                        .filter { it.displayName.contains(query, ignoreCase = true) || (it.firstName?.contains(query, ignoreCase = true) == true) }
                     Result.success(filtered)
                 } else {
-                    Result.failure(Exception(response?.errorBody()?.string() ?: "Error de búsqueda"))
+                    Result.failure(Exception("Error al buscar perfiles públicos de contactos"))
                 }
             } else {
                 Result.failure(Exception(contactsResponse?.errorBody()?.string() ?: "Error de contactos"))
@@ -503,15 +505,39 @@ class ProfilesRepository {
         if (!forceRefresh) {
             val cached = SessionManager.getCacheList("cached_contacts", Profile::class.java)
             if (cached.isNotEmpty()) {
-                Log.d(TAG, "getMyContacts: Returning ${cached.size} cached contacts")
-                Log.d("CONTACTS_DEBUG", "Returned from cache! Cached contacts count: ${cached.size}")
-                for (contact in cached) {
-                    val finalAvatarUrl = CdnManager.resolveAvatarUrl(contact.avatarUrl)
-                    Log.d("CONTACTS_DEBUG", "Cached contact detail -> contact_user_id: ${contact.id}, resolvedDisplayName: ${contact.displayName}, raw avatar_url: ${contact.avatarUrl}, avatar URL final: $finalAvatarUrl")
+                val contactIds = cached.map { it.id }.filter { it.isNotBlank() }
+                val publicProfileDao = com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance).publicProfileDao()
+                val roomPublicProfiles = publicProfileDao.getByIds(contactIds).associateBy { it.id }
+
+                var updatedAny = false
+                val sanitizedCached = cached.map { contact ->
+                    val roomPubEntity = roomPublicProfiles[contact.id]
+                    val roomPubModel = roomPubEntity?.let { com.example.data.mapper.PublicProfileMapper.entityToModel(it) }
+
+                    val cleanName = PublicProfileResolver.resolveDisplayName(roomPubModel, contact.displayName, contact.id)
+                    val cleanAvatar = CdnManager.resolveAvatarUrl(roomPubModel?.avatarUrl ?: contact.avatarUrl)
+
+                    if (cleanName != contact.displayName || cleanAvatar != contact.avatarUrl) {
+                        updatedAny = true
+                        contact.copy(
+                            displayName = cleanName,
+                            firstName = roomPubModel?.firstName ?: contact.firstName,
+                            lastName = roomPubModel?.lastName ?: contact.lastName,
+                            avatarUrl = cleanAvatar
+                        )
+                    } else {
+                        contact
+                    }
                 }
-                Log.d("CONTACTS_DEBUG", "cantidad final entregada al ViewModel: ${cached.size}")
+
+                if (updatedAny) {
+                    SessionManager.saveCacheList("cached_contacts", sanitizedCached, Profile::class.java)
+                }
+
+                Log.d(TAG, "getMyContacts: Returning ${sanitizedCached.size} cached contacts")
+                Log.d("CONTACTS_DEBUG", "Returned from cache! Cached contacts count: ${sanitizedCached.size}")
                 Log.d("CONTACTS_DEBUG", "[CONTACTS_DEBUG_END]")
-                return@withContext Result.success(cached)
+                return@withContext Result.success(sanitizedCached)
             }
         }
 
@@ -552,16 +578,15 @@ class ProfilesRepository {
 
                 val contactProfiles = contacts.map { contact ->
                     val pub = publicProfilesMap[contact.contactUserId]
-                    val displayName = pub?.displayName ?: pub?.firstName ?: contact.contactUserId
-                    val avatarUrl = CdnManager.resolveAvatarUrl(pub?.avatarUrl)
-
-                    Profile(
-                        id = contact.contactUserId,
-                        displayName = displayName,
-                        firstName = pub?.firstName,
-                        lastName = pub?.lastName,
-                        avatarUrl = avatarUrl
-                    )
+                    if (pub != null) {
+                        PublicProfileResolver.toProfile(pub)
+                    } else {
+                        Profile(
+                            id = contact.contactUserId,
+                            displayName = "",
+                            avatarUrl = null
+                        )
+                    }
                 }
 
                 Log.d("CONTACTS_DEBUG", "cantidad final entregada al ViewModel: ${contactProfiles.size}")

@@ -135,7 +135,7 @@ class SocialRepositoryImpl : SocialRepository {
                     val profile = publicProfilesMap[domainComment.userId]
                     if (profile != null) {
                         domainComment.copy(
-                            authorName = profile.displayName ?: profile.firstName ?: domainComment.authorName,
+                            authorName = PublicProfileResolver.resolveDisplayName(profile, domainComment.authorName, domainComment.userId),
                             avatarUrl = CdnManager.resolveAvatarUrl(profile.avatarUrl) ?: domainComment.avatarUrl
                         )
                     } else {
