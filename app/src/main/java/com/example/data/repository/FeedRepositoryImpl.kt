@@ -165,12 +165,11 @@ class FeedRepositoryImpl : FeedRepository {
             } else {
                 val errorBody = response?.errorBody()?.string()
                 Log.e(TAG, "Failed to fetch feed: ${response?.code()} - $errorBody")
-                
-                Result.success(Unit)
+                Result.failure(Exception("Failed to fetch feed: ${response?.code()}"))
             }
         } catch (e: Exception) {
             Log.e(TAG, "Exception in getFeed", e)
-            Result.success(Unit)
+            Result.failure(e)
         }
     }
 
@@ -226,15 +225,18 @@ class FeedRepositoryImpl : FeedRepository {
         val existing = postDao.getPostById(postId)
         
         // 1. Update Room immediately
+        val actualCurrentLike = existing?.currentUserLiked ?: isLiked
+        val actualCount = existing?.likesCount ?: 0
+        val newLiked = !actualCurrentLike
+        val newCount = if (actualCurrentLike) (actualCount - 1).coerceAtLeast(0) else actualCount + 1
+        
         if (existing != null) {
-            val newLiked = !isLiked
-            val newCount = if (isLiked) (existing.likesCount - 1).coerceAtLeast(0) else existing.likesCount + 1
             postDao.upsert(existing.copy(currentUserLiked = newLiked, likesCount = newCount))
         }
 
         // 2. Coalesce/queue the action locally
         pendingDao.deleteLikeActionsForTarget(userId, postId)
-        val actionType = if (isLiked) "UNLIKE" else "LIKE"
+        val actionType = if (actualCurrentLike) "UNLIKE" else "LIKE"
         val action = com.example.data.database.PendingSocialActionEntity(
             localActionId = java.util.UUID.randomUUID().toString(),
             userId = userId,
@@ -338,6 +340,13 @@ class FeedRepositoryImpl : FeedRepository {
                             // Save remote comments to Room
                             val entities = comments.map { com.example.data.database.CommentEntity.fromPostCommentDto(it) }
                             commentDao.upsertAll(entities)
+                            
+                            // Delete local comments that were deleted on server
+                            val remoteIds = entities.map { it.id }
+                            commentDao.deleteStaleComments(postId, false, remoteIds)
+                        } else {
+                            // No remote comments, delete all local comments that aren't pending
+                            commentDao.deleteStaleComments(postId, false, emptyList())
                         }
                     }
                 }

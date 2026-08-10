@@ -35,13 +35,15 @@ import com.example.notification.engine.storage.entity.NotificationEntityV2
         PublicProfileEntity::class,
         PostEntity::class,
         CommentEntity::class,
-        PendingSocialActionEntity::class
+        PendingSocialActionEntity::class,
+        LocalNotificationEntity::class
     ],
-    version = 38,
+    version = 39,
     exportSchema = true
 )
 @TypeConverters(NotificationConverters::class)
 abstract class PanalinkDatabase : RoomDatabase() {
+    abstract fun localNotificationDao(): LocalNotificationDao
     abstract fun messageDao(): MessageDao
     abstract fun chatDao(): ChatDao
     abstract fun profileDao(): ProfileDao
@@ -523,6 +525,26 @@ abstract class PanalinkDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_38_39 = object : Migration(38, 39) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `local_notifications` (
+                        `id` TEXT NOT NULL,
+                        `type` TEXT NOT NULL,
+                        `sourceId` TEXT NOT NULL,
+                        `actorId` TEXT NOT NULL,
+                        `actorName` TEXT NOT NULL,
+                        `actorAvatarUrl` TEXT,
+                        `timestamp` TEXT NOT NULL,
+                        `isRead` INTEGER NOT NULL,
+                        `actionText` TEXT NOT NULL,
+                        `previewText` TEXT,
+                        PRIMARY KEY(`id`)
+                    )
+                """.trimIndent())
+            }
+        }
+
         fun getDatabase(context: Context): PanalinkDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -535,7 +557,7 @@ abstract class PanalinkDatabase : RoomDatabase() {
                     MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29,
                     MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33,
                     MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36, MIGRATION_36_37,
-                    MIGRATION_37_38
+                    MIGRATION_37_38, MIGRATION_38_39
                 )
                 .build()
                 INSTANCE = instance

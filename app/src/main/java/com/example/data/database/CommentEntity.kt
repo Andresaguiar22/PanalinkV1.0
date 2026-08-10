@@ -55,7 +55,7 @@ data class CommentEntity(
                 id = dto.id ?: java.util.UUID.randomUUID().toString(),
                 targetId = dto.postId ?: "",
                 authorId = dto.userId ?: "",
-                authorName = dto.profile?.displayName ?: "Pana",
+                authorName = dto.profile?.displayName?.takeIf { it.isNotBlank() } ?: "",
                 authorAvatarUrl = dto.profile?.avatarUrl,
                 content = dto.content ?: "",
                 createdAt = dto.createdAt ?: com.example.data.supabase.SupabaseClient.getNowIsoString(),

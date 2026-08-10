@@ -202,38 +202,6 @@ class PanalinkRealtimeService : Service() {
                     }
                 }
             }
-
-            // 6. Messages to Notifications Flow
-            launch {
-                Log.d(TAG, "Subscribing to SupabaseClient.realtimeMessages for internal notifications...")
-                SupabaseClient.realtimeMessages.collect { msg ->
-                    val uid = SupabaseClient.currentUser?.id ?: return@collect
-                    if (msg.senderId != uid) {
-                        try {
-                            val publicProfileDao = com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance).publicProfileDao()
-                            val pubEntity = publicProfileDao.getById(msg.senderId)
-                            val senderProfile = pubEntity?.let { com.example.data.repository.PublicProfileResolver.toProfile(com.example.data.mapper.PublicProfileMapper.entityToModel(it)) }
-                                ?: com.example.data.model.Profile(id = msg.senderId, displayName = "", avatarUrl = null)
-
-                            val sdf = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSSSS", java.util.Locale.getDefault())
-                            sdf.timeZone = java.util.TimeZone.getTimeZone("UTC")
-                            val newNotif = com.example.data.model.Notification(
-                                id = "msg_${msg.id}",
-                                type = com.example.data.model.NotificationType.MESSAGE,
-                                sourceId = msg.chatId,
-                                profile = senderProfile,
-                                timestamp = sdf.format(java.util.Date()),
-                                isRead = false,
-                                actionText = "te envió un mensaje.",
-                                previewText = msg.content
-                            )
-                            com.example.data.repository.NotificationsRepository().addLocalNotification(newNotif)
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Error saving message as notification", e)
-                        }
-                    }
-                }
-            }
         }
     }
 
@@ -247,8 +215,32 @@ class PanalinkRealtimeService : Service() {
         }
 
         serviceScope.launch {
+            val db = com.example.data.database.PanalinkDatabase.getDatabase(this@PanalinkRealtimeService)
+            
+            // Create internal app notification (Message tab preview)
+            try {
+                val pubEntity = db.publicProfileDao().getById(msg.senderId)
+                val senderProfile = pubEntity?.let { com.example.data.repository.PublicProfileResolver.toProfile(com.example.data.mapper.PublicProfileMapper.entityToModel(it)) }
+                    ?: com.example.data.model.Profile(id = msg.senderId, displayName = "", avatarUrl = null)
+
+                val sdf = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSSSS", java.util.Locale.getDefault())
+                sdf.timeZone = java.util.TimeZone.getTimeZone("UTC")
+                val newNotif = com.example.data.model.Notification(
+                    id = "msg_${msg.id}",
+                    type = com.example.data.model.NotificationType.MESSAGE,
+                    sourceId = msg.chatId,
+                    profile = senderProfile,
+                    timestamp = sdf.format(java.util.Date()),
+                    isRead = false,
+                    actionText = "te envió un mensaje.",
+                    previewText = msg.content
+                )
+                com.example.data.repository.NotificationsRepository().addLocalNotification(newNotif)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error saving message as notification", e)
+            }
+
             val isChatMuted = try {
-                val db = com.example.data.database.PanalinkDatabase.getDatabase(this@PanalinkRealtimeService)
                 db.chatDao().getChatById(msg.chatId)?.isMuted == true
             } catch (e: Exception) { false }
 

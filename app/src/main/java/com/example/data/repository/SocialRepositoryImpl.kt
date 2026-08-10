@@ -9,6 +9,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
 
@@ -95,19 +97,24 @@ class SocialRepositoryImpl : SocialRepository {
         }
     }
 
-    override suspend fun getComments(stateId: String, isReel: Boolean): Flow<List<Comment>> = flow {
-        emit(fetchComments(stateId, isReel))
-        refreshSignal.collect { refreshedStateId ->
-            if (refreshedStateId == stateId) {
-                emit(fetchComments(stateId, isReel))
-            }
+    override suspend fun getComments(stateId: String, isReel: Boolean): Flow<List<Comment>> {
+        val database = com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance)
+        val commentDao = database.commentDao()
+        
+        // Trigger background sync
+        kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
+            syncComments(stateId, isReel)
         }
-    }.flowOn(Dispatchers.IO)
+        
+        return commentDao.getCommentsFlow(stateId, isReel).map { entities -> 
+            entities.map { it.toStateComment() }
+        }.flowOn(Dispatchers.IO)
+    }
 
-    private suspend fun fetchComments(stateId: String, isReel: Boolean): List<Comment> {
-        return try {
-            val service = SupabaseClient.apiService ?: return emptyList()
-            val token = SupabaseClient.currentToken ?: return emptyList()
+    private suspend fun syncComments(stateId: String, isReel: Boolean) {
+        try {
+            val service = SupabaseClient.apiService ?: return
+            val token = SupabaseClient.currentToken ?: return
             val apiKey = SupabaseClient.supabaseAnonKey
             val bearer = "Bearer $token"
 
@@ -130,7 +137,7 @@ class SocialRepositoryImpl : SocialRepository {
                     publicResult.data
                 } else emptyMap()
 
-                commentsDto.map { dto -> 
+                val resolvedComments = commentsDto.map { dto -> 
                     val domainComment = dto.toDomain()
                     val profile = publicProfilesMap[domainComment.userId]
                     if (profile != null) {
@@ -142,13 +149,25 @@ class SocialRepositoryImpl : SocialRepository {
                         domainComment
                     }
                 }
+
+                val database = com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance)
+                val commentDao = database.commentDao()
+                
+                if (resolvedComments.isNotEmpty()) {
+                    val entities = resolvedComments.map { com.example.data.database.CommentEntity.fromStateComment(it, isReel) }
+                    commentDao.upsertAll(entities)
+                    
+                    // Delete stale local comments
+                    val remoteIds = entities.map { it.id }
+                    commentDao.deleteStaleComments(stateId, isReel, remoteIds)
+                } else {
+                    commentDao.deleteStaleComments(stateId, isReel, emptyList())
+                }
             } else {
                 Log.e("AUDIT_REEL_COMMENT", "Fetch comments failed: ${response.errorBody()?.string()}")
-                emptyList()
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error fetching comments", e)
-            emptyList()
         }
     }
 

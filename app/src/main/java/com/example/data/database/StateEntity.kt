@@ -85,7 +85,7 @@ data class StateEntity(
                 mediaUrls = item.state.mediaUrls?.joinToString(","),
                 audioUrl = item.state.audioUrl,
                 localVideoPath = localPath ?: item.state.localVideoPath,
-                authorDisplayName = item.profile?.displayName ?: "Usuario",
+                authorDisplayName = item.profile?.displayName?.takeIf { it.isNotBlank() },
                 authorAvatarUrl = item.profile?.avatarUrl
             )
         }

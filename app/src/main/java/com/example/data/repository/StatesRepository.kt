@@ -491,8 +491,12 @@ class StatesRepository {
         
         // 1. Update local Room state immediately
         val existing = statesDao.getStateById(stateId)
-        val newLiked = !currentLikeState
-        val newCount = if (currentLikeState) (existing?.likesCount ?: 1 - 1).coerceAtLeast(0) else (existing?.likesCount ?: 0) + 1
+        val actualCurrentLike = existing?.likedByMe ?: currentLikeState
+        val actualCount = existing?.likesCount ?: 0
+        
+        val newLiked = !actualCurrentLike
+        val newCount = if (actualCurrentLike) (actualCount - 1).coerceAtLeast(0) else actualCount + 1
+        
         if (existing != null) {
             statesDao.insertState(existing.copy(likedByMe = newLiked, likesCount = newCount))
         }
@@ -500,7 +504,7 @@ class StatesRepository {
         // 2. Coalesce/queue action locally
         val pendingDao = db.pendingSocialActionDao()
         pendingDao.deleteLikeActionsForTarget(currentUid, stateId)
-        val actionType = if (currentLikeState) "UNLIKE" else "LIKE"
+        val actionType = if (actualCurrentLike) "UNLIKE" else "LIKE"
         val action = com.example.data.database.PendingSocialActionEntity(
             localActionId = java.util.UUID.randomUUID().toString(),
             userId = currentUid,
@@ -522,8 +526,12 @@ class StatesRepository {
         
         // 1. Update local Room state immediately
         val existing = statesDao.getStateById(stateId)
-        val newFav = !currentFavState
-        val newCount = if (currentFavState) (existing?.favoritesCount ?: 1 - 1).coerceAtLeast(0) else (existing?.favoritesCount ?: 0) + 1
+        val actualCurrentFav = existing?.favoritedByMe ?: currentFavState
+        val actualCount = existing?.favoritesCount ?: 0
+        
+        val newFav = !actualCurrentFav
+        val newCount = if (actualCurrentFav) (actualCount - 1).coerceAtLeast(0) else actualCount + 1
+        
         if (existing != null) {
             statesDao.insertState(existing.copy(favoritedByMe = newFav, favoritesCount = newCount))
         }
@@ -531,7 +539,7 @@ class StatesRepository {
         // 2. Coalesce/queue action locally
         val pendingDao = db.pendingSocialActionDao()
         pendingDao.deleteFavoriteActionsForTarget(currentUid, stateId)
-        val actionType = if (currentFavState) "UNFAVORITE" else "FAVORITE"
+        val actionType = if (actualCurrentFav) "UNFAVORITE" else "FAVORITE"
         val action = com.example.data.database.PendingSocialActionEntity(
             localActionId = java.util.UUID.randomUUID().toString(),
             userId = currentUid,

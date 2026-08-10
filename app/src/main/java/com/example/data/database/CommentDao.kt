@@ -26,6 +26,9 @@ interface CommentDao {
     @Query("DELETE FROM local_comments WHERE targetId = :targetId AND isReel = :isReel")
     suspend fun deleteByTarget(targetId: String, isReel: Boolean)
 
+    @Query("DELETE FROM local_comments WHERE targetId = :targetId AND isReel = :isReel AND id NOT IN (:remoteIds) AND syncStatus != 'pending_add'")
+    suspend fun deleteStaleComments(targetId: String, isReel: Boolean, remoteIds: List<String>)
+
     @Query("DELETE FROM local_comments")
     suspend fun deleteAll()
 }
