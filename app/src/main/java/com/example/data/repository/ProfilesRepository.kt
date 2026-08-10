@@ -452,12 +452,26 @@ class ProfilesRepository {
 
     suspend fun searchProfiles(query: String): Result<List<Profile>> = withContext(Dispatchers.IO) {
         val currentUid = SupabaseClient.currentUser?.id ?: return@withContext Result.failure(Exception("Not authenticated"))
+        
+        // 1. Search local SQLite Room database first (public_profiles & cached_contacts)
+        val localMatches = mutableListOf<Profile>()
+        try {
+            val db = com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance)
+            val localEntities = db.publicProfileDao().searchLocal(query.trim())
+            val mappedLocal = localEntities
+                .filter { it.id != currentUid }
+                .map { PublicProfileResolver.toProfile(com.example.data.mapper.PublicProfileMapper.entityToModel(it)) }
+            localMatches.addAll(mappedLocal)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error searching local public profiles", e)
+        }
+
         if (!SupabaseClient.isConfigured) {
-            delay(500)
-            val results = SupabaseClient.demoProfiles.values.filter {
+            val demoResults = SupabaseClient.demoProfiles.values.filter {
                 it.displayName.contains(query, ignoreCase = true) && it.id != currentUid
             }
-            return@withContext Result.success(results)
+            val combined = (localMatches + demoResults).distinctBy { it.id }
+            return@withContext Result.success(combined)
         }
 
         try {
@@ -465,17 +479,32 @@ class ProfilesRepository {
             val fetchResult = publicProfileRepo.searchPublicProfiles(query)
             when (fetchResult) {
                 is PublicProfileFetchResult.Success -> {
-                    val filtered = fetchResult.data
+                    val remoteFiltered = fetchResult.data
                         .filter { it.id != currentUid }
                         .map { PublicProfileResolver.toProfile(it) }
-                    Result.success(filtered)
+                    val combined = (localMatches + remoteFiltered).distinctBy { it.id }
+                    Result.success(combined)
                 }
-                is PublicProfileFetchResult.NotFound -> Result.success(emptyList())
-                is PublicProfileFetchResult.AuthError -> Result.failure(Exception("Error de autenticación: ${fetchResult.message}"))
-                is PublicProfileFetchResult.NetworkError -> Result.failure(fetchResult.exception ?: Exception(fetchResult.message ?: "Error de red"))
+                else -> {
+                    // Return local matches if remote search encounters network error or offline
+                    if (localMatches.isNotEmpty()) {
+                        Result.success(localMatches)
+                    } else {
+                        when (fetchResult) {
+                            is PublicProfileFetchResult.NotFound -> Result.success(emptyList())
+                            is PublicProfileFetchResult.AuthError -> Result.failure(Exception("Error de autenticación: ${fetchResult.message}"))
+                            is PublicProfileFetchResult.NetworkError -> Result.failure(fetchResult.exception ?: Exception(fetchResult.message ?: "Error de red"))
+                            else -> Result.success(emptyList())
+                        }
+                    }
+                }
             }
         } catch (e: Exception) {
-            Result.failure(e)
+            if (localMatches.isNotEmpty()) {
+                Result.success(localMatches)
+            } else {
+                Result.failure(e)
+            }
         }
     }
 

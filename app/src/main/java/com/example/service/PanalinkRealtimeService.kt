@@ -133,12 +133,14 @@ class PanalinkRealtimeService : Service() {
 
                 var largeIconBitmap: android.graphics.Bitmap? = null
                 try {
-                    // Try to fetch profile to get avatar_url and display_name
-                    val profilesRepo = com.example.data.repository.ProfilesRepository()
-                    val profileRes = profilesRepo.getProfile(msg.senderId)
-                    val profile = profileRes.getOrNull()
-                    val avatarUrl = profile?.avatarUrl
-                    val displayName = profile?.displayName ?: "Pana de Panalink"
+                    // Resolve identity asynchronously via PublicProfileRepository (Memory -> Room -> Supabase)
+                    val publicProfileRepo = com.example.data.repository.PublicProfileRepository.getInstance(applicationContext)
+                    val fetchResult = publicProfileRepo.getPublicProfile(msg.senderId)
+                    val pubProfile = if (fetchResult is com.example.data.repository.PublicProfileFetchResult.Success) fetchResult.data else null
+
+                    val cleanName = com.example.data.repository.PublicProfileResolver.resolveDisplayName(pubProfile)
+                    val displayName = if (cleanName.isNotBlank()) cleanName else "Contacto"
+                    val avatarUrl = pubProfile?.avatarUrl
                     
                     val loadUrl = msg.thumbnailUrl ?: msg.mediaUrl ?: avatarUrl
                     if (!loadUrl.isNullOrEmpty()) {

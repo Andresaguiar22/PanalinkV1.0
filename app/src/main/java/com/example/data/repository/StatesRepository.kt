@@ -9,6 +9,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.OkHttpClient
@@ -23,6 +26,7 @@ class StatesRepository {
     
     private val db by lazy { com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance) }
     private val statesDao by lazy { db.statesDao() }
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     private var bearer = ""
 
@@ -340,9 +344,15 @@ class StatesRepository {
                         }
                     }
                     statesDao.insertStates(finalEntities)
-                    // Also delete expired locally
+                    // Offload expired states deletion to background scope to keep UI response fast
                     val now = SupabaseClient.getNowIsoString()
-                    statesDao.deleteExpired(now)
+                    scope.launch(Dispatchers.IO) {
+                        try {
+                            statesDao.deleteExpired(now)
+                        } catch (ex: Exception) {
+                            Log.e(TAG, "Error purging expired states in background", ex)
+                        }
+                    }
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to save states to local DB", e)
                 }

@@ -15,6 +15,9 @@ interface PublicProfileDao {
     @Query("SELECT * FROM public_profiles WHERE id IN (:ids)")
     suspend fun getByIds(ids: List<String>): List<PublicProfileEntity>
 
+    @Query("SELECT * FROM public_profiles WHERE displayName LIKE '%' || :query || '%' OR firstName LIKE '%' || :query || '%' OR lastName LIKE '%' || :query || '%'")
+    suspend fun searchLocal(query: String): List<PublicProfileEntity>
+
     @Upsert
     suspend fun upsert(entity: PublicProfileEntity)
 

@@ -224,9 +224,16 @@ object SessionManager {
         return true
     }
 
-    // Refresh token synchronously or via mutex to avoid concurrent refreshes
+    // Refresh token synchronously or via mutex to avoid concurrent refreshes (single-flight)
     suspend fun refreshSession(): Boolean = mutex.withLock {
         if (!SupabaseClient.isConfigured) return@withLock true
+
+        // Double-check if token was already refreshed by a concurrent caller
+        val currentToken = SupabaseClient.currentToken
+        if (currentToken != null && !isJwtExpired(currentToken)) {
+            Log.i(TAG, "Session was already refreshed by a concurrent task.")
+            return@withLock true
+        }
         
         val rToken = SupabaseClient.currentRefreshToken
         if (rToken.isNullOrEmpty()) {
@@ -275,16 +282,17 @@ object SessionManager {
                     return@withLock true
                 }
             } else {
+                val code = response.code()
                 val errBody = response.errorBody()?.string() ?: ""
-                Log.e(TAG, "Session refresh failed (HTTP ${response.code()}): $errBody")
-                if (response.code() == 400 && errBody.contains("invalid_grant")) {
-                    Log.w(TAG, "Refresh token rejected by server (invalid_grant). Clearing session.")
+                Log.e(TAG, "Session refresh failed (HTTP $code): $errBody")
+                if ((code == 400 || code == 401) && (errBody.contains("invalid_grant") || errBody.contains("invalid_refresh_token"))) {
+                    Log.w(TAG, "Refresh token permanently rejected by server ($code). Clearing session.")
                     clearSession()
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Exception during session refresh", e)
-            _isOffline.value = true // Treat network errors as offline state
+            Log.e(TAG, "Network or server exception during session refresh", e)
+            _isOffline.value = true // Mark offline status on network errors, retain session credentials
         }
         return@withLock false
     }
