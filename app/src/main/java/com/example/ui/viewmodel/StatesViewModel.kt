@@ -38,44 +38,22 @@ class StatesViewModel(private val statesRepository: StatesRepository = StatesRep
 
     private var isActiveStatesLoading = false
     private val processingIds = Collections.synchronizedSet(mutableSetOf<String>())
-    private val optimisticOverrides = MutableStateFlow<Map<String, UserState>>(emptyMap())
 
     // Map to keep track of local counters to avoid double-counting in ultra-fast taps
     private val localActionTimestamps = mutableMapOf<String, Long>()
 
-    private fun applyOverrides(list: List<UserStateWithUser>, overrides: Map<String, UserState>): List<UserStateWithUser> {
-        return list.map { item ->
-            val override = overrides[item.state.id]
-            if (override != null) {
-                // Ensure we don't overwrite if the Room data is already newer (e.g. sync finished)
-                // Actually, per user request, we "retain" the local state until we are sure.
-                item.copy(state = override)
-            } else item
-        }
-    }
+    // Primary Source of Truth: Room Flow
+    val statesState: StateFlow<StatesUiState> = statesRepository.getLocalStatesFlow(isReel = false)
+        .map { list -> if (list.isEmpty()) StatesUiState.Loading else StatesUiState.Success(list) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), StatesUiState.Loading)
 
-    // Primary Source of Truth: Room Flow combined with Optimistic Overrides
-    val statesState: StateFlow<StatesUiState> = combine(
-        statesRepository.getLocalStatesFlow(isReel = false),
-        optimisticOverrides
-    ) { list, overrides ->
-        val merged = applyOverrides(list, overrides)
-        if (merged.isEmpty()) StatesUiState.Loading else StatesUiState.Success(merged)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), StatesUiState.Loading)
+    val storiesState: StateFlow<StatesUiState> = statesRepository.getLocalStatesFlow(isReel = false)
+        .map { StatesUiState.Success(it) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), StatesUiState.Loading)
 
-    val storiesState: StateFlow<StatesUiState> = combine(
-        statesRepository.getLocalStatesFlow(isReel = false),
-        optimisticOverrides
-    ) { list, overrides ->
-        StatesUiState.Success(applyOverrides(list, overrides))
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), StatesUiState.Loading)
-
-    val reelsState: StateFlow<StatesUiState> = combine(
-        statesRepository.getLocalStatesFlow(isReel = true),
-        optimisticOverrides
-    ) { list, overrides ->
-        StatesUiState.Success(applyOverrides(list, overrides))
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), StatesUiState.Loading)
+    val reelsState: StateFlow<StatesUiState> = statesRepository.getLocalStatesFlow(isReel = true)
+        .map { StatesUiState.Success(it) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), StatesUiState.Loading)
 
     private val _createStateFlow = MutableStateFlow<CreateStateUiState>(CreateStateUiState.Idle)
     val createStateFlow: StateFlow<CreateStateUiState> = _createStateFlow
@@ -170,56 +148,11 @@ class StatesViewModel(private val statesRepository: StatesRepository = StatesRep
                 
                 if (currentState != null) {
                     val wasLiked = currentState.state.likedByMe ?: false
-                    val newLiked = !wasLiked
-                    val currentCount = currentState.state.likesCount ?: 0
-                    val newCount = if (wasLiked) (currentCount - 1).coerceAtLeast(0) else currentCount + 1
-                    
-                    Log.d("StatesViewModel", "Optimistic Like: id=$stateId, wasLiked=$wasLiked, newLiked=$newLiked, old=$currentCount, new=$newCount")
-
-                    // Optimistic local update
-                    val optimisticState = currentState.state.copy(
-                        likedByMe = newLiked,
-                        likesCount = newCount
-                    )
-                    val optimisticItem = currentState.copy(state = optimisticState)
-                    
-                    // Add to overrides to retain in UI
-                    optimisticOverrides.value = optimisticOverrides.value + (stateId to optimisticState)
-                    statesRepository.saveStateLocally(optimisticItem)
-
                     val isReel = isReelState(currentState.state)
-                    val authorId = currentState.state.userId
                     
                     statesRepository.toggleLike(stateId, wasLiked, isReel)
-                        .onSuccess { result ->
-                            Log.d("StatesViewModel", "Like Success: id=$stateId, serverLiked=${result.liked}, serverCount=${result.likesCount}")
-                            
-                            if (result.liked && authorId.isNotEmpty() && authorId != SupabaseClient.currentUser?.id) {
-                                com.example.data.repository.NotificationsRepository().createNotification(authorId, "like", stateId)
-                            }
-                            
-                            // Prevent count jumping from 0 to 2:
-                            // If we just liked it and wasLiked was false, count should be at least 1,
-                            // but if currentCount was 0, count is strictly 1 (unless server genuinely has multiple likes).
-                            val serverCount = result.likesCount
-                            val finalCount = if (result.liked) {
-                                if (currentCount == 0 && serverCount > 1) 1 else maxOf(newCount, serverCount)
-                            } else {
-                                (currentCount - 1).coerceAtLeast(0)
-                            }
-
-                            val finalState = currentState.state.copy(
-                                likedByMe = result.liked,
-                                likesCount = finalCount
-                            )
-                            optimisticOverrides.value = optimisticOverrides.value + (stateId to finalState)
-                            statesRepository.saveStateLocally(currentState.copy(state = finalState))
-                        }
                         .onFailure { error ->
                             Log.e("StatesViewModel", "Like Failure: id=$stateId", error)
-                            // Revert local update
-                            optimisticOverrides.value = optimisticOverrides.value - stateId
-                            statesRepository.saveStateLocally(currentState)
                             onError?.invoke(error.localizedMessage ?: "Error al dar me gusta")
                         }
                 }
@@ -239,34 +172,10 @@ class StatesViewModel(private val statesRepository: StatesRepository = StatesRep
                     ?: (storiesState.value as? StatesUiState.Success)?.states?.find { it.state.id == stateId }
 
                 if (currentState != null) {
-                    val newFav = !currentFavState
-                    val currentCount = currentState.state.favoritesCount ?: 0
-                    val newCount = if (currentFavState) (currentCount - 1).coerceAtLeast(0) else currentCount + 1
-                    
-                    // Optimistic local update
-                    val optimisticState = currentState.state.copy(
-                        favoritedByMe = newFav,
-                        favoritesCount = newCount
-                    )
-                    optimisticOverrides.value = optimisticOverrides.value + (stateId to optimisticState)
-                    statesRepository.saveStateLocally(currentState.copy(state = optimisticState))
-
                     val isReel = isReelState(currentState.state)
                     statesRepository.toggleFavorite(stateId, currentFavState, isReel)
-                        .onSuccess { result ->
-                            val finalState = currentState.state.copy(
-                                favoritedByMe = result.favorited,
-                                favoritesCount = if (result.favoritesCount >= 0) result.favoritesCount else newCount
-                            )
-                            optimisticOverrides.value = optimisticOverrides.value + (stateId to finalState)
-                            statesRepository.saveStateLocally(currentState.copy(state = finalState))
-                            delay(1500)
-                            optimisticOverrides.value = optimisticOverrides.value - stateId
-                        }
                         .onFailure { error ->
-                            optimisticOverrides.value = optimisticOverrides.value - stateId
                             onError?.invoke(error.localizedMessage ?: "Error al guardar favorito")
-                            statesRepository.saveStateLocally(currentState) // Revert
                         }
                 }
             } finally {
@@ -281,16 +190,10 @@ class StatesViewModel(private val statesRepository: StatesRepository = StatesRep
                 ?: (storiesState.value as? StatesUiState.Success)?.states?.find { it.state.id == stateId }
 
             if (currentState != null) {
-                val newCount = (currentState.state.sharesCount ?: 0) + 1
-                statesRepository.saveStateLocally(currentState.copy(state = currentState.state.copy(
-                    sharesCount = newCount
-                )))
-
                 val isReel = isReelState(currentState.state)
                 statesRepository.incrementShare(stateId, isReel)
                     .onFailure { error ->
                         onError?.invoke(error.localizedMessage ?: "Error al registrar compartir")
-                        statesRepository.saveStateLocally(currentState) // Revert
                     }
             }
         }
@@ -308,59 +211,15 @@ class StatesViewModel(private val statesRepository: StatesRepository = StatesRep
                 val isReel = isReelState(currentState.state)
                 val authorId = currentState.state.userId
                 
-                // Optimistic update for comment count
-                val currentCount = currentState.state.commentsCount ?: 0
-                val optimisticState = currentState.state.copy(
-                    commentsCount = currentCount + 1
-                )
-                
-                Log.d("StatesViewModel", "Optimistic Comment: id=$stateId, old=$currentCount, new=${currentCount + 1}")
-
-                optimisticOverrides.value = optimisticOverrides.value + (stateId to optimisticState)
-                statesRepository.saveStateLocally(currentState.copy(state = optimisticState))
-
-                // Optimistic update for _currentComments list
-                val currentUser = SupabaseClient.currentUser
-                val profileName = SupabaseClient.currentProfile?.displayName ?: "Yo"
-                val avatarUrl = SupabaseClient.currentProfile?.avatarUrl
-                val tempId = "temp_${System.currentTimeMillis()}_${java.util.UUID.randomUUID()}"
-                val tempComment = Comment(
-                    id = tempId,
-                    stateId = stateId,
-                    userId = currentUser?.id ?: "",
-                    text = trimmedText,
-                    createdAt = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US).apply {
-                        timeZone = java.util.TimeZone.getTimeZone("UTC")
-                    }.format(java.util.Date()),
-                    authorName = profileName,
-                    avatarUrl = avatarUrl,
-                    parentCommentId = parentId
-                )
-                _currentComments.value = _currentComments.value + tempComment
-
                 statesRepository.addComment(stateId, trimmedText, isReel, parentId)
                     .onSuccess {
                         Log.d("StatesViewModel", "Comment Success: id=$stateId")
-                        
                         if (authorId.isNotEmpty() && authorId != SupabaseClient.currentUser?.id) {
                             com.example.data.repository.NotificationsRepository().createNotification(authorId, "comment", stateId)
                         }
-
-                        // Success: Load the real list and keep commentsCount in local DB
-                        statesRepository.getStateComments(stateId, isReel)
-                            .onSuccess { realList ->
-                                _currentComments.value = realList
-                                val finalCommentsCount = maxOf(currentCount + 1, realList.size)
-                                val finalState = currentState.state.copy(commentsCount = finalCommentsCount)
-                                optimisticOverrides.value = optimisticOverrides.value + (stateId to finalState)
-                                statesRepository.saveStateLocally(currentState.copy(state = finalState))
-                            }
                     }
                     .onFailure { error ->
                         Log.e("StatesViewModel", "Comment Failure: id=$stateId", error)
-                        _currentComments.value = _currentComments.value.filter { it.id != tempId }
-                        optimisticOverrides.value = optimisticOverrides.value - stateId
-                        statesRepository.saveStateLocally(currentState)
                         onError?.invoke(error.localizedMessage ?: "Error al comentar")
                     }
             }

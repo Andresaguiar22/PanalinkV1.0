@@ -9,7 +9,6 @@ import com.example.data.model.Profile
 import com.example.data.supabase.SessionManager
 import com.example.data.supabase.SupabaseClient
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map

@@ -6,10 +6,13 @@ import com.example.data.supabase.SupabaseClient
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
 object PrivacyManager {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val repository = PrivacyRepository()
     
     private val _entitlements = MutableStateFlow<List<UserEntitlementDto>>(emptyList())
@@ -19,7 +22,7 @@ object PrivacyManager {
     val settings: StateFlow<List<UserPrivacySettingDto>> = _settings.asStateFlow()
     
     fun refresh() {
-        GlobalScope.launch {
+        scope.launch {
             val entsResult = repository.getEntitlements()
             if (entsResult.isSuccess) {
                 _entitlements.value = entsResult.getOrNull() ?: emptyList()

@@ -93,14 +93,8 @@ class StatesRepository {
             val contactIds = if (contactsResponse != null && contactsResponse.isSuccessful) {
                 contactsResponse.body()?.map { it.contactUserId }?.toSet() ?: emptySet()
             } else {
-                // Return cached list on failure or offline
-                val cached = SessionManager.getCacheList("cached_states", UserStateWithUser::class.java)
-                if (cached.isNotEmpty()) {
-                    Log.i(TAG, "Failed loading contacts, returning cached states")
-                    SessionManager.setOffline(true)
-                    return@withContext Result.success(cached)
-                }
-                emptySet()
+                Log.w(TAG, "Failed loading contacts, cannot filter states securely")
+                return@withContext Result.failure(Exception("Failed to load contacts for filtering"))
             }
             val allowedUserIds = contactIds + currentUid
 
@@ -357,28 +351,16 @@ class StatesRepository {
                     Log.e(TAG, "Failed to save states to local DB", e)
                 }
 
-                SessionManager.saveCacheList("cached_states", resolvedList, UserStateWithUser::class.java)
                 SessionManager.setOffline(false)
                 Result.success(resolvedList)
             } else {
-                val cached = SessionManager.getCacheList("cached_states", UserStateWithUser::class.java)
-                if (cached.isNotEmpty()) {
-                    Log.i(TAG, "Table query failed, returning cached states")
-                    SessionManager.setOffline(true)
-                    return@withContext Result.success(cached)
-                }
                 val errorMsg = if (reelsResponse?.isSuccessful == false) reelsResponse.errorBody()?.string()
                               else storiesResponse?.errorBody()?.string()
                 Result.failure(Exception("Error al cargar estados: $errorMsg"))
             }
         } catch (e: Exception) {
             Log.e(TAG, "getActiveStates exception", e)
-            val cached = SessionManager.getCacheList("cached_states", UserStateWithUser::class.java)
-            if (cached.isNotEmpty()) {
-                Log.i(TAG, "Exception caught. Returning cached states instead of error.")
-                SessionManager.setOffline(true)
-                return@withContext Result.success(cached)
-            }
+            SessionManager.setOffline(true)
             Result.failure(e)
         }
     }

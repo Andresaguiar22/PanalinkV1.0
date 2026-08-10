@@ -837,6 +837,7 @@ class MainActivity : ComponentActivity() {
                                 val audioRepo = remember { com.example.media.audio.AudioRepository(db.audioDao()) }
                                 val playlistManager = remember { com.example.media.playlist.PlaylistManager(playlistRepo, audioRepo) }
 
+                                val scope = androidx.compose.runtime.rememberCoroutineScope()
                                 ChatScreen(
                                     viewModel = chatViewModel,
                                     chatId = chatId,
@@ -849,7 +850,7 @@ class MainActivity : ComponentActivity() {
                                         when (action) {
                                             "OPEN" -> mainNavController.navigate("playlist/$playlistId")
                                             "PLAY" -> {
-                                                kotlinx.coroutines.GlobalScope.launch {
+                                                scope.launch {
                                                     val tracks = playlistRepo.getTracksForPlaylistSync(playlistId)
                                                     if (tracks.isNotEmpty()) {
                                                         playerViewModel.playTracks(tracks, 0)
@@ -857,7 +858,7 @@ class MainActivity : ComponentActivity() {
                                                 }
                                             }
                                             "SAVE" -> {
-                                                kotlinx.coroutines.GlobalScope.launch {
+                                                scope.launch {
                                                     playlistManager.duplicatePlaylist(playlistId, "Copia de Playlist")
                                                 }
                                             }
