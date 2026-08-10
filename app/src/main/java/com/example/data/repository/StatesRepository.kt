@@ -548,59 +548,33 @@ class StatesRepository {
 
     suspend fun toggleFavorite(stateId: String, currentFavState: Boolean, isReel: Boolean): Result<com.example.data.model.ToggleFavoriteResponseDto> = withContext(Dispatchers.IO) {
         val currentUid = SupabaseClient.currentUser?.id ?: return@withContext Result.failure(Exception("Not authenticated"))
-        try {
-            val service = SupabaseClient.apiService ?: return@withContext Result.failure(Exception("Supabase not configured"))
-            val token = SupabaseClient.currentToken ?: return@withContext Result.failure(Exception("Session expired"))
-            val apiKey = SupabaseClient.supabaseAnonKey
-            val bearer = "Bearer $token"
-
-            if (isReel) {
-                var response = service.toggleReelFavoriteRpc(apiKey, bearer, mapOf("p_reel_id" to stateId))
-                if (!response.isSuccessful) {
-                    val alt = service.toggleReelFavoriteRpc(apiKey, bearer, mapOf("p_state_id" to stateId))
-                    if (alt.isSuccessful) response = alt
-                }
-                if (response.isSuccessful) {
-                    val body = response.body()
-                    if (body != null) {
-                        Log.d("AUDIT_FAVORITE", "toggle_reel_favorite RPC success: favorited=${body.favorited}, count=${body.favoritesCount}")
-                        Result.success(body)
-                    } else {
-                        Result.failure(Exception("Empty response body from toggle_reel_favorite RPC"))
-                    }
-                } else {
-                    val errorStr = response.errorBody()?.string()
-                    Log.e("AUDIT_FAVORITE", "toggle_reel_favorite RPC error: $errorStr")
-                    Result.failure(Exception(SupabaseClient.parseSupabaseError(errorStr, "toggle_reel_favorite RPC failed")))
-                }
-            } else {
-                var response = service.toggleStoryFavoriteRpc(apiKey, bearer, mapOf("p_story_id" to stateId))
-                if (!response.isSuccessful) {
-                    val alt1 = service.toggleStoryFavoriteRpc(apiKey, bearer, mapOf("p_state_id" to stateId))
-                    if (alt1.isSuccessful) response = alt1
-                    else {
-                        val alt2 = service.toggleStoryFavoriteRpc(apiKey, bearer, mapOf("p_status_id" to stateId))
-                        if (alt2.isSuccessful) response = alt2
-                    }
-                }
-                if (response.isSuccessful) {
-                    val body = response.body()
-                    if (body != null) {
-                        Log.d("AUDIT_FAVORITE", "toggle_story_favorite RPC success: favorited=${body.favorited}, count=${body.favoritesCount}")
-                        Result.success(body)
-                    } else {
-                        Result.failure(Exception("Empty response body from toggle_story_favorite RPC"))
-                    }
-                } else {
-                    val errorStr = response.errorBody()?.string()
-                    Log.e("AUDIT_FAVORITE", "toggle_story_favorite RPC error: $errorStr")
-                    Result.failure(Exception(SupabaseClient.parseSupabaseError(errorStr, "toggle_story_favorite RPC failed")))
-                }
-            }
-        } catch (e: Exception) {
-            Log.e("AUDIT_FAVORITE", "Exception in toggleFavorite", e)
-            Result.failure(e)
+        
+        // 1. Update local Room state immediately
+        val existing = statesDao.getStateById(stateId)
+        val newFav = !currentFavState
+        val newCount = if (currentFavState) (existing?.favoritesCount ?: 1 - 1).coerceAtLeast(0) else (existing?.favoritesCount ?: 0) + 1
+        if (existing != null) {
+            statesDao.insertState(existing.copy(favoritedByMe = newFav, favoritesCount = newCount))
         }
+
+        // 2. Coalesce/queue action locally
+        val pendingDao = db.pendingSocialActionDao()
+        pendingDao.deleteFavoriteActionsForTarget(currentUid, stateId)
+        val actionType = if (currentFavState) "UNFAVORITE" else "FAVORITE"
+        val action = com.example.data.database.PendingSocialActionEntity(
+            localActionId = java.util.UUID.randomUUID().toString(),
+            userId = currentUid,
+            targetId = stateId,
+            actionType = actionType,
+            payload = null,
+            isReel = isReel
+        )
+        pendingDao.insertAction(action)
+
+        // 3. Enqueue Background Sync
+        com.example.worker.SocialSyncWorker.enqueue(com.example.PanaApplication.instance)
+
+        Result.success(com.example.data.model.ToggleFavoriteResponseDto(favorited = newFav, favoritesCount = newCount))
     }
 
     suspend fun getSavedStates(): Result<List<UserStateWithUser>> = withContext(Dispatchers.IO) {
@@ -742,40 +716,44 @@ class StatesRepository {
         val cachedEntities = commentDao.getComments(stateId, isReel)
         val cachedComments = cachedEntities.map { it.toStateComment() }
 
-        // 2. Fetch/Refresh from Supabase in the background
+        // 2. Fetch/Refresh from Supabase if configured
         if (SupabaseClient.isConfigured) {
-            val job = kotlinx.coroutines.GlobalScope.launch(Dispatchers.IO) {
-                try {
-                    val service = SupabaseClient.apiService ?: return@launch
-                    val token = SupabaseClient.currentToken ?: return@launch
-                    val apiKey = SupabaseClient.supabaseAnonKey
-                    val bearer = "Bearer $token"
+            try {
+                val service = SupabaseClient.apiService
+                if (service != null) {
+                    val token = SupabaseClient.currentToken
+                    if (token != null) {
+                        val apiKey = SupabaseClient.supabaseAnonKey
+                        val bearer = "Bearer $token"
 
-                    val tableName = if (isReel) "reel_comments" else "story_comments"
-                    val idColumns = if (isReel) listOf("reel_id") else listOf("story_id", "status_id", "state_id")
+                        val tableName = if (isReel) "reel_comments" else "story_comments"
+                        val idColumns = if (isReel) listOf("reel_id") else listOf("story_id", "status_id", "state_id")
 
-                    var response: retrofit2.Response<List<com.example.data.model.StateCommentDto>>? = null
-                    for (idCol in idColumns) {
-                        response = service.getStateComments(
-                            table = tableName,
-                            apiKey = apiKey,
-                            authorization = bearer,
-                            filters = mapOf(idCol to "eq.$stateId")
-                        )
-                        if (response.isSuccessful) break
+                        var response: retrofit2.Response<List<com.example.data.model.StateCommentDto>>? = null
+                        for (idCol in idColumns) {
+                            response = service.getStateComments(
+                                table = tableName,
+                                apiKey = apiKey,
+                                authorization = bearer,
+                                filters = mapOf(idCol to "eq.$stateId")
+                            )
+                            if (response.isSuccessful) break
+                        }
+
+                        if (response != null && response.isSuccessful) {
+                            val commentsDto = response.body() ?: emptyList()
+                            val comments = commentsDto.map { it.toDomain() }
+
+                            // Save to Room
+                            val entities = comments.map { com.example.data.database.CommentEntity.fromStateComment(it, isReel) }
+                            commentDao.upsertAll(entities)
+                            
+                            return@withContext Result.success(comments)
+                        }
                     }
-
-                    if (response != null && response.isSuccessful) {
-                        val commentsDto = response.body() ?: emptyList()
-                        val comments = commentsDto.map { it.toDomain() }
-
-                        // Save to Room
-                        val entities = comments.map { com.example.data.database.CommentEntity.fromStateComment(it, isReel) }
-                        commentDao.upsertAll(entities)
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Background sync comments failed", e)
                 }
+            } catch (e: Exception) {
+                Log.e(TAG, "Sync comments failed", e)
             }
         }
 

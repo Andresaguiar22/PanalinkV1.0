@@ -325,11 +325,11 @@ class FeedRepositoryImpl : FeedRepository {
         val cachedEntities = commentDao.getComments(postId, isReel = false)
         val cachedComments = cachedEntities.map { it.toPostCommentDto() }
 
-        // 2. Background Sync/Refresh from Supabase if configured
+        // 2. Refresh from Supabase if configured
         if (SupabaseClient.isConfigured) {
-            val job = kotlinx.coroutines.GlobalScope.launch(Dispatchers.IO) {
-                try {
-                    val service = SupabaseClient.apiService ?: return@launch
+            try {
+                val service = SupabaseClient.apiService
+                if (service != null) {
                     val response = runCall { b -> service.getCommentsForPost(SupabaseClient.supabaseAnonKey, b, "eq.$postId") }
                     
                     if (response != null && response.isSuccessful) {
@@ -360,9 +360,9 @@ class FeedRepositoryImpl : FeedRepository {
                             commentDao.upsertAll(entities)
                         }
                     }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Background sync comments failed", e)
                 }
+            } catch (e: Exception) {
+                Log.e(TAG, "Sync comments failed", e)
             }
         }
 

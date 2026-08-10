@@ -25,6 +25,9 @@ interface PendingSocialActionDao {
     @Query("DELETE FROM pending_social_actions WHERE userId = :userId AND targetId = :targetId AND actionType IN ('LIKE', 'UNLIKE')")
     suspend fun deleteLikeActionsForTarget(userId: String, targetId: String)
 
+    @Query("DELETE FROM pending_social_actions WHERE userId = :userId AND targetId = :targetId AND actionType IN ('FAVORITE', 'UNFAVORITE')")
+    suspend fun deleteFavoriteActionsForTarget(userId: String, targetId: String)
+
     @Query("DELETE FROM pending_social_actions")
     suspend fun deleteAll()
 }

@@ -80,6 +80,8 @@ class StatesViewModel(private val statesRepository: StatesRepository = StatesRep
     private val _createStateFlow = MutableStateFlow<CreateStateUiState>(CreateStateUiState.Idle)
     val createStateFlow: StateFlow<CreateStateUiState> = _createStateFlow
 
+    private val commentsJobs = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Job>()
+
     private val _currentComments = MutableStateFlow<List<Comment>>(emptyList())
     val currentComments: StateFlow<List<Comment>> = _currentComments
 
@@ -127,41 +129,7 @@ class StatesViewModel(private val statesRepository: StatesRepository = StatesRep
     val uiLoadingState: StateFlow<String?> = _uiLoadingState
 
     init {
-        viewModelScope.launch(errorHandler) {
-            SupabaseClient.realtimeStatuses.collect { newState ->
-                val currentUid = SupabaseClient.currentUser?.id
-                val tempProfile = if (newState.userId == currentUid && SupabaseClient.currentProfile != null) {
-                    SupabaseClient.currentProfile!!
-                } else {
-                    com.example.data.model.Profile(newState.userId, "Pana de la Comunidad 🇻🇪", null)
-                }
-                val tempStateWithUser = UserStateWithUser(newState, tempProfile)
-                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    statesRepository.saveStateLocally(tempStateWithUser)
-                }
-                
-                launch(errorHandler + kotlinx.coroutines.Dispatchers.IO) {
-                    try {
-                        val realProfile = statesRepository.getProfileForUser(newState.userId)
-                        statesRepository.saveStateLocally(UserStateWithUser(newState, realProfile))
-                    } catch (e: Exception) {
-                        android.util.Log.e("StatesViewModel", "Error updating profile for live state", e)
-                    }
-                }
-            }
-        }
-        
-        viewModelScope.launch(errorHandler) {
-            SupabaseClient.realtimeLikes.collect { statusId ->
-                loadActiveStates(showLoading = false)
-            }
-        }
-        
-        viewModelScope.launch(errorHandler) {
-            SupabaseClient.realtimeComments.collect { statusId ->
-                loadActiveStates(showLoading = false)
-            }
-        }
+        observeUploadSuccess()
     }
 
     fun loadActiveStates(showLoading: Boolean = false) {
@@ -433,23 +401,29 @@ class StatesViewModel(private val statesRepository: StatesRepository = StatesRep
 
     fun loadComments(stateId: String) {
         val existingTemps = _currentComments.value.filter { it.stateId == stateId && it.id.startsWith("temp_") }
-        viewModelScope.launch(errorHandler + kotlinx.coroutines.Dispatchers.IO) {
+        
+        // Cancel previous comments job for this state if any
+        commentsJobs[stateId]?.cancel()
+
+        val job = viewModelScope.launch(errorHandler + kotlinx.coroutines.Dispatchers.IO) {
             val currentState = (reelsState.value as? StatesUiState.Success)?.states?.find { it.state.id == stateId }
                 ?: (storiesState.value as? StatesUiState.Success)?.states?.find { it.state.id == stateId }
             val isReel = currentState?.let { isReelState(it.state) } ?: false
-            
-            statesRepository.getStateComments(stateId, isReel)
-                .onSuccess { list ->
-                    val serverIds = list.map { it.id }.toSet()
+
+            // 1. Observe Flow from Room immediately
+            launch {
+                statesRepository.getCommentsFlow(stateId, isReel).collect { comments ->
+                    val serverIds = comments.map { it.id }.toSet()
                     val unsavedTemps = existingTemps.filter { it.id !in serverIds }
-                    // Sort comments by newest first (descending createdAt)
-                    val sortedList = (list + unsavedTemps).sortedByDescending { it.createdAt }
+                    val sortedList = (comments + unsavedTemps).sortedByDescending { it.createdAt }
                     _currentComments.value = sortedList
                 }
-                .onFailure {
-                    _currentComments.value = existingTemps.sortedByDescending { it.createdAt }
-                }
+            }
+
+            // 2. Refresh from remote
+            statesRepository.getStateComments(stateId, isReel)
         }
+        commentsJobs[stateId] = job
     }
 
     fun loadSpectators(stateId: String) {

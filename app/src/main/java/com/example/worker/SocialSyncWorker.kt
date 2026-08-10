@@ -48,6 +48,56 @@ class SocialSyncWorker(
                 var success = false
 
                 when (action.actionType) {
+                    "FAVORITE" -> {
+                        if (action.isReel) {
+                            var response = service.toggleReelFavoriteRpc(apiKey, bearer, mapOf("p_reel_id" to action.targetId))
+                            if (!response.isSuccessful) {
+                                val alt = service.toggleReelFavoriteRpc(apiKey, bearer, mapOf("p_state_id" to action.targetId))
+                                if (alt.isSuccessful) response = alt
+                            }
+                            if (response.isSuccessful || response.code() == 409) {
+                                success = true
+                            }
+                        } else {
+                            var response = service.toggleStoryFavoriteRpc(apiKey, bearer, mapOf("p_story_id" to action.targetId))
+                            if (!response.isSuccessful) {
+                                val alt1 = service.toggleStoryFavoriteRpc(apiKey, bearer, mapOf("p_state_id" to action.targetId))
+                                if (alt1.isSuccessful) response = alt1
+                                else {
+                                    val alt2 = service.toggleStoryFavoriteRpc(apiKey, bearer, mapOf("p_status_id" to action.targetId))
+                                    if (alt2.isSuccessful) response = alt2
+                                }
+                            }
+                            if (response.isSuccessful || response.code() == 409) {
+                                success = true
+                            }
+                        }
+                    }
+                    "UNFAVORITE" -> {
+                        if (action.isReel) {
+                            var response = service.toggleReelFavoriteRpc(apiKey, bearer, mapOf("p_reel_id" to action.targetId))
+                            if (!response.isSuccessful) {
+                                val alt = service.toggleReelFavoriteRpc(apiKey, bearer, mapOf("p_state_id" to action.targetId))
+                                if (alt.isSuccessful) response = alt
+                            }
+                            if (response.isSuccessful || response.code() == 404) {
+                                success = true
+                            }
+                        } else {
+                            var response = service.toggleStoryFavoriteRpc(apiKey, bearer, mapOf("p_story_id" to action.targetId))
+                            if (!response.isSuccessful) {
+                                val alt1 = service.toggleStoryFavoriteRpc(apiKey, bearer, mapOf("p_state_id" to action.targetId))
+                                if (alt1.isSuccessful) response = alt1
+                                else {
+                                    val alt2 = service.toggleStoryFavoriteRpc(apiKey, bearer, mapOf("p_status_id" to action.targetId))
+                                    if (alt2.isSuccessful) response = alt2
+                                }
+                            }
+                            if (response.isSuccessful || response.code() == 404) {
+                                success = true
+                            }
+                        }
+                    }
                     "LIKE" -> {
                         if (action.isReel) {
                             val params = mapOf("p_reel_id" to action.targetId)

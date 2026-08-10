@@ -58,8 +58,8 @@ class PanalinkRealtimeService : Service() {
             Log.e(TAG, "Failed to startForeground due to OS security restrictions. Falling back to background service.", e)
         }
 
-        // 2. Start collecting realtime messages if not already doing so
-        startListeningToRealtimeMessages()
+        // 2. Start collecting all realtime events into Room
+        startListeningToAllRealtimeEvents()
 
         // 3. Ensure the Supabase real-time connection is running
         SupabaseClient.connectRealtime()
@@ -67,33 +67,119 @@ class PanalinkRealtimeService : Service() {
         return START_STICKY
     }
 
-    private fun startListeningToRealtimeMessages() {
-        if (messageCollectionJob != null) return
+    private var allRealtimeJobs: Job? = null
 
-        messageCollectionJob = serviceScope.launch {
-            Log.d(TAG, "Subscribing to SupabaseClient.realtimeMessages flow...")
-            SupabaseClient.realtimeMessages.collect { msg ->
-                val decryptedMsg = com.example.util.CryptoManager.decryptMessageIfNeeded(msg)
-                val msgsRepo = com.example.data.repository.MessagesRepository.getInstance()
-                val effectiveClearedAt = msgsRepo.getEffectiveClearedAt(decryptedMsg.chatId, null)
-                val shouldKeep = com.example.util.MessageFilter.shouldKeepMessage(
-                    messageId = decryptedMsg.id,
-                    messageClientUuid = decryptedMsg.clientMessageUuid,
-                    messageCreatedAt = decryptedMsg.createdAt,
-                    lastClearedAt = effectiveClearedAt,
-                    deletedMessageIds = msgsRepo.getUserDeletedMessageIds()
-                )
-                if (shouldKeep) {
+    private fun startListeningToAllRealtimeEvents() {
+        if (allRealtimeJobs != null) return
+
+        allRealtimeJobs = serviceScope.launch {
+            // 1. Messages Flow
+            launch {
+                Log.d(TAG, "Subscribing to SupabaseClient.realtimeMessages flow...")
+                SupabaseClient.realtimeMessages.collect { msg ->
+                    val decryptedMsg = com.example.util.CryptoManager.decryptMessageIfNeeded(msg)
+                    val msgsRepo = com.example.data.repository.MessagesRepository.getInstance()
+                    val effectiveClearedAt = msgsRepo.getEffectiveClearedAt(decryptedMsg.chatId, null)
+                    val shouldKeep = com.example.util.MessageFilter.shouldKeepMessage(
+                        messageId = decryptedMsg.id,
+                        messageClientUuid = decryptedMsg.clientMessageUuid,
+                        messageCreatedAt = decryptedMsg.createdAt,
+                        lastClearedAt = effectiveClearedAt,
+                        deletedMessageIds = msgsRepo.getUserDeletedMessageIds()
+                    )
+                    if (shouldKeep) {
+                        try {
+                            val db = com.example.data.database.PanalinkDatabase.getDatabase(this@PanalinkRealtimeService)
+                            db.messageDao().mergeAndSaveMessage(com.example.data.database.MessageEntity.fromMessage(decryptedMsg))
+                            Log.d(TAG, "Saved/Merged realtime message in Room: ${decryptedMsg.id}")
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error inserting realtime message into Room", e)
+                        }
+                        handleIncomingMessage(decryptedMsg)
+                    } else {
+                        Log.d(TAG, "Realtime message filtered out by MessageFilter: ${decryptedMsg.id}")
+                    }
+                }
+            }
+
+            // 2. Statuses (Reels/Stories) Flow
+            launch {
+                Log.d(TAG, "Subscribing to SupabaseClient.realtimeStatuses flow...")
+                SupabaseClient.realtimeStatuses.collect { newState ->
                     try {
                         val db = com.example.data.database.PanalinkDatabase.getDatabase(this@PanalinkRealtimeService)
-                        db.messageDao().mergeAndSaveMessage(com.example.data.database.MessageEntity.fromMessage(decryptedMsg))
-                        Log.d(TAG, "Saved/Merged realtime message in Room: ${decryptedMsg.id}")
+                        val statesDao = db.statesDao()
+                        val currentUid = SupabaseClient.currentUser?.id
+                        val tempProfile = if (newState.userId == currentUid && SupabaseClient.currentProfile != null) {
+                            SupabaseClient.currentProfile!!
+                        } else {
+                            com.example.data.model.Profile(newState.userId, "Pana de la Comunidad 🇻🇪", null)
+                        }
+                        
+                        // Save basic temporary/placeholder local state
+                        val entity = com.example.data.database.StateEntity.fromUserStateWithUser(
+                            com.example.data.model.UserStateWithUser(newState, tempProfile)
+                        )
+                        statesDao.insertState(entity)
+                        Log.d(TAG, "Saved placeholder live status ${newState.id} in Room")
+                        
+                        // Resolve actual profile asynchronously
+                        launch {
+                            try {
+                                val pubRepo = com.example.data.repository.PublicProfileRepository.getInstance(applicationContext)
+                                val result = pubRepo.getPublicProfile(newState.userId)
+                                val finalProfile = if (result is com.example.data.repository.PublicProfileFetchResult.Success) {
+                                    com.example.data.repository.PublicProfileResolver.toProfile(result.data)
+                                } else {
+                                    tempProfile
+                                }
+                                statesDao.insertState(com.example.data.database.StateEntity.fromUserStateWithUser(
+                                    com.example.data.model.UserStateWithUser(newState, finalProfile)
+                                ))
+                                Log.d(TAG, "Updated resolved profile for live status ${newState.id} in Room")
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error resolving profile for live status", e)
+                            }
+                        }
                     } catch (e: Exception) {
-                        Log.e(TAG, "Error inserting realtime message into Room", e)
+                        Log.e(TAG, "Error saving live status to Room", e)
                     }
-                    handleIncomingMessage(decryptedMsg)
-                } else {
-                    Log.d(TAG, "Realtime message filtered out by MessageFilter: ${decryptedMsg.id}")
+                }
+            }
+
+            // 3. Likes Flow
+            launch {
+                Log.d(TAG, "Subscribing to SupabaseClient.realtimeLikes flow...")
+                SupabaseClient.realtimeLikes.collect { statusId ->
+                    try {
+                        val db = com.example.data.database.PanalinkDatabase.getDatabase(this@PanalinkRealtimeService)
+                        val statesDao = db.statesDao()
+                        val existing = statesDao.getStateById(statusId)
+                        if (existing != null) {
+                            statesDao.insertState(existing.copy(likesCount = existing.likesCount + 1))
+                            Log.d(TAG, "Incremented live like for status $statusId in Room")
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error updating live like in Room", e)
+                    }
+                }
+            }
+
+            // 4. Comments Flow
+            launch {
+                Log.d(TAG, "Subscribing to SupabaseClient.realtimeComments flow...")
+                SupabaseClient.realtimeComments.collect { statusId ->
+                    try {
+                        val db = com.example.data.database.PanalinkDatabase.getDatabase(this@PanalinkRealtimeService)
+                        val statesDao = db.statesDao()
+                        val existing = statesDao.getStateById(statusId)
+                        if (existing != null) {
+                            statesDao.insertState(existing.copy(commentsCount = existing.commentsCount + 1))
+                            Log.d(TAG, "Incremented live comment count for status $statusId in Room")
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error updating live comment count in Room", e)
+                    }
                 }
             }
         }
@@ -194,6 +280,7 @@ class PanalinkRealtimeService : Service() {
         super.onDestroy()
         Log.d(TAG, "PanalinkRealtimeService Destroyed")
         messageCollectionJob?.cancel()
+        allRealtimeJobs?.cancel()
         serviceScope.cancel()
     }
 }
