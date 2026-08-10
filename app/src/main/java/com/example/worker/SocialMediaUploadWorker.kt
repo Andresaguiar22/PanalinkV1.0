@@ -53,6 +53,8 @@ class SocialMediaUploadWorker(
         )
         pendingUploadDao.updateUpload(uploadingEntity)
 
+        var intermediateTempFile: File? = null
+
         try {
             setProgress(workDataOf(
                 "uploadId" to uploadId,
@@ -78,7 +80,6 @@ class SocialMediaUploadWorker(
                 try {
                     val pendingMediaDir = File(context.filesDir, "pending_media")
                     if (!pendingMediaDir.exists()) pendingMediaDir.mkdirs()
-                    val compressedFile = File.createTempFile("reel_compressed_", ".mp4", pendingMediaDir)
                     
                     val compressed = com.example.util.VideoCompressorHelper.compressVideo(
                         context,
@@ -95,20 +96,17 @@ class SocialMediaUploadWorker(
                             "uploadType" to entity.uploadType
                         ))
                     }
-                    if (compressed.exists() && compressed.length() > 0) {
-                        if (file.name.contains("upload_temp_") || file.name.contains("reel_selected_")) {
-                            try { file.delete() } catch (e: Exception) {}
-                        }
+                    if (compressed.exists() && compressed.length() > 0 && compressed.absolutePath != file.absolutePath) {
+                        intermediateTempFile = compressed
                         finalUploadFile = compressed
                         val updatedEntity = uploadingEntity.copy(
-                            localFilePath = compressed.absolutePath,
                             updatedAt = System.currentTimeMillis()
                         )
                         pendingUploadDao.updateUpload(updatedEntity)
                         Log.i(TAG, "Video compressed successfully: ${compressed.absolutePath}")
                     } else {
                         // Cleanup failed compressed file if created
-                        if (compressed.exists()) {
+                        if (compressed.exists() && compressed.absolutePath != file.absolutePath) {
                             try { compressed.delete() } catch (e: Exception) {}
                         }
                     }
@@ -314,6 +312,15 @@ class SocialMediaUploadWorker(
         } catch (e: Exception) {
             Log.e(TAG, "Exception during social upload", e)
             return handleFailure(entity, e.localizedMessage ?: "Excepción desconocida")
+        } finally {
+            intermediateTempFile?.let { temp ->
+                if (temp.exists() && temp.absolutePath != entity.localFilePath) {
+                    try {
+                        temp.delete()
+                        Log.i(TAG, "Cleaned up intermediate temp file: ${temp.absolutePath}")
+                    } catch (ignored: Exception) {}
+                }
+            }
         }
     }
 

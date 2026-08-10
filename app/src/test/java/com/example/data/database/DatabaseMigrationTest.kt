@@ -21,7 +21,7 @@ class DatabaseMigrationTest {
     @get:Rule
     val helper: MigrationTestHelper = MigrationTestHelper(
         InstrumentationRegistry.getInstrumentation(),
-        PanalinkDatabase::class.java.canonicalName,
+        PanalinkDatabase::class.java.canonicalName ?: PanalinkDatabase::class.java.name,
         FrameworkSQLiteOpenHelperFactory()
     )
 

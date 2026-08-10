@@ -121,6 +121,7 @@ class PublicProfileArchitectureTest {
         val fakeDao = object : PublicProfileDao {
             override suspend fun getById(id: String): PublicProfileEntity? = null
 
+            override suspend fun searchLocal(query: String): List<PublicProfileEntity> = emptyList()
             override suspend fun getByIds(ids: List<String>): List<PublicProfileEntity> {
                 daoCalls.add(ids)
                 return listOf(
@@ -221,6 +222,7 @@ class PublicProfileArchitectureTest {
     fun testAuthErrorWhenNoSessionToken() = runBlocking {
         val fakeDao = object : PublicProfileDao {
             override suspend fun getById(id: String): PublicProfileEntity? = null
+            override suspend fun searchLocal(query: String): List<PublicProfileEntity> = emptyList()
             override suspend fun getByIds(ids: List<String>): List<PublicProfileEntity> = emptyList()
             override suspend fun upsert(entity: PublicProfileEntity) {}
             override suspend fun upsertAll(entities: List<PublicProfileEntity>) {}
@@ -241,6 +243,7 @@ class PublicProfileArchitectureTest {
     fun testSearchPublicProfilesWithBlankQueryReturnsEmptyList() = runBlocking {
         val fakeDao = object : PublicProfileDao {
             override suspend fun getById(id: String): PublicProfileEntity? = null
+            override suspend fun searchLocal(query: String): List<PublicProfileEntity> = emptyList()
             override suspend fun getByIds(ids: List<String>): List<PublicProfileEntity> = emptyList()
             override suspend fun upsert(entity: PublicProfileEntity) {}
             override suspend fun upsertAll(entities: List<PublicProfileEntity>) {}
@@ -271,6 +274,7 @@ class PublicProfileArchitectureTest {
 
         val fakeDao = object : PublicProfileDao {
             override suspend fun getById(id: String): PublicProfileEntity? = if (id == "cached_101") cachedEntity else null
+            override suspend fun searchLocal(query: String): List<PublicProfileEntity> = emptyList()
             override suspend fun getByIds(ids: List<String>): List<PublicProfileEntity> = if (ids.contains("cached_101")) listOf(cachedEntity) else emptyList()
             override suspend fun upsert(entity: PublicProfileEntity) {}
             override suspend fun upsertAll(entities: List<PublicProfileEntity>) {}
@@ -294,6 +298,7 @@ class PublicProfileArchitectureTest {
     fun testNotFoundForBlankUserId() = runBlocking {
         val fakeDao = object : PublicProfileDao {
             override suspend fun getById(id: String): PublicProfileEntity? = null
+            override suspend fun searchLocal(query: String): List<PublicProfileEntity> = emptyList()
             override suspend fun getByIds(ids: List<String>): List<PublicProfileEntity> = emptyList()
             override suspend fun upsert(entity: PublicProfileEntity) {}
             override suspend fun upsertAll(entities: List<PublicProfileEntity>) {}
@@ -308,5 +313,76 @@ class PublicProfileArchitectureTest {
 
         val result = repository.getPublicProfile("")
         assertTrue(result is PublicProfileFetchResult.NotFound)
+    }
+
+    @Test
+    fun testConcurrentSingleFlightDeduplication() = runBlocking {
+        val httpCallCount = java.util.concurrent.atomic.AtomicInteger(0)
+        com.example.data.supabase.SupabaseClient.currentToken = "valid_test_token"
+
+        val fakeDao = object : PublicProfileDao {
+            override suspend fun getById(id: String): PublicProfileEntity? = null
+            override suspend fun searchLocal(query: String): List<PublicProfileEntity> = emptyList()
+            override suspend fun getByIds(ids: List<String>): List<PublicProfileEntity> = emptyList()
+            override suspend fun upsert(entity: PublicProfileEntity) {}
+            override suspend fun upsertAll(entities: List<PublicProfileEntity>) {}
+            override suspend fun delete(id: String) {}
+            override suspend fun deleteAll() {}
+        }
+
+        val fakeApiService = object : com.example.data.supabase.SupabaseApiService {
+            override suspend fun getPublicProfiles(
+                apiKey: String,
+                authorization: String,
+                idFilter: String
+            ): retrofit2.Response<List<PublicProfileDto>> {
+                httpCallCount.incrementAndGet()
+                kotlinx.coroutines.delay(100) // Simulate network delay
+                val dto = PublicProfileDto(
+                    id = "concurrent_user",
+                    displayName = "Concurrent Test",
+                    firstName = "Concurrent",
+                    lastName = "Test",
+                    avatarUrl = "avatar.jpg",
+                    updatedAt = "2026-08-10T12:00:00Z"
+                )
+                return retrofit2.Response.success(listOf(dto))
+            }
+
+            override suspend fun getProfiles(
+                apiKey: String,
+                authorization: String,
+                idFilter: String
+            ): retrofit2.Response<List<com.example.data.model.Profile>> {
+                throw IllegalStateException("getProfiles should NOT be called directly for third-party profiles in Realtime!")
+            }
+
+            override suspend fun updateProfile(apiKey: String, authorization: String, idFilter: String, body: Map<String, Any?>): retrofit2.Response<List<com.example.data.model.Profile>> = throw NotImplementedError()
+            override suspend fun getE2EEPublicKey(apiKey: String, authorization: String, userIdFilter: String): retrofit2.Response<List<Map<String, Any>>> = throw NotImplementedError()
+            override suspend fun upsertE2EEPublicKey(apiKey: String, authorization: String, body: Map<String, Any>): retrofit2.Response<Unit> = throw NotImplementedError()
+            override suspend fun sendNotification(apiKey: String, authorization: String, body: Map<String, Any>): retrofit2.Response<Unit> = throw NotImplementedError()
+            override suspend fun createPublication(apiKey: String, authorization: String, body: Map<String, Any>): retrofit2.Response<List<Map<String, Any>>> = throw NotImplementedError()
+        }
+
+        val repository = PublicProfileRepository(
+            publicProfileDao = fakeDao,
+            apiServiceSupplier = { fakeApiService }
+        )
+
+        val deferreds = (1..10).map {
+            kotlinx.coroutines.async(kotlinx.coroutines.Dispatchers.IO) {
+                repository.getPublicProfile("concurrent_user", forceRefresh = true)
+            }
+        }
+
+        val results = deferreds.map { it.await() }
+
+        assertEquals(1, httpCallCount.get())
+        assertEquals(10, results.size)
+        results.forEach { res ->
+            assertTrue(res is PublicProfileFetchResult.Success)
+            assertEquals("concurrent_user", (res as PublicProfileFetchResult.Success).data.id)
+            assertEquals("Concurrent Test", res.data.displayName)
+        }
     }
 }

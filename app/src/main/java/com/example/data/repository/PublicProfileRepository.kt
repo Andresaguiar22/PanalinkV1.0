@@ -109,28 +109,43 @@ class PublicProfileRepository(
 
         // 4. Single-flight deduplication check
         coroutineScope {
-            val existingDeferreds = missingIds.mapNotNull { id -> inFlightRequests[id]?.let { id to it } }.toMap()
-            val idsToFetch = missingIds.filter { !existingDeferreds.containsKey(it) }
+            var newDeferred: Deferred<PublicProfileFetchResult<Map<String, PublicProfile>>>? = null
+            var idsToFetch: List<String> = emptyList()
+            val existingDeferredsMap = mutableMapOf<String, Deferred<PublicProfileFetchResult<Map<String, PublicProfile>>>>()
 
-            val newDeferred = if (idsToFetch.isNotEmpty()) {
-                val deferred = async(Dispatchers.IO) {
-                    fetchRemoteProfilesBatch(idsToFetch)
+            synchronized(inFlightRequests) {
+                val missing = mutableListOf<String>()
+                for (id in missingIds) {
+                    val inFlight = inFlightRequests[id]
+                    if (inFlight != null) {
+                        existingDeferredsMap[id] = inFlight
+                    } else {
+                        missing.add(id)
+                    }
                 }
-                idsToFetch.forEach { id -> inFlightRequests[id] = deferred }
-                deferred
-            } else null
+
+                if (missing.isNotEmpty()) {
+                    idsToFetch = missing
+                    val deferred = async(Dispatchers.IO) {
+                        fetchRemoteProfilesBatch(missing)
+                    }
+                    newDeferred = deferred
+                    missing.forEach { id -> inFlightRequests[id] = deferred }
+                }
+            }
 
             try {
                 // Await newly created deferred if any
-                if (newDeferred != null) {
-                    val res = newDeferred.await()
+                val createdDef = newDeferred
+                if (createdDef != null) {
+                    val res = createdDef.await()
                     if (res is PublicProfileFetchResult.Success<*>) {
                         @Suppress("UNCHECKED_CAST")
                         resultMap.putAll(res.data as Map<String, PublicProfile>)
                     }
                 }
                 // Await existing in-flight deferreds
-                for ((_, def) in existingDeferreds) {
+                for ((_, def) in existingDeferredsMap) {
                     val res = def.await()
                     if (res is PublicProfileFetchResult.Success<*>) {
                         @Suppress("UNCHECKED_CAST")
@@ -138,8 +153,15 @@ class PublicProfileRepository(
                     }
                 }
             } finally {
-                if (idsToFetch.isNotEmpty()) {
-                    idsToFetch.forEach { id -> inFlightRequests.remove(id) }
+                val createdDef = newDeferred
+                if (createdDef != null && idsToFetch.isNotEmpty()) {
+                    synchronized(inFlightRequests) {
+                        idsToFetch.forEach { id ->
+                            if (inFlightRequests[id] === createdDef) {
+                                inFlightRequests.remove(id)
+                            }
+                        }
+                    }
                 }
             }
         }

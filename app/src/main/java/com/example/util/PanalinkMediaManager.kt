@@ -203,83 +203,85 @@ object PanalinkMediaManager {
             var finalMediaFile = mediaFile
             var thumbnailUrl: String? = null
 
-            // 1. Generate and upload thumbnail if it's an Image or Video
-            if (typeLabel.equals("Image", ignoreCase = true)) {
-                // Compress image first for the main file
-                finalMediaFile = compressImage(mediaFile)
-                
-                val thumbFile = generateImageThumbnail(finalMediaFile)
-                if (thumbFile != null) {
-                    val thumbUploadResult = uploadRepository.uploadVideo(
-                        mediaFile = thumbFile,
-                        mediaMimeType = "image/jpeg",
-                        caption = "Thumbnail of $caption",
-                        userId = userId,
-                        fileNamePrefix = "thumb_img_",
-                        type = "images"
-                    )
-                    if (thumbUploadResult.isSuccess) {
-                        thumbnailUrl = thumbUploadResult.getOrThrow().url
-                        Log.i(TAG, "Uploaded image thumbnail to images: $thumbnailUrl")
+            try {
+                // 1. Generate and upload thumbnail if it's an Image or Video
+                if (typeLabel.equals("Image", ignoreCase = true)) {
+                    // Compress image first for the main file
+                    finalMediaFile = compressImage(mediaFile)
+                    
+                    val thumbFile = generateImageThumbnail(finalMediaFile)
+                    if (thumbFile != null) {
+                        val thumbUploadResult = uploadRepository.uploadVideo(
+                            mediaFile = thumbFile,
+                            mediaMimeType = "image/jpeg",
+                            caption = "Thumbnail of $caption",
+                            userId = userId,
+                            fileNamePrefix = "thumb_img_",
+                            type = "images"
+                        )
+                        if (thumbUploadResult.isSuccess) {
+                            thumbnailUrl = thumbUploadResult.getOrThrow().url
+                            Log.i(TAG, "Uploaded image thumbnail to images: $thumbnailUrl")
+                        }
+                        thumbFile.delete() // Clean up local thumb file
                     }
-                    thumbFile.delete() // Clean up local thumb file
-                }
-            } else if (typeLabel.equals("Video", ignoreCase = true)) {
-                // Compress video first
-                finalMediaFile = compressVideo(context, mediaFile) { progress ->
-                    Log.d(TAG, "Video compression progress: $progress")
-                }
-                
-                val thumbFile = generateVideoThumbnail(context, finalMediaFile)
-                if (thumbFile != null) {
-                    val thumbUploadResult = uploadRepository.uploadVideo(
-                        mediaFile = thumbFile,
-                        mediaMimeType = "image/jpeg",
-                        caption = "Thumbnail of $caption",
-                        userId = userId,
-                        fileNamePrefix = "thumb_video_",
-                        type = "images"
-                    )
-                    if (thumbUploadResult.isSuccess) {
-                        thumbnailUrl = thumbUploadResult.getOrThrow().url
-                        Log.i(TAG, "Uploaded video thumbnail to images: $thumbnailUrl")
+                } else if (typeLabel.equals("Video", ignoreCase = true)) {
+                    // Compress video first
+                    finalMediaFile = compressVideo(context, mediaFile) { progress ->
+                        Log.d(TAG, "Video compression progress: $progress")
                     }
-                    thumbFile.delete() // Clean up local thumb file
+                    
+                    val thumbFile = generateVideoThumbnail(context, finalMediaFile)
+                    if (thumbFile != null) {
+                        val thumbUploadResult = uploadRepository.uploadVideo(
+                            mediaFile = thumbFile,
+                            mediaMimeType = "image/jpeg",
+                            caption = "Thumbnail of $caption",
+                            userId = userId,
+                            fileNamePrefix = "thumb_video_",
+                            type = "images"
+                        )
+                        if (thumbUploadResult.isSuccess) {
+                            thumbnailUrl = thumbUploadResult.getOrThrow().url
+                            Log.i(TAG, "Uploaded video thumbnail to images: $thumbnailUrl")
+                        }
+                        thumbFile.delete() // Clean up local thumb file
+                    }
                 }
-            }
 
-            // 2. Upload original media file
-            val category = when (typeLabel.lowercase()) {
-                "image", "photo", "img" -> "images"
-                "video", "vid" -> "videos"
-                "audio", "voice_note", "voice", "audio_note" -> "audio"
-                "sticker", "gif" -> "stickers"
-                "document", "file", "archive", "pdf", "zip", "word", "excel" -> "documents"
-                else -> "documents"
-            }
-            val mediaUploadResult = uploadRepository.uploadVideo(
-                mediaFile = finalMediaFile,
-                mediaMimeType = mimeType,
-                caption = caption,
-                userId = userId,
-                fileNamePrefix = "${typeLabel.lowercase()}_",
-                type = category
-            )
-            
-            // Clean up compressed file if it's not the original
-            if (finalMediaFile.absolutePath != mediaFile.absolutePath) {
-                finalMediaFile.delete()
-            }
+                // 2. Upload original media file
+                val category = when (typeLabel.lowercase()) {
+                    "image", "photo", "img" -> "images"
+                    "video", "vid" -> "videos"
+                    "audio", "voice_note", "voice", "audio_note" -> "audio"
+                    "sticker", "gif" -> "stickers"
+                    "document", "file", "archive", "pdf", "zip", "word", "excel" -> "documents"
+                    else -> "documents"
+                }
+                val mediaUploadResult = uploadRepository.uploadVideo(
+                    mediaFile = finalMediaFile,
+                    mediaMimeType = mimeType,
+                    caption = caption,
+                    userId = userId,
+                    fileNamePrefix = "${typeLabel.lowercase()}_",
+                    type = category
+                )
 
-            if (mediaUploadResult.isSuccess) {
-                val uploadResult = mediaUploadResult.getOrThrow()
-                Log.i(TAG, "Uploaded original media file to $category: ${uploadResult.url}")
-                
-                return@withContext Result.success(uploadResult.copy(
-                    thumbnailUrl = uploadResult.thumbnailUrl ?: thumbnailUrl
-                ))
-            } else {
-                return@withContext Result.failure(mediaUploadResult.exceptionOrNull() ?: Exception("Media upload failed"))
+                if (mediaUploadResult.isSuccess) {
+                    val uploadResult = mediaUploadResult.getOrThrow()
+                    Log.i(TAG, "Uploaded original media file to $category: ${uploadResult.url}")
+                    
+                    return@withContext Result.success(uploadResult.copy(
+                        thumbnailUrl = uploadResult.thumbnailUrl ?: thumbnailUrl
+                    ))
+                } else {
+                    return@withContext Result.failure(mediaUploadResult.exceptionOrNull() ?: Exception("Media upload failed"))
+                }
+            } finally {
+                // Clean up intermediate compressed file if it's not the original
+                if (finalMediaFile.absolutePath != mediaFile.absolutePath && finalMediaFile.exists()) {
+                    try { finalMediaFile.delete() } catch (ignored: Exception) {}
+                }
             }
 
         } catch (e: Exception) {

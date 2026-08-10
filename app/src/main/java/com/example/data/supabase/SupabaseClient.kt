@@ -238,7 +238,8 @@ object SupabaseClient {
             wsUrl += "&token=$token"
         }
 
-        Log.d(TAG, "Connecting Realtime WebSocket to: $wsUrl")
+        val logUrl = com.example.util.LogSanitizer.sanitize(wsUrl)
+        Log.d(TAG, "Connecting Realtime WebSocket to: $logUrl")
         val request = Request.Builder().url(wsUrl).build()
 
         webSocket = okHttpClient.newWebSocket(request, object : WebSocketListener() {
@@ -528,7 +529,10 @@ object SupabaseClient {
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
-                Log.d(TAG, "WebSocket Message: $text")
+                if (BuildConfig.DEBUG) {
+                    val sanitizedText = com.example.util.LogSanitizer.sanitize(text)
+                    Log.d(TAG, "WebSocket Frame: ${sanitizedText.take(200)}")
+                }
                 try {
                     val obj = JSONObject(text)
                     val event = obj.optString("event")
@@ -677,15 +681,14 @@ object SupabaseClient {
                                     clientScope.launch {
                                         val finalProfile = try {
                                             if (actorId.isNotEmpty()) {
-                                                val token = currentToken
-                                                if (token != null) {
-                                                    val resp = apiService?.getProfiles(
-                                                        apiKey = supabaseAnonKey,
-                                                        authorization = "Bearer $token",
-                                                        idFilter = "eq.$actorId"
-                                                    )
-                                                    resp?.body()?.firstOrNull()
-                                                } else null
+                                                val pubRepo = com.example.data.repository.PublicProfileRepository.getInstance(com.example.PanaApplication.instance)
+                                                val result = pubRepo.getPublicProfile(actorId)
+                                                when (result) {
+                                                    is com.example.data.repository.PublicProfileFetchResult.Success -> {
+                                                        com.example.data.repository.PublicProfileResolver.toProfile(result.data)
+                                                    }
+                                                    else -> null
+                                                }
                                             } else null
                                         } catch (e: Exception) {
                                             null
