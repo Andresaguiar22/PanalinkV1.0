@@ -1,0 +1,451 @@
+                            Text(
+                                text = "Tema Visual del Sistema (Motor UI) 🎨:",
+                                color = Color(0xFF90A4AE),
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            // Grid of 8 beautiful futuristic themes
+                            val themesRow1 = listOf(
+                                "dark_teal" to "Teal 🟢",
+                                "royal_purple" to "Purple 🟣",
+                                "neon_orange" to "Orange 🟠",
+                                "nordic_ice" to "Ice ❄️"
+                            )
+                            val themesRow2 = listOf(
+                                "cyberpunk" to "Cyberpunk 👾",
+                                "neon" to "Neon 🔮",
+                                "minimal_white" to "Minimal White ⚪",
+                                "custom" to "Custom Sliders 🛠️"
+                            )
+
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    themesRow1.forEach { (themeKey, themeLabel) ->
+                                        val isSelected = profileThemeChoice == themeKey
+                                        Box(
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .background(
+                                                    color = when (themeKey) {
+                                                        "royal_purple" -> Color(0xFF4A148C)
+                                                        "neon_orange" -> Color(0xFFFF5722)
+                                                        "nordic_ice" -> Color(0xFF37474F)
+                                                        else -> Color(0xFF128C7E)
+                                                    },
+                                                    shape = RoundedCornerShape(10.dp)
+                                                )
+                                                .border(
+                                                    width = if (isSelected) 2.dp else 1.dp,
+                                                    color = if (isSelected) Color.White else Color.Transparent,
+                                                    shape = RoundedCornerShape(10.dp)
+                                                )
+                                                .clickable { 
+                                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                    profileThemeChoice = themeKey 
+                                                }
+                                                .padding(vertical = 10.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                text = themeLabel,
+                                                color = Color.White,
+                                                fontSize = 9.sp,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                                maxLines = 1
+                                            )
+                                        }
+                                    }
+                                }
+
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    themesRow2.forEach { (themeKey, themeLabel) ->
+                                        val isSelected = profileThemeChoice == themeKey
+                                        Box(
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .background(
+                                                    color = when (themeKey) {
+                                                        "cyberpunk" -> Color(0xFF10101F)
+                                                        "neon" -> Color(0xFF0D0D0D)
+                                                        "minimal_white" -> Color(0xFFE2E2E2)
+                                                        else -> Color(0xFF263238)
+                                                    },
+                                                    shape = RoundedCornerShape(10.dp)
+                                                )
+                                                .border(
+                                                    width = if (isSelected) 2.dp else 1.dp,
+                                                    color = if (isSelected) {
+                                                        if (themeKey == "minimal_white") Color.Black else Color.White
+                                                    } else Color.Transparent,
+                                                    shape = RoundedCornerShape(10.dp)
+                                                )
+                                                .clickable { 
+                                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                    profileThemeChoice = themeKey 
+                                                }
+                                                .padding(vertical = 10.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                text = themeLabel,
+                                                color = if (themeKey == "minimal_white") Color.Black else Color.White,
+                                                fontSize = 8.5.sp,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                                maxLines = 1
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Dynamic sliders if "custom" is selected
+                            if (profileThemeChoice == "custom") {
+                                Card(
+                                    colors = CardDefaults.cardElevation().let { CardDefaults.cardColors(containerColor = Color(0xFF101D24).copy(alpha = 0.5f)) },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .border(1.dp, Color(0xFF25D366).copy(alpha = 0.3f), RoundedCornerShape(12.dp)),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Column(modifier = Modifier.padding(12.dp)) {
+                                        Text(
+                                            text = "Motor de Color Personalizado (Fina-Tuning) 🛠️",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 13.sp,
+                                            color = Color(0xFF25D366)
+                                        )
+                                        
+                                        Spacer(modifier = Modifier.height(8.dp))
+
+                                        Text("Color Primario (RGB):", fontSize = 11.sp, color = Color.White)
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text("R: $customR", modifier = Modifier.width(40.dp), fontSize = 11.sp, color = Color.Red)
+                                            Slider(
+                                                value = customR.toFloat(),
+                                                onValueChange = { customR = it.toInt() },
+                                                valueRange = 0f..255f,
+                                                modifier = Modifier.weight(1f),
+                                                colors = SliderDefaults.colors(activeTrackColor = Color.Red, thumbColor = Color.Red)
+                                            )
+                                        }
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text("G: $customG", modifier = Modifier.width(40.dp), fontSize = 11.sp, color = Color.Green)
+                                            Slider(
+                                                value = customG.toFloat(),
+                                                onValueChange = { customG = it.toInt() },
+                                                valueRange = 0f..255f,
+                                                modifier = Modifier.weight(1f),
+                                                colors = SliderDefaults.colors(activeTrackColor = Color.Green, thumbColor = Color.Green)
+                                            )
+                                        }
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text("B: $customB", modifier = Modifier.width(40.dp), fontSize = 11.sp, color = Color.Cyan)
+                                            Slider(
+                                                value = customB.toFloat(),
+                                                onValueChange = { customB = it.toInt() },
+                                                valueRange = 0f..255f,
+                                                modifier = Modifier.weight(1f),
+                                                colors = SliderDefaults.colors(activeTrackColor = Color.Cyan, thumbColor = Color.Cyan)
+                                            )
+                                        }
+
+                                        Spacer(modifier = Modifier.height(10.dp))
+
+                                        Text("Color Secundario (RGB):", fontSize = 11.sp, color = Color.White)
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text("R: $customSecR", modifier = Modifier.width(40.dp), fontSize = 11.sp, color = Color.Red)
+                                            Slider(
+                                                value = customSecR.toFloat(),
+                                                onValueChange = { customSecR = it.toInt() },
+                                                valueRange = 0f..255f,
+                                                modifier = Modifier.weight(1f),
+                                                colors = SliderDefaults.colors(activeTrackColor = Color.Red, thumbColor = Color.Red)
+                                            )
+                                        }
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text("G: $customSecG", modifier = Modifier.width(40.dp), fontSize = 11.sp, color = Color.Green)
+                                            Slider(
+                                                value = customSecG.toFloat(),
+                                                onValueChange = { customSecG = it.toInt() },
+                                                valueRange = 0f..255f,
+                                                modifier = Modifier.weight(1f),
+                                                colors = SliderDefaults.colors(activeTrackColor = Color.Green, thumbColor = Color.Green)
+                                            )
+                                        }
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text("B: $customSecB", modifier = Modifier.width(40.dp), fontSize = 11.sp, color = Color.Cyan)
+                                            Slider(
+                                                value = customSecB.toFloat(),
+                                                onValueChange = { customSecB = it.toInt() },
+                                                valueRange = 0f..255f,
+                                                modifier = Modifier.weight(1f),
+                                                colors = SliderDefaults.colors(activeTrackColor = Color.Cyan, thumbColor = Color.Cyan)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(16.dp))
+
+                            // Minimalist Mode Toggle
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(Color(0xFF1F2C34), RoundedCornerShape(12.dp))
+                                    .clickable {
+                                        val nextVal = !activeMinimalistMode
+                                        com.example.ui.theme.ThemeManager.isMinimalistMode.value = nextVal
+                                        prefs.edit().putBoolean("minimalist_mode_global", nextVal).apply()
+                                    }
+                                    .padding(14.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Modo Minimalista Futurista 🌐",
+                                        color = Color.White,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = "UI ultra limpia sin textos superfluos en botones ni menús.",
+                                        color = Color(0xFF90A4AE),
+                                        fontSize = 11.sp
+                                    )
+                                }
+                                Switch(
+                                    checked = activeMinimalistMode,
+                                    onCheckedChange = { nextVal ->
+                                        com.example.ui.theme.ThemeManager.isMinimalistMode.value = nextVal
+                                        prefs.edit().putBoolean("minimalist_mode_global", nextVal).apply()
+                                    },
+                                    colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFF25D366))
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(16.dp))
+
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFF1F2C34)),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .border(1.dp, Color(0xFF00FF85).copy(alpha = 0.2f), RoundedCornerShape(12.dp)),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(14.dp)) {
+                                    Text(
+                                        text = "Personalización de la Barra Inferior 💠",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp,
+                                        color = Color(0xFF00FF85)
+                                    )
+                                    Text(
+                                        text = "Configura la forma, bordes y la rotación dinámica de colores.",
+                                        color = Color(0xFF90A4AE),
+                                        fontSize = 11.sp
+                                    )
+
+                                    Spacer(modifier = Modifier.height(14.dp))
+
+                                    Text(
+                                        text = "Paleta de Colores Dinámica 🎨:",
+                                        color = Color.White,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+
+                                    Spacer(modifier = Modifier.height(8.dp))
+
+                                    val colorPresets = listOf(
+                                        "tropical" to "Tropical 🌴",
+                                        "neon_cyber" to "Cyberpunk 👾",
+                                        "monochrome" to "Elegante 🌑",
+                                        "sunset" to "Atardecer 🌅",
+                                        "aurora" to "Aurora 🌌"
+                                    )
+
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        val firstThree = colorPresets.take(3)
+                                        firstThree.forEach { (presetKey, label) ->
+                                            val isSelected = bottomBarColorChoice == presetKey
+                                            Box(
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .background(
+                                                        color = if (isSelected) Color(0xFF00FF85).copy(alpha = 0.2f) else Color(0xFF101D24),
+                                                        shape = RoundedCornerShape(8.dp)
+                                                    )
+                                                    .border(
+                                                        width = if (isSelected) 1.5.dp else 1.dp,
+                                                        color = if (isSelected) Color(0xFF00FF85) else Color.Gray.copy(alpha = 0.3f),
+                                                        shape = RoundedCornerShape(8.dp)
+                                                    )
+                                                    .clickable {
+                                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                        bottomBarColorChoice = presetKey
+                                                    }
+                                                    .padding(vertical = 8.dp),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text(
+                                                    text = label,
+                                                    color = if (isSelected) Color(0xFF00FF85) else Color.White,
+                                                    fontSize = 10.5.sp,
+                                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    Spacer(modifier = Modifier.height(6.dp))
+
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        val remaining = colorPresets.drop(3)
+                                        remaining.forEach { (presetKey, label) ->
+                                            val isSelected = bottomBarColorChoice == presetKey
+                                            Box(
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .background(
+                                                        color = if (isSelected) Color(0xFF00FF85).copy(alpha = 0.2f) else Color(0xFF101D24),
+                                                        shape = RoundedCornerShape(8.dp)
+                                                    )
+                                                    .border(
+                                                        width = if (isSelected) 1.5.dp else 1.dp,
+                                                        color = if (isSelected) Color(0xFF00FF85) else Color.Gray.copy(alpha = 0.3f),
+                                                        shape = RoundedCornerShape(8.dp)
+                                                    )
+                                                    .clickable {
+                                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                        bottomBarColorChoice = presetKey
+                                                    }
+                                                    .padding(vertical = 8.dp),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text(
+                                                    text = label,
+                                                    color = if (isSelected) Color(0xFF00FF85) else Color.White,
+                                                    fontSize = 10.5.sp,
+                                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                                )
+                                            }
+                                        }
+                                        // Empty spacer to align the grid properly
+                                        Spacer(modifier = Modifier.weight(1f))
+                                    }
+
+                                    Spacer(modifier = Modifier.height(16.dp))
+
+                                    Text(
+                                        text = "Geometría y Forma de Bordes 📐:",
+                                        color = Color.White,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+
+                                    Spacer(modifier = Modifier.height(8.dp))
+
+                                    val shapePresets = listOf(
+                                        "pill" to "Píldora 💊",
+                                        "rounded_rect" to "Suave 🔲",
+                                        "cut_corners" to "Futurista 🔪",
+                                        "wave" to "Onda 🌊",
+                                        "sharp" to "Rectangular ⬛"
+                                    )
+
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        val firstThreeShapes = shapePresets.take(3)
+                                        firstThreeShapes.forEach { (presetKey, label) ->
+                                            val isSelected = bottomBarShapeChoice == presetKey
+                                            Box(
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .background(
+                                                        color = if (isSelected) Color(0xFF00FF85).copy(alpha = 0.2f) else Color(0xFF101D24),
+                                                        shape = RoundedCornerShape(8.dp)
+                                                    )
+                                                    .border(
+                                                        width = if (isSelected) 1.5.dp else 1.dp,
+                                                        color = if (isSelected) Color(0xFF00FF85) else Color.Gray.copy(alpha = 0.3f),
+                                                        shape = RoundedCornerShape(8.dp)
+                                                    )
+                                                    .clickable {
+                                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                        bottomBarShapeChoice = presetKey
+                                                    }
+                                                    .padding(vertical = 8.dp),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text(
+                                                    text = label,
+                                                    color = if (isSelected) Color(0xFF00FF85) else Color.White,
+                                                    fontSize = 10.5.sp,
+                                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    Spacer(modifier = Modifier.height(6.dp))
+
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        val remainingShapes = shapePresets.drop(3)
+                                        remainingShapes.forEach { (presetKey, label) ->
+                                            val isSelected = bottomBarShapeChoice == presetKey
+                                            Box(
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .background(
+                                                        color = if (isSelected) Color(0xFF00FF85).copy(alpha = 0.2f) else Color(0xFF101D24),
+                                                        shape = RoundedCornerShape(8.dp)
+                                                    )
+                                                    .border(
+                                                        width = if (isSelected) 1.5.dp else 1.dp,
+                                                        color = if (isSelected) Color(0xFF00FF85) else Color.Gray.copy(alpha = 0.3f),
+                                                        shape = RoundedCornerShape(8.dp)
+                                                    )
+                                                    .clickable {
+                                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                        bottomBarShapeChoice = presetKey
+                                                    }
+                                                    .padding(vertical = 8.dp),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text(
+                                                    text = label,
+                                                    color = if (isSelected) Color(0xFF00FF85) else Color.White,
+                                                    fontSize = 10.5.sp,
+                                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                                )
+                                            }
+                                        }
+                                        // Empty spacer to align the grid properly
+                                        Spacer(modifier = Modifier.weight(1f))
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(20.dp))

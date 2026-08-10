@@ -1,0 +1,3368 @@
+package com.example.ui.screen
+
+import com.example.ui.components.chat.state.*
+import com.example.ui.components.chat.voice.voiceGestureDetector
+import com.example.ui.components.chat.voice.VoiceGestureEvent
+import com.example.util.ChatScrollPositionManager
+import com.example.ui.components.chat.bubble.*
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.runtime.saveable.rememberSaveable
+import kotlinx.coroutines.flow.distinctUntilChanged
+
+import android.content.Context
+import android.net.Uri
+import android.util.Log
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.*
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.navigation.NavHostController
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.ChatBubbleOutline
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.util.VelocityTracker
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import coil.compose.AsyncImage
+import coil.decode.GifDecoder
+import coil.request.ImageRequest
+import com.example.data.model.Message
+import com.example.data.model.Profile
+import com.example.data.supabase.SupabaseClient
+import com.example.data.repository.StickerRepository
+import com.example.data.model.StickerResult
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.layout.onGloballyPositioned
+import com.example.ui.theme.bounceClick
+import com.example.ui.theme.getAvatarGradient
+import com.example.ui.components.VoiceMessageBubble
+import com.example.ui.viewmodel.ChatUiState
+import com.example.ui.viewmodel.ChatViewModel
+import com.example.util.AudioPlayer
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.*
+
+enum class RecordState {
+    IDLE, RECORDING, LOCKED, PREVIEWING
+}
+
+@Composable
+fun EncryptionBanner() {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        color = Color(0xFF1F2C34),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Default.Lock,
+                contentDescription = null,
+                tint = Color(0xFFFDC11D),
+                modifier = Modifier.size(16.dp)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Text(
+                text = "Los mensajes están cifrados de extremo a extremo. Nadie fuera de este chat, ni siquiera PanaLink, puede leerlos ni escucharlos. Toca para obtener más información.",
+                color = Color(0xFF8596A0),
+                fontSize = 12.sp,
+                textAlign = TextAlign.Center,
+                lineHeight = 16.sp
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@Composable
+fun ChatScreen(
+    viewModel: ChatViewModel,
+    chatId: String,
+    otherUserId: String,
+    onBack: () -> Unit,
+    onNavigateToChatMedia: () -> Unit = {},
+    onNavigateToSearch: () -> Unit = {},
+    onPlaylistAction: (String, String) -> Unit = { _, _ -> },
+    navController: NavHostController? = null
+) {
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val currentUid = viewModel.currentUserId
+
+    // Message Highlight state
+    var highlightedMessageId by remember { mutableStateOf<String?>(null) }
+    
+    // Restore and Persist Scroll Position
+    val savedPosition = remember(chatId) {
+        ConversationStateManager.getScrollPosition(context, chatId)
+    }
+    val lazyListState = rememberLazyListState(
+        initialFirstVisibleItemIndex = savedPosition?.first ?: 0,
+        initialFirstVisibleItemScrollOffset = savedPosition?.second ?: 0
+    )
+
+    // Message Jump Controller
+    val jumpController = remember(lazyListState) { MessageJumpController(lazyListState) }
+
+    // Persistent Scroll Logic
+    LaunchedEffect(lazyListState, chatId) {
+        snapshotFlow { lazyListState.firstVisibleItemIndex to lazyListState.firstVisibleItemScrollOffset }
+            .distinctUntilChanged()
+            .collect { pos ->
+                ConversationStateManager.saveScrollPosition(context, chatId, pos.first, pos.second)
+            }
+    }
+
+    // Smart Scroll Controller
+    val messages = (uiState as? ChatUiState.Success)?.messages ?: emptyList()
+    val smartScrollController = rememberSmartScrollController(
+        lazyListState = lazyListState,
+        messages = messages,
+        currentUserId = currentUid
+    )
+
+    // Identify first unread message for divider
+    val firstUnreadMessageId by remember(messages) {
+        derivedStateOf {
+            messages.firstOrNull { it.senderId != currentUid && it.status != "seen" }?.id
+        }
+    }
+
+    // Scroll To Bottom Logic
+    val unreadMessagesCount by remember(messages) {
+        derivedStateOf {
+            messages.count { it.senderId != currentUid && it.status != "seen" }
+        }
+    }
+
+    // Message Read Tracker
+    MessageReadTracker(
+        lazyListState = lazyListState,
+        messages = messages,
+        onMessagesVisible = { visibleIds ->
+            // Mark visible messages as read in background
+            viewModel.markMessagesAsRead(visibleIds)
+        }
+    )
+
+    val inputMessage by viewModel.inputMessage.collectAsStateWithLifecycle()
+    val isGhostMode by viewModel.isGhostMode.collectAsStateWithLifecycle()
+    val typingUsers = viewModel.typingUsers.collectAsStateWithLifecycle()
+    val userPresence = viewModel.userPresence.collectAsStateWithLifecycle()
+    val messageReactions = viewModel.messageReactions.collectAsStateWithLifecycle()
+    val editedMessages = viewModel.editedMessages.collectAsStateWithLifecycle()
+
+    // Pagination trigger when scrolling up
+    LaunchedEffect(lazyListState) {
+        snapshotFlow { lazyListState.firstVisibleItemIndex }
+            .collect { firstVisibleIndex ->
+                if (firstVisibleIndex == 0 && (uiState as? ChatUiState.Success)?.messages?.isNotEmpty() == true) {
+                    viewModel.loadMoreMessages(chatId)
+                }
+            }
+    }
+
+    // Debounced typing status broadcast
+    var isTypingSent by remember { mutableStateOf(false) }
+    LaunchedEffect(inputMessage) {
+        if (inputMessage.isNotEmpty()) {
+            if (!isTypingSent) {
+                viewModel.sendTypingStatus(true)
+                isTypingSent = true
+            }
+            delay(4000)
+            viewModel.sendTypingStatus(false)
+            isTypingSent = false
+        } else {
+            if (isTypingSent) {
+                viewModel.sendTypingStatus(false)
+                isTypingSent = false
+            }
+        }
+    }
+
+    val prefs = remember { context.getSharedPreferences("panalink_prefs", android.content.Context.MODE_PRIVATE) }
+    val chatTextSize = remember { prefs.getFloat("chat_text_size_${currentUid}", 15f) }
+    var chatWallpaperState by remember { 
+        mutableStateOf(prefs.getString("chat_wallpaper_${currentUid}", "dark_slate") ?: "dark_slate") 
+    }
+
+    val colors = com.example.ui.theme.LocalAppColors.current
+    val coroutineScope = rememberCoroutineScope()
+
+    // Handle Jumps from Search
+    val targetMessageId = navController?.currentBackStackEntry?.savedStateHandle?.get<String>("targetMessageId")
+    LaunchedEffect(targetMessageId, messages) {
+        if (targetMessageId != null && messages.isNotEmpty()) {
+            navController.currentBackStackEntry?.savedStateHandle?.remove<String>("targetMessageId")
+            if (jumpController.jumpToMessage(targetMessageId, messages)) {
+                highlightedMessageId = targetMessageId
+                delay(2000)
+                highlightedMessageId = null
+            }
+        }
+    }
+    val haptic = LocalHapticFeedback.current
+
+    // Replying message state & Editing message state preserved in ViewModel
+    val replyingToMessage by viewModel.replyingToMessage.collectAsStateWithLifecycle()
+    val editingMessage by viewModel.editingMessage.collectAsStateWithLifecycle()
+    val isMuted by viewModel.isMuted.collectAsStateWithLifecycle()
+    val isPinned by viewModel.isPinned.collectAsStateWithLifecycle()
+    LaunchedEffect(chatId) {
+        if (chatId.isNotEmpty()) {
+            viewModel.loadChatMuteStatus(chatId, context)
+            viewModel.loadChatPinStatus(chatId, context)
+        }
+    }
+    var isLocalSearching by rememberSaveable { mutableStateOf(false) }
+    var localSearchQuery by rememberSaveable { mutableStateOf("") }
+
+    val feedViewModel: com.example.ui.viewmodel.FeedViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
+
+    // Media states
+    var isAttachmentMenuOpen by rememberSaveable { mutableStateOf(false) }
+    var isStickerPanelOpen by rememberSaveable { mutableStateOf(false) }
+    var isUploading by remember { mutableStateOf(false) }
+    var lightboxImageUrl by remember { mutableStateOf<String?>(null) }
+    
+    // Chat Menu & Background states
+    var showChatMenu by remember { mutableStateOf(false) }
+    var showBackgroundDialog by remember { mutableStateOf(false) }
+    var showPlaylistPicker by remember { mutableStateOf(false) }
+
+    // Audio recording states
+    var recordState by remember { mutableStateOf(RecordState.IDLE) }
+    var recordDurationSeconds by remember { mutableStateOf(0) }
+    var isRecordingPaused by remember { mutableStateOf(false) }
+    var hasMicPermission by remember { mutableStateOf(false) }
+    var recordFile by remember { mutableStateOf<File?>(null) }
+    var micDragOffsetX by remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
+    var micDragOffsetY by remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
+
+    // Audio player state (single player instance for screen)
+    val audioPlayer = remember { AudioPlayer() }
+    val audioPlayerState by audioPlayer.playerState.collectAsStateWithLifecycle()
+    val playingAudioUrl = audioPlayerState.currentUrl
+    val isAudioPlaying = audioPlayerState.isPlaying
+    val audioCurrentPositionMs = audioPlayerState.currentPositionMs.toInt()
+    val audioDurationMs = audioPlayerState.durationMs.toInt()
+    val audioProgress = if (audioPlayerState.durationMs > 0) {
+        (audioPlayerState.currentPositionMs.toFloat() / audioPlayerState.durationMs.toFloat()).coerceIn(0f, 1f)
+    } else 0f
+
+    // Simulated Call overlay states
+    var activeCallState by remember { mutableStateOf<String?>(null) } // "ringing", "active", null
+    var callTimerSeconds by remember { mutableStateOf(0) }
+    var showContactDetail by remember { mutableStateOf(false) }
+
+    // Multi-select & Forward messages states
+    var activeGhostMessage by remember { mutableStateOf<com.example.data.model.Message?>(null) }
+    var selectedMessageIds = remember { mutableStateOf(setOf<String>()) }
+    var showForwardDialog by remember { mutableStateOf(false) }
+    var contactsList by remember { mutableStateOf<List<Profile>>(emptyList()) }
+    var forwardingMessageContent by remember { mutableStateOf<String?>(null) }
+
+    // Repositories for forwarding
+    val profilesRepository = remember { com.example.data.repository.ProfilesRepository() }
+    val chatsRepository = remember { com.example.data.repository.ChatsRepository() }
+
+    // Compose Performance Engine: Derived state for scroll-to-bottom FAB
+    val showScrollToBottom by remember {
+        derivedStateOf {
+            val total = lazyListState.layoutInfo.totalItemsCount
+            if (total == 0) false
+            else {
+                val lastVisibleIndex = lazyListState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+                lastVisibleIndex < total - 5
+            }
+        }
+    }
+
+    // Stable callback references to prevent item recomposition in LazyColumn
+    val onReplyCallback = remember(viewModel) { { msg: Message -> viewModel.setReplyingToMessage(msg) } }
+    val onDeleteForMeCallback = remember(viewModel) { { id: String -> viewModel.deleteMessageForMe(id) } }
+    val onDeleteForEveryoneCallback = remember(viewModel) { { id: String -> viewModel.deleteMessageForEveryone(id) } }
+    val onForwardCallback = remember { { msg: Message -> forwardingMessageContent = msg.textContent; showForwardDialog = true } }
+    val onImageClickCallback = remember { { url: String -> lightboxImageUrl = url } }
+    val onReactCallback = remember(viewModel) { { msgId: String, emoji: String -> viewModel.addReaction(msgId, emoji) } }
+    val onEditCallback = remember(viewModel) { { msg: Message -> viewModel.setEditingMessage(msg); viewModel.onInputMessageChange(msg.textContent) } }
+
+    // Request permissions launcher
+    val micPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        hasMicPermission = isGranted
+        if (isGranted) {
+            Toast.makeText(context, "¡Micrófono listo, mantén presionado para hablar!", Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(context, "Permiso denegado para las notas de voz", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // Trigger load on entry
+    LaunchedEffect(chatId) {
+        viewModel.loadChatHistory(chatId, otherUserId)
+        hasMicPermission = androidx.core.content.ContextCompat.checkSelfPermission(
+            context,
+            android.Manifest.permission.RECORD_AUDIO
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+    }
+
+    // Clear active chat status on disposal (navigation exit) and release audio resources
+    DisposableEffect(chatId) {
+        onDispose {
+            viewModel.sendTypingStatus(false)
+            viewModel.clearActiveChat()
+            audioPlayer.release()
+            try {
+                viewModel.onVoiceGestureEvent(
+                    event = VoiceGestureEvent.CancelRecording,
+                    context = context
+                )
+            } catch (e: Exception) {}
+            viewModel.cancelPreviewRecording()
+        }
+    }
+
+    // Intercept back button when in PREVIEWING or LOCKED state
+    androidx.activity.compose.BackHandler(enabled = recordState == RecordState.PREVIEWING || recordState == RecordState.LOCKED) {
+        if (recordState == RecordState.PREVIEWING) {
+            viewModel.cancelPreviewRecording()
+        } else if (recordState == RecordState.LOCKED) {
+            viewModel.onVoiceGestureEvent(
+                event = VoiceGestureEvent.CancelRecording,
+                context = context
+            )
+        }
+    }
+
+    val vmRecordState by viewModel.recordState.collectAsStateWithLifecycle()
+    val voiceAmplitudes by viewModel.voiceAmplitudes.collectAsStateWithLifecycle()
+    val previewPlayerState by viewModel.previewPlayerState.collectAsStateWithLifecycle()
+    val previewWaveform by viewModel.previewWaveform.collectAsStateWithLifecycle()
+
+    LaunchedEffect(Unit) {
+        viewModel.cleanOldCache(context)
+    }
+
+    LaunchedEffect(vmRecordState) {
+        when (vmRecordState) {
+            com.example.ui.viewmodel.RecordState.IDLE, com.example.ui.viewmodel.RecordState.CANCELING -> {
+                recordState = RecordState.IDLE
+            }
+            com.example.ui.viewmodel.RecordState.RECORDING -> {
+                recordState = RecordState.RECORDING
+            }
+            com.example.ui.viewmodel.RecordState.LOCKED_RECORDING -> {
+                recordState = RecordState.LOCKED
+            }
+            com.example.ui.viewmodel.RecordState.PREVIEWING -> {
+                recordState = RecordState.PREVIEWING
+            }
+        }
+    }
+
+    // Voice recording timer
+    LaunchedEffect(recordState) {
+        if (recordState != RecordState.IDLE) {
+            recordDurationSeconds = 0
+            isRecordingPaused = false
+            while (recordState != RecordState.IDLE) {
+                delay(200)
+                recordDurationSeconds = viewModel.getRecordingElapsedSeconds()
+            }
+        }
+    }
+
+    // Call timer
+    LaunchedEffect(activeCallState) {
+        if (activeCallState == "active") {
+            callTimerSeconds = 0
+            while (activeCallState == "active") {
+                delay(1000)
+                callTimerSeconds++
+            }
+        }
+    }
+
+    // Active Sound Notification (subtle in-app active chat sound)
+    LaunchedEffect(viewModel) {
+        viewModel.playNotificationSound.collectLatest {
+            com.example.service.NotificationHelper.playActiveChatSound(context)
+        }
+    }
+
+    // Outgoing swoosh sound feedback when sending message
+    LaunchedEffect(viewModel) {
+        viewModel.playOutgoingSound.collectLatest {
+            com.example.service.NotificationHelper.playOutgoingSound(context)
+        }
+    }
+
+    // Lazy load contacts for forwarding
+    LaunchedEffect(showForwardDialog) {
+        if (showForwardDialog) {
+            profilesRepository.getMyContacts()
+                .onSuccess { contacts ->
+                    contactsList = contacts
+                }
+        }
+    }
+
+    if (activeGhostMessage != null) {
+        GhostViewerDialog(
+            message = activeGhostMessage!!,
+            onClose = {
+                viewModel.consumeGhostMessage(activeGhostMessage!!.id)
+                activeGhostMessage = null
+            }
+        )
+    }
+
+    // Media attachment launchers
+    val imagePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let {
+            coroutineScope.launch {
+                try {
+                    val mime = context.contentResolver.getType(it) ?: "image/jpeg"
+                    viewModel.uploadAndSendMedia(
+                        uri = it,
+                        mimeType = mime,
+                        typeLabel = "Image",
+                        replyToId = replyingToMessage?.id,
+                        context = context,
+                        onProgress = { isUploading = it }
+                    )
+                } catch (e: Exception) {
+                    Toast.makeText(context, "No se pudo leer la imagen", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    val videoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let {
+            coroutineScope.launch {
+                try {
+                    isUploading = true
+                    val mime = context.contentResolver.getType(it) ?: "video/mp4"
+                    
+                    viewModel.uploadAndSendMedia(
+                        uri = it,
+                        mimeType = mime,
+                        typeLabel = "Video",
+                        replyToId = replyingToMessage?.id,
+                        context = context,
+                        onProgress = { isUploading = it }
+                    )
+                } catch (e: Exception) {
+                    isUploading = false
+                    android.util.Log.e("ChatScreen", "Fallo al procesar o comprimir video", e)
+                    Toast.makeText(context, "No se pudo leer o comprimir el video", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    val audioPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let {
+            coroutineScope.launch {
+                try {
+                    val mime = context.contentResolver.getType(it) ?: "audio/mpeg"
+                    viewModel.uploadAndSendMedia(
+                        uri = it,
+                        mimeType = mime,
+                        typeLabel = "Audio",
+                        replyToId = replyingToMessage?.id,
+                        context = context,
+                        onProgress = { isUploading = it }
+                    )
+                } catch (e: Exception) {
+                    Toast.makeText(context, "No se pudo leer el audio", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    val documentPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        uri?.let {
+            coroutineScope.launch {
+                try {
+                    val mime = context.contentResolver.getType(it) ?: "application/pdf"
+                    var docFileName: String? = null
+                    try {
+                        context.contentResolver.query(it, null, null, null, null)?.use { cursor ->
+                            if (cursor.moveToFirst()) {
+                                val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                                if (nameIndex != -1) {
+                                    docFileName = cursor.getString(nameIndex)
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        // ignore query failure fallback
+                    }
+                    if (docFileName.isNullOrEmpty()) {
+                        docFileName = it.lastPathSegment?.substringAfterLast("/")
+                    }
+
+                    viewModel.uploadAndSendMedia(
+                        uri = it,
+                        mimeType = mime,
+                        typeLabel = "Document",
+                        replyToId = replyingToMessage?.id,
+                        context = context,
+                        fileName = docFileName,
+                        onProgress = { isUploading = it }
+                    )
+                } catch (e: Exception) {
+                    Toast.makeText(context, "No se pudo leer el documento", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    val cameraLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicturePreview()
+    ) { bitmap ->
+        bitmap?.let {
+            coroutineScope.launch {
+                try {
+                    val tempFile = java.io.File(context.cacheDir, "camera_temp_${java.util.UUID.randomUUID()}.jpg")
+                    java.io.FileOutputStream(tempFile).use { out ->
+                        it.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, out)
+                    }
+                    viewModel.uploadAndSendMedia(
+                        file = tempFile,
+                        mimeType = "image/jpeg",
+                        typeLabel = "Image",
+                        replyToId = replyingToMessage?.id,
+                        context = context,
+                        onProgress = { isUploading = it }
+                    )
+                } catch (e: Exception) {
+                    Toast.makeText(context, "Error procesando foto", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    val cameraPermissionState = com.example.util.rememberCameraPermissionState(
+        onPermissionsGranted = {
+            cameraLauncher.launch(null)
+        }
+    )
+
+    // Helper functions for selection
+    fun toggleSelection(msgId: String) {
+        val currentSet = selectedMessageIds.value
+        if (currentSet.contains(msgId)) {
+            selectedMessageIds.value = currentSet - msgId
+        } else {
+            selectedMessageIds.value = currentSet + msgId
+        }
+    }
+
+    com.example.util.CameraPermissionDialog(
+        showExplanation = cameraPermissionState.showExplanationDialog,
+        isPermanentlyDenied = cameraPermissionState.isPermanentlyDenied,
+        onDismiss = cameraPermissionState.dismissDialog,
+        onRequestPermission = { cameraPermissionState.requestPermissions() },
+        onOpenSettings = cameraPermissionState.openSettings
+    )
+
+    val myPlaylists by viewModel.myPlaylists.collectAsStateWithLifecycle()
+    LaunchedEffect(showPlaylistPicker) {
+        if (showPlaylistPicker) {
+            viewModel.loadMyPlaylists()
+        }
+    }
+
+    Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        topBar = {
+            val state = uiState as? ChatUiState.Success
+            val otherUser = state?.otherUser
+            TopAppBar(
+                title = {
+                    if (isLocalSearching) {
+                        androidx.compose.foundation.text.BasicTextField(
+                            value = localSearchQuery,
+                            onValueChange = { localSearchQuery = it },
+                            textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 16.sp),
+                            cursorBrush = androidx.compose.ui.graphics.SolidColor(Color(0xFF25D366)),
+                            decorationBox = { innerTextField ->
+                                Box(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    contentAlignment = Alignment.CenterStart
+                                ) {
+                                    if (localSearchQuery.isEmpty()) {
+                                        Text("Buscar en este chat...", color = Color(0xFF8596A0), fontSize = 16.sp)
+                                    }
+                                    innerTextField()
+                                }
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 8.dp)
+                                .testTag("chat_local_search_input")
+                        )
+                    } else {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .bounceClick()
+                                .clickable { showContactDetail = true }
+                        ) {
+                            AsyncImage(
+                                model = otherUser?.avatarUrl ?: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80",
+                                contentDescription = "Avatar",
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(CircleShape),
+                                contentScale = ContentScale.Crop
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = otherUser?.displayName ?: "Cargando pana...",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 16.sp,
+                                        color = Color.White
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Icon(
+                                        imageVector = Icons.Default.Lock,
+                                        contentDescription = "Cifrado",
+                                        tint = Color(0xFF00A884),
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                }
+                                    val isTyping = typingUsers.value.contains(otherUser?.id ?: "other_user_id_demo")
+                                    val otherPresence = userPresence.value[otherUser?.id ?: "other_user_id_demo"] ?: "en línea"
+                                    Text(
+                                        text = if (isTyping) "escribiendo..." else otherPresence,
+                                        fontSize = 11.sp,
+                                        color = if (isTyping) Color(0xFF25D366) else Color(0xFF8596A0),
+                                        fontStyle = if (isTyping) androidx.compose.ui.text.font.FontStyle.Italic else androidx.compose.ui.text.font.FontStyle.Normal
+                                    )
+
+                            }
+                        }
+                    }
+                },
+                actions = {
+                    IconButton(
+                        onClick = { isLocalSearching = true },
+                        modifier = Modifier.bounceClick()
+                    ) {
+                        Icon(Icons.Default.Search, contentDescription = "Buscar en chat", tint = Color.White)
+                    }
+                    IconButton(
+                        onClick = {
+                            if (otherUser != null) {
+                                com.example.call.CallManager.getInstance(context).startCall(
+                                    targetUserId = otherUser.id,
+                                    targetUserName = otherUser.displayName,
+                                    type = com.example.call.CallType.VIDEO
+                                )
+                            }
+                        },
+                        modifier = Modifier.bounceClick()
+                    ) {
+                        Icon(Icons.Default.Videocam, contentDescription = "Videollamada", tint = Color.White)
+                    }
+                    IconButton(
+                        onClick = {
+                            if (otherUser != null) {
+                                com.example.call.CallManager.getInstance(context).startCall(
+                                    targetUserId = otherUser.id,
+                                    targetUserName = otherUser.displayName,
+                                    type = com.example.call.CallType.AUDIO
+                                )
+                            }
+                        },
+                        modifier = Modifier.bounceClick()
+                    ) {
+                        Icon(Icons.Default.Call, contentDescription = "Llamada de voz", tint = Color.White)
+                    }
+
+                        // Chat Options Menu
+                        Box {
+                            IconButton(onClick = { showChatMenu = true }) {
+                                Icon(Icons.Default.MoreVert, contentDescription = "Más opciones", tint = Color.White)
+                            }
+                            DropdownMenu(
+                                expanded = showChatMenu,
+                                onDismissRequest = { showChatMenu = false },
+                                modifier = Modifier.background(Color(0xFF232D36))
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("Ver contacto", color = Color.White) },
+                                    onClick = {
+                                        showChatMenu = false
+                                        showContactDetail = true
+                                    },
+                                    leadingIcon = { Icon(Icons.Default.Person, contentDescription = null, tint = Color(0xFF8596A0)) }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(if (isMuted) "Activar notificaciones" else "Silenciar notificaciones", color = Color.White) },
+                                    onClick = {
+                                        showChatMenu = false
+                                        val newMutedState = !isMuted
+                                        viewModel.muteChat(chatId, newMutedState)
+                                        Toast.makeText(
+                                            context,
+                                            if (newMutedState) "Notificaciones silenciadas 🔇" else "Notificaciones activadas 🔔",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            if (isMuted) Icons.Default.Notifications else Icons.Default.NotificationsOff,
+                                            contentDescription = null,
+                                            tint = Color(0xFF8596A0)
+                                        )
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(if (isPinned) "Desanclar chat" else "Fijar chat", color = Color.White) },
+                                    onClick = {
+                                        showChatMenu = false
+                                        val newPinnedState = !isPinned
+                                        viewModel.pinChat(chatId, newPinnedState)
+                                        Toast.makeText(
+                                            context,
+                                            if (newPinnedState) "Chat anclado 📌" else "Chat desanclado 📌",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            Icons.Default.PushPin,
+                                            contentDescription = null,
+                                            tint = Color(0xFF8596A0)
+                                        )
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Archivos multimedia", color = Color.White) },
+                                    onClick = {
+                                        showChatMenu = false
+                                        onNavigateToChatMedia()
+                                    },
+                                    leadingIcon = { Icon(Icons.Default.PermMedia, contentDescription = null, tint = Color(0xFF8596A0)) }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Buscar", color = Color.White) },
+                                    onClick = {
+                                        showChatMenu = false
+                                        onNavigateToSearch()
+                                    },
+                                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = Color(0xFF8596A0)) }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Fondo de chat", color = Color.White) },
+                                    onClick = {
+                                        showChatMenu = false
+                                        showBackgroundDialog = true
+                                    },
+                                    leadingIcon = { Icon(Icons.Default.Wallpaper, contentDescription = null, tint = Color(0xFF8596A0)) }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Vaciar chat", color = Color.White) },
+                                    onClick = {
+                                        showChatMenu = false
+                                        viewModel.clearChat()
+                                        Toast.makeText(context, "Chat vaciado", Toast.LENGTH_SHORT).show()
+                                    },
+                                    leadingIcon = { Icon(Icons.Default.DeleteSweep, contentDescription = null, tint = Color(0xFF8596A0)) }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Borrar chat", color = Color(0xFFFF5252)) },
+                                    onClick = {
+                                        showChatMenu = false
+                                        viewModel.deleteChat { onBack() }
+                                        Toast.makeText(context, "Chat eliminado", Toast.LENGTH_SHORT).show()
+                                    },
+                                    leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = Color(0xFFFF5252)) }
+                                )
+                                var isBlockedUser by remember(otherUserId) { mutableStateOf(profilesRepository.isUserBlocked(otherUserId)) }
+                                DropdownMenuItem(
+                                    text = { Text(if (isBlockedUser) "Desbloquear contacto" else "Bloquear contacto", color = Color(0xFFFF5252)) },
+                                    onClick = {
+                                        showChatMenu = false
+                                        if (otherUserId.isNotEmpty()) {
+                                            val currentlyBlocked = isBlockedUser
+                                            coroutineScope.launch {
+                                                if (currentlyBlocked) {
+                                                    profilesRepository.unblockUser(otherUserId)
+                                                    isBlockedUser = false
+                                                    Toast.makeText(context, "Contacto desbloqueado ✅", Toast.LENGTH_SHORT).show()
+                                                } else {
+                                                    profilesRepository.blockUser(otherUserId)
+                                                    isBlockedUser = true
+                                                    Toast.makeText(context, "Contacto bloqueado 🚫", Toast.LENGTH_SHORT).show()
+                                                }
+                                            }
+                                        }
+                                    },
+                                    leadingIcon = { Icon(Icons.Default.Block, contentDescription = null, tint = Color(0xFFFF5252)) }
+                                )
+                            }
+                        }
+                },
+                navigationIcon = {
+                    if (isLocalSearching) {
+                        IconButton(onClick = {
+                            isLocalSearching = false
+                            localSearchQuery = ""
+                        }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Detener búsqueda", tint = Color.White)
+                        }
+                    } else {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Atrás", tint = Color.White)
+                        }
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = Color(0xFF121214)
+                )
+            )
+        },
+        containerColor = colors.background
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(top = innerPadding.calculateTopPadding())
+                .navigationBarsPadding()
+                .imePadding()
+        ) {
+            // Pinned Message Bar
+            val state = uiState as? ChatUiState.Success
+            
+
+            
+            // Message Area
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+            ) {
+                // Wallpaper background (Doodle pattern)
+                AsyncImage(
+                    model = com.example.R.drawable.chat_doodle_bg_1784868638812,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                    alpha = 0.15f
+                )
+
+                // Optional solid color or other wallpaper logic
+                if (chatWallpaperState.startsWith("http")) {
+                    AsyncImage(
+                        model = chatWallpaperState,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                        alpha = 0.3f
+                    )
+                } else if (chatWallpaperState == "color_solid_green") {
+                    Box(Modifier.fillMaxSize().background(Color(0xFF075E54).copy(alpha = 0.15f)))
+                } else if (chatWallpaperState == "color_solid_blue") {
+                    Box(Modifier.fillMaxSize().background(Color(0xFF003366).copy(alpha = 0.15f)))
+                }
+
+                when (uiState) {
+                    is ChatUiState.Loading -> {
+                        CircularProgressIndicator(
+                            color = colors.primary,
+                            modifier = Modifier.align(Alignment.Center)
+                        )
+                    }
+                    is ChatUiState.Success -> {
+                        val state = uiState as ChatUiState.Success
+                        val rawMessages = if (localSearchQuery.isEmpty()) {
+                            state.messages
+                        } else {
+                            state.messages.filter { it.textContent.contains(localSearchQuery, ignoreCase = true) }
+                        }
+                        val filteredMessages = rawMessages.distinctBy { message ->
+                            if (!message.clientMessageUuid.isNullOrBlank()) message.clientMessageUuid else message.id
+                        }
+                        if (filteredMessages.isEmpty()) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(24.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center
+                            ) {
+                                Text(
+                                    text = if (localSearchQuery.isNotEmpty()) "No se encontraron mensajes de pana 🔍" else "Escribe un mensaje para empezar de pana! 🇻🇪",
+                                    color = Color(0xFF90A4AE),
+                                    fontSize = 14.sp
+                                )
+                            }
+                        } else {
+                            LazyColumn(
+                                state = lazyListState,
+                                modifier = Modifier.fillMaxSize(),
+                                contentPadding = PaddingValues(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                item {
+                                    if ((uiState as? ChatUiState.Success)?.otherUser != null) {
+                                        EncryptionBanner()
+                                    }
+                                }
+                                itemsIndexed(
+                                    filteredMessages,
+                                    key = { index, message ->
+                                        val baseKey = if (!message.clientMessageUuid.isNullOrBlank()) message.clientMessageUuid else message.id
+                                        "${baseKey}_$index"
+                                    },
+                                    contentType = { _, message -> message.messageType ?: if (message.textContent.startsWith("[Sticker] ")) "sticker" else "text" }
+                                ) { index, message ->
+                                    val isMe = message.senderId == currentUid
+
+                                    // Custom Date Separator
+                                    val showDateSeparator = if (index == 0) {
+                                        true
+                                    } else {
+                                        val prevMessage = filteredMessages[index - 1]
+                                        val currDate = message.createdAt.take(10)
+                                        val prevDate = prevMessage.createdAt.take(10)
+                                        currDate != prevDate
+                                    }
+
+                                    if (showDateSeparator) {
+                                        val dateText = try {
+                                            val formatInput = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+                                            val parsedDate = formatInput.parse(message.createdAt.take(10)) ?: java.util.Date()
+                                            val today = java.util.Date()
+                                            val formatOutput = java.text.SimpleDateFormat("d 'de' MMMM, yyyy", java.util.Locale("es", "VE"))
+                                            
+                                            val sdfDiff = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US)
+                                            val todayStr = sdfDiff.format(today)
+                                            val dateStr = sdfDiff.format(parsedDate)
+                                            
+                                            val calendar = java.util.Calendar.getInstance()
+                                            calendar.time = today
+                                            calendar.add(java.util.Calendar.DATE, -1)
+                                            val yesterdayStr = sdfDiff.format(calendar.time)
+
+                                            when (dateStr) {
+                                                todayStr -> "Hoy"
+                                                yesterdayStr -> "Ayer"
+                                                else -> formatOutput.format(parsedDate)
+                                            }
+                                        } catch (e: Exception) {
+                                            "Chat"
+                                        }
+
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 8.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Card(
+                                                colors = CardDefaults.cardColors(containerColor = Color(0xFF1F2C34)),
+                                                shape = RoundedCornerShape(8.dp)
+                                            ) {
+                                                Text(
+                                                    text = dateText,
+                                                    color = Color(0xFF8596A0),
+                                                    fontSize = 11.sp,
+                                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                                                    fontWeight = FontWeight.Medium
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    // New Messages Divider
+                                    if (message.id == firstUnreadMessageId) {
+                                        NewMessagesDivider()
+                                    }
+
+                                    val prevMsg = filteredMessages.getOrNull(index - 1)
+                                    val nextMsg = filteredMessages.getOrNull(index + 1)
+                                    val groupPosition = calculateMessageGroupPosition(message, prevMsg, nextMsg)
+
+                                    MessageBubbleEngine(
+                                        message = message,
+                                        isMe = isMe,
+                                        groupPosition = groupPosition,
+                                        myAvatarUrl = viewModel.currentAvatarUrl,
+                                        otherAvatarUrl = state.otherUser?.avatarUrl,
+                                        textSizeSp = chatTextSize,
+                                        allMessages = state.messages,
+                                        onReply = onReplyCallback,
+                                        onDeleteForMe = onDeleteForMeCallback,
+                                        onDeleteForEveryone = onDeleteForEveryoneCallback,
+                                        onForward = onForwardCallback,
+                                        isSelected = selectedMessageIds.value.contains(message.id),
+                                        onSelect = { toggleSelection(message.id) },
+                                        onImageClick = onImageClickCallback,
+                                        playingAudioUrl = playingAudioUrl,
+                                        isAudioPlaying = isAudioPlaying,
+                                        audioProgress = audioProgress,
+                                        audioDurationMs = audioDurationMs,
+                                        audioCurrentPositionMs = audioCurrentPositionMs,
+                                        audioPlayer = audioPlayer,
+                                        onAudioPlayStateChange = { _, _ -> },
+                                        reactions = messageReactions.value[message.id],
+                                        onReact = { emoji -> onReactCallback(message.id, emoji) },
+                                        onToggleFavorite = { viewModel.toggleFavorite(it) },
+        onSaveSticker = { url -> viewModel.saveSticker(url, context) },
+        onToggleStickerFavorite = { url -> viewModel.toggleStickerFavorite(url, context) },
+                                        isEdited = message.isEdited || editedMessages.value.containsKey(message.id),
+                                        onEdit = onEditCallback,
+                                        isHighlighted = message.id == highlightedMessageId,
+                                        onGhostOpen = { activeGhostMessage = it },
+                                        onPlaylistAction = onPlaylistAction
+                                    )
+                                }
+
+                                // Typing indicator in-chat list entry
+                                val otherUser = state.otherUser
+                                val isOtherUserTyping = typingUsers.value.contains(otherUser?.id ?: "other_user_id_demo")
+                                if (isOtherUserTyping) {
+                                    item(contentType = "typing_indicator") {
+                                        Row(
+                                            modifier = Modifier
+                                                .padding(horizontal = 16.dp, vertical = 4.dp)
+                                                .background(Color(0xFF1F2C34), RoundedCornerShape(12.dp, 12.dp, 12.dp, 0.dp))
+                                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            Text(
+                                                text = "${otherUser?.displayName ?: "Tu pana"} está escribiendo...",
+                                                color = Color(0xFF25D366),
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Medium
+                                            )
+                                            TypingDotIndicator()
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Scroll To Latest Button (Phase 3.2-B)
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.BottomEnd)
+                                    .padding(bottom = 12.dp, end = 16.dp)
+                            ) {
+                                ScrollToLatestButton(
+                                    visible = showScrollToBottom,
+                                    unreadCount = unreadMessagesCount,
+                                    onClick = {
+                                        coroutineScope.launch {
+                                            smartScrollController.scrollToBottom(messages.size)
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    is ChatUiState.Error -> {
+                        Text(
+                            text = (uiState as ChatUiState.Error).message,
+                            color = Color.Red,
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .padding(16.dp)
+                        )
+                    }
+                }
+
+                // Uploading transparent cover indicator removed per user request
+            }
+
+            // Replying Mode Bar Preview
+            if (replyingToMessage != null) {
+                val replyingMsg = replyingToMessage!!
+                val isRepliedByMe = replyingMsg.senderId == currentUid
+                val senderName = if (isRepliedByMe) "Tú" else "Pana"
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(colors.secondary)
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .width(4.dp)
+                            .height(36.dp)
+                            .background(colors.primary)
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Respondiendo a $senderName",
+                            color = colors.primary,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp
+                        )
+                        val replyBarText = remember(replyingMsg) {
+                            val content = replyingMsg.textContent
+                            when {
+                                content.startsWith("[Image] ") -> "Foto 🖼️"
+                                content.startsWith("[Video] ") -> "Video 🎥"
+                                content.startsWith("[Audio] ") -> "Nota de voz 🎤"
+                                content.startsWith("[Document] ") -> "Documento 📄"
+                                content.startsWith("[Sticker] ") -> "Sticker 🏷️"
+                                else -> content
+                            }
+                        }
+                        Text(
+                            text = replyBarText,
+                            color = Color(0xFFD1D7DB),
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    IconButton(onClick = { viewModel.setReplyingToMessage(null) }) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Cancelar respuesta",
+                            tint = Color(0xFF8596A0)
+                        )
+                    }
+                }
+            }
+
+            // Editing Mode Bar Preview
+            if (editingMessage != null) {
+                val editingMsg = editingMessage!!
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFF1F2C34))
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .width(4.dp)
+                            .height(36.dp)
+                            .background(Color(0xFF0080FF))
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Editar mensaje ✏️",
+                            color = Color(0xFF0080FF),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp
+                        )
+                        Text(
+                            text = editingMsg.textContent,
+                            color = Color(0xFFD1D7DB),
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    IconButton(onClick = { 
+                        viewModel.setEditingMessage(null) 
+                        viewModel.onInputMessageChange("")
+                    }) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Cancelar edición",
+                            tint = Color(0xFF8596A0)
+                        )
+                    }
+                }
+            }
+
+            // Smooth collapsing files attachments drawer
+            AnimatedVisibility(
+                visible = isAttachmentMenuOpen,
+                enter = expandVertically(),
+                exit = shrinkVertically()
+            ) {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF1F2C34)),
+                    shape = RoundedCornerShape(16.dp, 16.dp, 0.dp, 0.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            text = "Compartir con tu pana... 🇻🇪",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            modifier = Modifier.padding(bottom = 12.dp)
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceEvenly
+                        ) {
+                            AttachmentItem(icon = Icons.Default.PhotoCamera, label = "Cámara", color = Color(0xFFFF2D55)) {
+                                isAttachmentMenuOpen = false
+                                cameraPermissionState.requestPermissions()
+                            }
+                            AttachmentItem(icon = Icons.Default.Image, label = "Imagen", color = Color(0xFF007AFF)) {
+                                isAttachmentMenuOpen = false
+                                imagePickerLauncher.launch("image/*")
+                            }
+                            AttachmentItem(icon = Icons.Default.Videocam, label = "Video", color = Color(0xFF5856D6)) {
+                                isAttachmentMenuOpen = false
+                                videoPickerLauncher.launch("video/*")
+                            }
+                            AttachmentItem(icon = Icons.Default.Description, label = "Doc", color = Color(0xFF4CD964)) {
+                                isAttachmentMenuOpen = false
+                                documentPickerLauncher.launch(arrayOf("*/*"))
+                            }
+                            AttachmentItem(icon = Icons.Default.MusicNote, label = "Audio", color = Color(0xFFFF9500)) {
+                                isAttachmentMenuOpen = false
+                                audioPickerLauncher.launch("audio/*")
+                            }
+                            AttachmentItem(icon = Icons.Default.QueueMusic, label = "Playlist", color = Color(0xFF38BDF8)) {
+                                isAttachmentMenuOpen = false
+                                showPlaylistPicker = true
+                            }
+                            AttachmentItem(
+                                icon = if (isGhostMode) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                label = "Ghost",
+                                color = if (isGhostMode) Color(0xFFBB86FC) else Color(0xFF8596A0)
+                            ) {
+                                isAttachmentMenuOpen = false
+                                viewModel.toggleGhostMode()
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Advanced Message Composer bottom bar inside a Box container
+            Box(
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                val state = uiState as? ChatUiState.Success
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(colors.background)
+                            .padding(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                if (recordState == RecordState.IDLE) {
+                    // ChatInputBar Container: Pill-shaped Surface
+                    Surface(
+                        modifier = Modifier
+                            .weight(1f)
+                            .heightIn(min = 48.dp)
+                            .then(
+                                if (isGhostMode) Modifier.border(
+                                    2.dp,
+                                    androidx.compose.ui.graphics.Brush.linearGradient(
+                                        listOf(Color(0xFFBB86FC), Color(0xFF03DAC6))
+                                    ),
+                                    RoundedCornerShape(28.dp)
+                                ) else Modifier
+                            ),
+                        shape = RoundedCornerShape(28.dp),
+                        color = colors.secondary,
+                        border = if (!isGhostMode) androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF262629)) else null
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 4.dp, vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // Left Icon: Alternator
+                            IconButton(onClick = {
+                                isStickerPanelOpen = !isStickerPanelOpen
+                                isAttachmentMenuOpen = false
+                            }) {
+                                Icon(
+                                    imageVector = if (isStickerPanelOpen) Icons.Default.Keyboard else Icons.Default.SentimentSatisfied,
+                                    contentDescription = "Emojis, GIFs y Stickers",
+                                    tint = Color(0xFF8596A0),
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
+
+                            // Campo de Texto: BasicTextField con placeholder "Mensaje", soporte para múltiples líneas y expansión vertical suave.
+                            androidx.compose.foundation.text.BasicTextField(
+                                value = inputMessage,
+                                onValueChange = { viewModel.onInputMessageChange(it) },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("chat_input_field")
+                                    .padding(vertical = 10.dp, horizontal = 4.dp),
+                                textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 16.sp),
+                                cursorBrush = androidx.compose.ui.graphics.SolidColor(Color(0xFF00A884)),
+                                decorationBox = { innerTextField ->
+                                    Box(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        contentAlignment = Alignment.CenterStart
+                                    ) {
+                                        if (inputMessage.isEmpty()) {
+                                            Text(
+                                                text = "Mensaje",
+                                                color = Color(0xFF8596A0),
+                                                fontSize = 16.sp
+                                            )
+                                        }
+                                        innerTextField()
+                                    }
+                                }
+                            )
+
+                            // Íconos Derechos inside the bar
+                            IconButton(onClick = {
+                                viewModel.toggleGhostMode()
+                            }) {
+                                Icon(
+                                    imageVector = if (isGhostMode) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                    contentDescription = "Modo Fantasma",
+                                    tint = if (isGhostMode) Color(0xFFBB86FC) else Color(0xFF8596A0),
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
+
+                            IconButton(onClick = {
+                                isAttachmentMenuOpen = !isAttachmentMenuOpen
+                                isStickerPanelOpen = false
+                            }) {
+                                Icon(
+                                    imageVector = if (isAttachmentMenuOpen) Icons.Default.Close else Icons.Default.AttachFile,
+                                    contentDescription = "Menú Adjuntos",
+                                    tint = if (isAttachmentMenuOpen) Color(0xFFFF2D55) else Color(0xFF8596A0),
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
+
+                            IconButton(onClick = {
+                                cameraPermissionState.requestPermissions()
+                            }) {
+                                Icon(
+                                    imageVector = Icons.Default.PhotoCamera,
+                                    contentDescription = "Cámara",
+                                    tint = Color(0xFF8596A0),
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
+                        }
+                    }
+                } else if (recordState == RecordState.RECORDING) {
+                    // Holding & Sliding mode recording panel on the left (Takes up the rest of the bar)
+                    Row(
+                        modifier = Modifier
+                            .weight(1f)
+                            .background(Color(0xFF1F2C34), RoundedCornerShape(24.dp))
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Red flashing recording dot
+                        val redDotAlpha = remember { Animatable(1f) }
+                        LaunchedEffect(Unit) {
+                            redDotAlpha.animateTo(
+                                targetValue = 0.2f,
+                                animationSpec = infiniteRepeatable(
+                                    animation = tween(600),
+                                    repeatMode = RepeatMode.Reverse
+                                )
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .size(10.dp)
+                                .background(Color.Red.copy(alpha = redDotAlpha.value), CircleShape)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = String.format("%02d:%02d", recordDurationSeconds / 60, recordDurationSeconds % 60),
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.width(16.dp))
+
+                        // Animated speech waves
+                        AnimatedAudioWaves(amplitudes = voiceAmplitudes)
+
+                        Spacer(modifier = Modifier.weight(1f))
+
+                        Text(
+                            text = "⬅️ Desliza para cancelar",
+                            color = Color(0xFF8596A0),
+                            fontSize = 12.sp,
+                            modifier = Modifier.graphicsLayer {
+                                translationX = (micDragOffsetX * 0.4f).coerceAtMost(0f)
+                            }
+                        )
+                    }
+                } else if (recordState == RecordState.LOCKED) {
+                    // LOCKED state panel (Flujo de grabación fija WhatsApp style)
+                    Row(
+                        modifier = Modifier
+                            .weight(1f)
+                            .background(Color(0xFF1F2C34), RoundedCornerShape(24.dp))
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Trash button (left, red icon in pink circle)
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFFFCE8E6))
+                                .clickable {
+                                    playCancelBeep()
+                                    triggerLightVibration(context)
+                                    recordState = RecordState.IDLE
+                                    isRecordingPaused = false
+                                    Toast.makeText(context, "Grabación descartada", Toast.LENGTH_SHORT).show()
+                                    viewModel.onVoiceGestureEvent(
+                                        event = VoiceGestureEvent.CancelRecording,
+                                        context = context
+                                    )
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = "Eliminar",
+                                tint = Color.Red,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(8.dp))
+
+                        // Timer + Audio Waveform
+                        Row(
+                            modifier = Modifier.weight(1f),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = String.format("%02d:%02d", recordDurationSeconds / 60, recordDurationSeconds % 60),
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+
+                            if (isRecordingPaused) {
+                                // Static dotted waveform when paused
+                                Text(
+                                    text = ".......................",
+                                    color = Color(0xFF8596A0),
+                                    fontSize = 14.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Clip
+                                )
+                            } else {
+                                // Animated waveform when recording
+                                AnimatedAudioWaves(amplitudes = voiceAmplitudes, isPaused = isRecordingPaused)
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.width(6.dp))
+
+                        // Central "Pausar" / "Reanudar" pill button
+                        Surface(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(20.dp))
+                                .clickable {
+                                    if (isRecordingPaused) {
+                                        isRecordingPaused = false
+                                        viewModel.onVoiceGestureEvent(
+                                            event = VoiceGestureEvent.ResumeRecording,
+                                            context = context
+                                        )
+                                    } else {
+                                        isRecordingPaused = true
+                                        viewModel.onVoiceGestureEvent(
+                                            event = VoiceGestureEvent.PauseRecording,
+                                            context = context
+                                        )
+                                    }
+                                }
+                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                            color = Color.White,
+                            shape = RoundedCornerShape(20.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (isRecordingPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                                    contentDescription = null,
+                                    tint = Color.Black,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Text(
+                                    text = if (isRecordingPaused) "Reanudar" else "Pausar",
+                                    color = Color.Black,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.width(6.dp))
+
+                        // Red Stop button (Detener grabación e ir a Preescucha)
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFFE53935))
+                                .clickable {
+                                    isRecordingPaused = false
+                                    viewModel.onVoiceGestureEvent(
+                                        event = VoiceGestureEvent.StopAndPreviewRecording,
+                                        context = context,
+                                        fallbackDurationSeconds = recordDurationSeconds
+                                    )
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Stop,
+                                contentDescription = "Preescuchar",
+                                tint = Color.White,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                } else if (recordState == RecordState.PREVIEWING) {
+                    // PREVIEWING mode panel (Preescucha antes de enviar)
+                    val previewFile = viewModel.previewFile
+                    val previewDuration = viewModel.previewDurationSeconds
+
+                    Row(
+                        modifier = Modifier
+                            .weight(1f)
+                            .background(Color(0xFF1F2C34), RoundedCornerShape(24.dp))
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Trash button
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFFFCE8E6))
+                                .clickable {
+                                    playCancelBeep()
+                                    triggerLightVibration(context)
+                                    viewModel.cancelPreviewRecording()
+                                    Toast.makeText(context, "Nota de voz descartada", Toast.LENGTH_SHORT).show()
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = "Eliminar",
+                                tint = Color.Red,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(8.dp))
+
+                        // Play/Pause button
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF00A884))
+                                .clickable {
+                                    if (previewPlayerState.isPlaying) {
+                                        viewModel.pausePreviewAudio()
+                                    } else {
+                                        viewModel.playPreviewAudio()
+                                    }
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = if (previewPlayerState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                contentDescription = "Reproducir / Pausar",
+                                tint = Color.White,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(8.dp))
+
+                        // Waveform & Time display
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                val currentSecs = (previewPlayerState.currentPositionMs / 1000).toInt()
+                                val totalSecs = if (previewPlayerState.durationMs > 0) {
+                                    (previewPlayerState.durationMs / 1000).toInt()
+                                } else {
+                                    previewDuration
+                                }
+                                Text(
+                                    text = String.format("%02d:%02d", currentSecs / 60, currentSecs % 60),
+                                    color = Color.White,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+
+                                // Speed button (1x -> 1.5x -> 2x)
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(Color(0xFF2A3942))
+                                        .clickable {
+                                            viewModel.togglePreviewSpeed()
+                                        }
+                                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    val speedLabel = when {
+                                        previewPlayerState.playbackSpeed >= 1.9f -> "2x"
+                                        previewPlayerState.playbackSpeed >= 1.4f -> "1.5x"
+                                        else -> "1x"
+                                    }
+                                    Text(
+                                        text = speedLabel,
+                                        color = Color(0xFF00A884),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+
+                                Text(
+                                    text = String.format("%02d:%02d", totalSecs / 60, totalSecs % 60),
+                                    color = Color(0xFF8596A0),
+                                    fontSize = 11.sp
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(2.dp))
+
+                            val totalDurationMs = if (previewPlayerState.durationMs > 0) {
+                                previewPlayerState.durationMs
+                            } else {
+                                (previewDuration * 1000L).coerceAtLeast(1000L)
+                            }
+
+                            PreviewAudioWaveform(
+                                waveform = previewWaveform,
+                                currentPositionMs = previewPlayerState.currentPositionMs,
+                                durationMs = totalDurationMs,
+                                onSeek = { posMs ->
+                                    viewModel.seekPreviewAudio(posMs)
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(24.dp)
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                val isInputEmpty = inputMessage.trim().isEmpty()
+                
+                if (recordState == RecordState.LOCKED) {
+                    // Circular green send button for audio (Direct Send)
+                    FloatingActionButton(
+                        onClick = {
+                            recordState = RecordState.IDLE
+                            isRecordingPaused = false
+                            viewModel.onVoiceGestureEvent(
+                                event = VoiceGestureEvent.FinishRecording,
+                                context = context,
+                                replyToId = replyingToMessage?.id,
+                                fallbackDurationSeconds = recordDurationSeconds,
+                                onProgress = { isUploading = it }
+                            )
+                        },
+                        modifier = Modifier.size(48.dp),
+                        containerColor = Color(0xFF00A884),
+                        contentColor = Color.White,
+                        shape = CircleShape,
+                        elevation = FloatingActionButtonDefaults.elevation(0.dp, 0.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.Send,
+                            contentDescription = "Enviar",
+                            tint = Color.White,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                } else if (recordState == RecordState.PREVIEWING) {
+                    // Circular green send button for previewed audio
+                    FloatingActionButton(
+                        onClick = {
+                            playSendBeep()
+                            triggerLightVibration(context)
+                            viewModel.sendPreviewRecording(
+                                context = context,
+                                replyToId = replyingToMessage?.id,
+                                onProgress = { isUploading = it }
+                            )
+                        },
+                        modifier = Modifier.size(48.dp),
+                        containerColor = Color(0xFF00A884),
+                        contentColor = Color.White,
+                        shape = CircleShape,
+                        elevation = FloatingActionButtonDefaults.elevation(0.dp, 0.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.Send,
+                            contentDescription = "Enviar Nota",
+                            tint = Color.White,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                } else if (recordState == RecordState.IDLE && !isInputEmpty) {
+                    // Regular send or edit check button (Circular Green FAB)
+                    FloatingActionButton(
+                        onClick = {
+                            if (editingMessage != null) {
+                                viewModel.editMessage(editingMessage!!.id, inputMessage)
+                                viewModel.clearReplyAndEdit()
+                            } else {
+                                viewModel.sendMessage(inputMessage, replyToId = replyingToMessage?.id)
+                                viewModel.clearReplyAndEdit()
+                            }
+                            viewModel.onInputMessageChange("")
+                        },
+                        modifier = Modifier
+                            .size(48.dp)
+                            .testTag("chat_send_button"),
+                        containerColor = Color(0xFF00A884),
+                        contentColor = Color.White,
+                        shape = CircleShape,
+                        elevation = FloatingActionButtonDefaults.elevation(0.dp, 0.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (editingMessage != null) Icons.Default.Check else Icons.AutoMirrored.Filled.Send,
+                            contentDescription = if (editingMessage != null) "Guardar" else "Enviar",
+                            tint = Color.White,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                } else {
+                    // Microphone button with professional hold-and-drag gesture (Circular Green FAB)
+                    val recordingPulseScale = remember { Animatable(1f) }
+                    LaunchedEffect(recordState) {
+                        if (recordState == RecordState.RECORDING) {
+                            recordingPulseScale.animateTo(
+                                targetValue = 1.3f,
+                                animationSpec = infiniteRepeatable(
+                                    animation = tween(800, easing = FastOutSlowInEasing),
+                                    repeatMode = RepeatMode.Reverse
+                                )
+                            )
+                        } else {
+                            recordingPulseScale.snapTo(1f)
+                        }
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .graphicsLayer {
+                                translationX = micDragOffsetX
+                                translationY = micDragOffsetY
+                            }
+                            .size(48.dp)
+                            .scale(recordingPulseScale.value)
+                            .clip(CircleShape)
+                            .background(Color(0xFF00A884))
+                            .voiceGestureDetector(
+                                enabled = true,
+                                isLocked = recordState == RecordState.LOCKED,
+                                lockThresholdY = -350f,
+                                cancelThresholdX = -250f,
+                                onPermissionRequired = if (!hasMicPermission) {
+                                    { micPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO) }
+                                } else null,
+                                onDrag = { x, y ->
+                                    micDragOffsetX = x
+                                    micDragOffsetY = y
+                                },
+                                onEvent = { event ->
+                                    micDragOffsetX = 0f
+                                    micDragOffsetY = 0f
+                                    
+                                    when (event) {
+                                        is VoiceGestureEvent.StartRecording -> {
+                                            playShortBeep()
+                                            triggerLightVibration(context)
+                                            recordState = RecordState.RECORDING
+                                        }
+                                        is VoiceGestureEvent.LockRecording -> {
+                                            playShortBeep()
+                                            triggerLightVibration(context)
+                                            recordState = RecordState.LOCKED
+                                        }
+                                        is VoiceGestureEvent.CancelRecording -> {
+                                            playCancelBeep()
+                                            triggerLightVibration(context)
+                                            Toast.makeText(context, "Grabación cancelada", Toast.LENGTH_SHORT).show()
+                                        }
+                                        is VoiceGestureEvent.FinishRecording -> {
+                                            // Let the ViewModel handle the transition to PREVIEWING
+                                        }
+                                        else -> {}
+                                    }
+                                    viewModel.onVoiceGestureEvent(
+                                        event = event,
+                                        context = context,
+                                        replyToId = replyingToMessage?.id,
+                                        fallbackDurationSeconds = recordDurationSeconds,
+                                        onProgress = { isUploading = it }
+                                    )
+                                }
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Mic,
+                            contentDescription = "Grabar nota de voz",
+                            tint = Color.White,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                }
+            }
+
+            // Vertical lock candado overlay floating above the microphone button when recordState == RecordState.RECORDING
+            if (recordState == RecordState.RECORDING) {
+                val redDotAlpha = remember { androidx.compose.animation.core.Animatable(1f) }
+                LaunchedEffect(Unit) {
+                    redDotAlpha.animateTo(
+                        targetValue = 0.3f,
+                        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+                            animation = androidx.compose.animation.core.tween(500),
+                            repeatMode = androidx.compose.animation.core.RepeatMode.Reverse
+                        )
+                    )
+                }
+                val lockHighlight = (micDragOffsetY / -220f).coerceIn(0f, 1f)
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .offset(x = (-12).dp, y = (-54).dp)
+                        .graphicsLayer {
+                            scaleX = 1f + (lockHighlight * 0.25f)
+                            scaleY = 1f + (lockHighlight * 0.25f)
+                        }
+                        .background(
+                            if (lockHighlight > 0.75f) Color(0xFF00A884) else Color(0xFF1F2C34),
+                            RoundedCornerShape(20.dp)
+                        )
+                        .border(
+                            androidx.compose.foundation.BorderStroke(
+                                1.dp,
+                                if (lockHighlight > 0.75f) Color(0xFF00A884) else Color(0xFF262629)
+                            ),
+                            RoundedCornerShape(20.dp)
+                        )
+                        .padding(vertical = 10.dp, horizontal = 12.dp)
+                        .width(28.dp)
+                ) {
+                    Icon(
+                        imageVector = androidx.compose.material.icons.Icons.Default.Lock,
+                        contentDescription = "Fijar grabación",
+                        tint = if (lockHighlight > 0.75f) Color.White else Color.Red.copy(alpha = redDotAlpha.value),
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Icon(
+                        imageVector = androidx.compose.material.icons.Icons.Default.KeyboardArrowUp,
+                        contentDescription = null,
+                        tint = if (lockHighlight > 0.75f) Color.White else Color(0xFF8596A0),
+                        modifier = Modifier.size(12.dp)
+                    )
+                }
+            }
+        }
+
+        AnimatedVisibility(
+            visible = isStickerPanelOpen,
+            enter = expandVertically(),
+            exit = shrinkVertically()
+        ) {
+            EmojiAndMediaSheet(
+                viewModel = viewModel,
+                inputMessage = inputMessage,
+                onEmojiSelected = { emoji ->
+                    viewModel.onInputMessageChange(inputMessage + emoji)
+                },
+                onStickerSelected = { sticker ->
+                    viewModel.sendSticker(sticker.url, sticker.preview, replyToId = replyingToMessage?.id)
+                    isStickerPanelOpen = false
+                    viewModel.clearReplyAndEdit()
+                },
+                onClose = { isStickerPanelOpen = false }
+            )
+        }
+    }
+
+    // FullScreen media viewer (Fotos y Videos)
+    if (lightboxImageUrl != null) {
+        val url = lightboxImageUrl!!
+        val isVideoMedia = remember(url) {
+            val lower = url.lowercase()
+            lower.endsWith(".mp4") || lower.endsWith(".mkv") || lower.endsWith(".webm") || lower.contains("/video/") || lower.contains("video_") || lower.contains(".mov")
+        }
+        com.example.ui.components.chat.media.FullScreenMediaViewer(
+            mediaUrl = url,
+            isVideo = isVideoMedia,
+            onClose = { lightboxImageUrl = null }
+        )
+    }
+
+    // Forward dialog selector
+    if (showForwardDialog && forwardingMessageContent != null) {
+        AlertDialog(
+            onDismissRequest = { showForwardDialog = false },
+            title = { Text("Reenviar mensaje de pana 🇻🇪", color = Color.White) },
+            text = {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = "Selecciona un contacto para reenviar:",
+                        color = Color(0xFF8596A0),
+                        fontSize = 14.sp,
+                        modifier = Modifier.padding(bottom = 12.dp)
+                    )
+                    if (contactsList.isEmpty()) {
+                        Text("No tienes contactos agregados chamo 🥺", color = Color.Gray, fontSize = 13.sp)
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier.height(250.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            items(contactsList) { contact ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            showForwardDialog = false
+                                            val textToForward = forwardingMessageContent!!
+                                            val forwardUuid = java.util.UUID.randomUUID().toString()
+                                            coroutineScope.launch {
+                                                chatsRepository.createDirectChat(contact.id)
+                                                    .onSuccess { chat ->
+                                                        val messagesRepo = com.example.data.repository.MessagesRepository.getInstance()
+                                                        messagesRepo.sendMessage(chat.id, textToForward, null, contact.id, clientMessageUuid = forwardUuid)
+                                                        Toast.makeText(context, "¡Mensaje reenviado a ${contact.displayName}!", Toast.LENGTH_SHORT).show()
+                                                    }
+                                                    .onFailure {
+                                                        Toast.makeText(context, "Error al reenviar", Toast.LENGTH_SHORT).show()
+                                                    }
+                                            }
+                                        }
+                                        .padding(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    AsyncImage(
+                                        model = contact.avatarUrl ?: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80",
+                                        contentDescription = "Avatar",
+                                        modifier = Modifier
+                                            .size(36.dp)
+                                            .clip(CircleShape),
+                                        contentScale = ContentScale.Crop
+                                    )
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Text(contact.displayName, color = Color.White, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showForwardDialog = false }) {
+                    Text("Cancelar", color = Color(0xFF00A884))
+                }
+            },
+            containerColor = Color(0xFF1F2C34)
+        )
+    }
+
+    // Simulated Call Overlay
+    if (activeCallState != null) {
+        val otherUser = (uiState as? ChatUiState.Success)?.otherUser
+        val otherName = otherUser?.displayName ?: "Pana"
+        val otherAvatar = otherUser?.avatarUrl ?: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80"
+        
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.94f))
+                .clickable(enabled = false) {}, // absorb clicks
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+                modifier = Modifier.padding(24.dp)
+            ) {
+                // Glow & pulsate effect
+                val infinitePulse = rememberInfiniteTransition(label = "pulse")
+                val pulseScale by infinitePulse.animateFloat(
+                    initialValue = 1.0f,
+                    targetValue = 1.15f,
+                    animationSpec = infiniteRepeatable(
+                        animation = tween(1000, easing = FastOutSlowInEasing),
+                        repeatMode = RepeatMode.Reverse
+                    ),
+                    label = "pulse"
+                )
+
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier.size(160.dp)
+                ) {
+                    // Pulsing glow rings
+                    Box(
+                        modifier = Modifier
+                            .size(140.dp)
+                            .scale(pulseScale)
+                            .background(
+                                if (activeCallState == "active") Color(0xFF25D366).copy(alpha = 0.15f)
+                                else Color(0xFF007AFF).copy(alpha = 0.15f),
+                                CircleShape
+                            )
+                    )
+                    
+                    com.example.ui.components.PanaAvatar(
+                        avatarUrl = otherUser?.avatarUrl,
+                        userId = otherUser?.id,
+                        size = 100.dp,
+                        borderColor = if (activeCallState == "active") Color(0xFF25D366) else Color(0xFF007AFF),
+                        borderWidth = 3.dp,
+                        placeholderName = otherName
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                Text(
+                    text = otherName,
+                    color = Color.White,
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                if (activeCallState == "ringing") {
+                    Text(
+                        text = "Llamando de pana... 🔔",
+                        color = Color(0xFF00E676),
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+
+                    Spacer(modifier = Modifier.height(48.dp))
+
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(40.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Reject call
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            IconButton(
+                                onClick = { activeCallState = null },
+                                modifier = Modifier
+                                    .size(64.dp)
+                                    .bounceClick()
+                                    .background(Color.Red, CircleShape)
+                            ) {
+                                Icon(Icons.Default.Close, contentDescription = "Rechazar", tint = Color.White, modifier = Modifier.size(32.dp))
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text("Rechazar", color = Color.White, fontSize = 12.sp)
+                        }
+
+                        // Accept call
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            IconButton(
+                                onClick = { activeCallState = "active" },
+                                modifier = Modifier
+                                    .size(64.dp)
+                                    .bounceClick()
+                                    .background(Color(0xFF25D366), CircleShape)
+                            ) {
+                                Icon(Icons.Default.Call, contentDescription = "Contestar", tint = Color.White, modifier = Modifier.size(32.dp))
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text("Atender", color = Color.White, fontSize = 12.sp)
+                        }
+                    }
+                } else if (activeCallState == "active") {
+                    val mins = callTimerSeconds / 60
+                    val secs = callTimerSeconds % 60
+                    Text(
+                        text = String.format("Llamada activa • %02d:%02d", mins, secs),
+                        color = Color.White.copy(alpha = 0.7f),
+                        fontSize = 16.sp
+                    )
+
+                    Spacer(modifier = Modifier.height(24.dp))
+
+                    // Simulated live call wave visualizer
+                    AudioVisualizer(
+                        isPlaying = true,
+                        modifier = Modifier
+                            .width(200.dp)
+                            .height(40.dp)
+                    )
+
+                    Spacer(modifier = Modifier.height(48.dp))
+
+                    // Hang up
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        IconButton(
+                            onClick = { activeCallState = null },
+                            modifier = Modifier
+                                .size(64.dp)
+                                .bounceClick()
+                                .background(Color.Red, CircleShape)
+                        ) {
+                            Icon(Icons.Default.Close, contentDescription = "Colgar", tint = Color.White, modifier = Modifier.size(32.dp))
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text("Colgar", color = Color.White, fontSize = 12.sp)
+                    }
+                }
+            }
+        }
+    }
+
+    // Simulated Contact Detail Custom Bottom Sheet
+    AnimatedVisibility(
+        visible = showContactDetail,
+        enter = slideInVertically(initialOffsetY = { it }),
+        exit = slideOutVertically(targetOffsetY = { it }),
+        modifier = Modifier.fillMaxSize()
+    ) {
+        val state = uiState as? ChatUiState.Success
+        val otherUser = state?.otherUser
+        val otherName = otherUser?.displayName ?: "Pana"
+        val otherAvatar = otherUser?.avatarUrl ?: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80"
+        val otherBio = otherUser?.status?.takeIf { it.isNotEmpty() } ?: "¡Hola! Estoy usando PanaLink para hablar de pana. 🇻🇪"
+        val otherPin = otherUser?.pin ?: (otherUser?.id?.take(6)?.uppercase() ?: "PANA12")
+
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.6f))
+                .clickable { showContactDetail = false },
+            contentAlignment = Alignment.BottomCenter
+        ) {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF101D24)),
+                shape = RoundedCornerShape(24.dp, 24.dp, 0.dp, 0.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(enabled = false) {} // block click propagation
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    // Accent drag bar
+                    Box(
+                        modifier = Modifier
+                            .width(40.dp)
+                            .height(4.dp)
+                            .background(Color.Gray.copy(alpha = 0.4f), RoundedCornerShape(2.dp))
+                    )
+                    
+                    Spacer(modifier = Modifier.height(20.dp))
+                    
+                    // Large circular avatar
+                    com.example.ui.components.PanaAvatar(
+                        avatarUrl = otherUser?.avatarUrl,
+                        userId = otherUser?.id,
+                        size = 104.dp,
+                        borderWidth = 0.dp,
+                        placeholderName = otherName
+                    )
+                    
+                    Spacer(modifier = Modifier.height(16.dp))
+                    
+                    Text(
+                        text = otherName,
+                        color = Color.White,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    
+                    Text(
+                        text = "en línea",
+                        color = Color(0xFF25D366),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                    
+                    Spacer(modifier = Modifier.height(24.dp))
+                    
+                    // Info Cards
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        // Bio Info Row
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(Color(0xFF1F2C34), RoundedCornerShape(12.dp))
+                                .padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.Info, contentDescription = null, tint = Color(0xFF00A884), modifier = Modifier.size(24.dp))
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Column {
+                                Text(
+                                    text = "Bio y PIN PanaLink",
+                                    color = Color(0xFF8596A0),
+                                    fontSize = 11.sp
+                                )
+                                Text(otherBio, color = Color.White, fontSize = 14.sp)
+
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(otherPin, color = Color(0xFF8596A0), fontSize = 13.sp)
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(24.dp))
+                    
+                    // Actions Buttons Row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        FilledTonalButton(
+                            onClick = {
+                                val shareIntent = android.content.Intent().apply {
+                                    action = android.content.Intent.ACTION_SEND
+                                    putExtra(android.content.Intent.EXTRA_TEXT, "Contacto Pana: $otherName\nPIN: $otherPin\n¡Agregado de pana desde PanaLink! 🇻🇪")
+                                    type = "text/plain"
+                                }
+                                context.startActivity(android.content.Intent.createChooser(shareIntent, "Compartir contacto de pana"))
+                            },
+                            colors = ButtonDefaults.filledTonalButtonColors(
+                                containerColor = Color(0xFF00A884),
+                                contentColor = Color.White
+                            ),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(48.dp)
+                                .bounceClick(),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Compartir Contacto", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        }
+                        
+                        Button(
+                            onClick = { showContactDetail = false },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF1F2C34),
+                                contentColor = Color.White
+                            ),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(48.dp)
+                                .bounceClick(),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text("Cerrar", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showPlaylistPicker) {
+        PlaylistPickerDialog(
+            playlists = myPlaylists,
+            onPlaylistSelected = { playlist ->
+                showPlaylistPicker = false
+                viewModel.sharePlaylist(chatId, playlist)
+            },
+            onDismiss = { showPlaylistPicker = false }
+        )
+    }
+
+    // Chat Background Selection Dialog
+    if (showBackgroundDialog) {
+        Dialog(onDismissRequest = { showBackgroundDialog = false }) {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF1F2C34)),
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.fillMaxWidth().padding(16.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        "Seleccionar Fondo",
+                        color = Color.White,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(bottom = 16.dp)
+                    )
+                    
+                    val backgrounds = listOf(
+                        "dark_slate" to "Defecto",
+                        "https://images.unsplash.com/photo-1557683316-973673baf926" to "Noche Azul",
+                        "https://images.unsplash.com/photo-1506744038136-46273834b3fb" to "Paisaje",
+                        "https://images.unsplash.com/photo-1579546929518-9e396f3cc809" to "Gradiente",
+                        "https://images.unsplash.com/photo-1490750967868-88aa4486c946" to "Floral Suave",
+                        "https://images.unsplash.com/photo-1518531933037-91b2f5f229cc" to "Oscuro Arte",
+                        "color_solid_green" to "Verde Sólido",
+                        "color_solid_blue" to "Azul Profundo"
+                    )
+                    
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(2),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.height(350.dp)
+                    ) {
+                        items(backgrounds) { (url, name) ->
+                            Box(
+                                modifier = Modifier
+                                    .aspectRatio(0.6f)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        chatWallpaperState = url
+                                        prefs.edit().putString("chat_wallpaper_${currentUid}", url).apply()
+                                        showBackgroundDialog = false
+                                    }
+                                    .border(
+                                        width = if (chatWallpaperState == url) 2.dp else 0.dp,
+                                        color = if (chatWallpaperState == url) Color(0xFF25D366) else Color.Transparent,
+                                        shape = RoundedCornerShape(8.dp)
+                                    )
+                            ) {
+                                if (url.startsWith("http")) {
+                                    AsyncImage(
+                                        model = url,
+                                        contentDescription = name,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                } else if (url == "dark_slate") {
+                                    Box(Modifier.fillMaxSize().background(Color(0xFF0B141A)))
+                                } else if (url == "color_solid_green") {
+                                    Box(Modifier.fillMaxSize().background(Color(0xFF075E54)))
+                                } else if (url == "color_solid_blue") {
+                                    Box(Modifier.fillMaxSize().background(Color(0xFF001A33)))
+                                }
+                                
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .align(Alignment.BottomCenter)
+                                        .background(Color.Black.copy(alpha = 0.5f))
+                                        .padding(4.dp)
+                                ) {
+                                    Text(name, color = Color.White, fontSize = 10.sp, modifier = Modifier.align(Alignment.Center))
+                                }
+                            }
+                        }
+                    }
+                    
+                    TextButton(
+                        onClick = { showBackgroundDialog = false },
+                        modifier = Modifier.align(Alignment.End).padding(top = 8.dp)
+                    ) {
+                        Text("Cerrar", color = Color(0xFF25D366))
+                    }
+                }
+            }
+        }
+    }
+}
+}
+        
+
+     
+ 
+ 
+ 
+
+@Composable
+fun AnimatedAudioWaves(
+    amplitudes: List<Float> = emptyList(),
+    isPaused: Boolean = false
+) {
+    val barList = if (amplitudes.isEmpty()) List(10) { 0.1f } else amplitudes
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.padding(horizontal = 4.dp)
+    ) {
+        barList.forEach { level ->
+            val targetHeight = if (isPaused) 4.dp else (4.dp + (level * 20).dp)
+            val animatedHeight by animateDpAsState(
+                targetValue = targetHeight,
+                animationSpec = tween(durationMillis = 80, easing = LinearEasing),
+                label = "RealWaveHeight"
+            )
+            Box(
+                modifier = Modifier
+                    .width(3.dp)
+                    .height(animatedHeight)
+                    .background(Color(0xFF00A884), RoundedCornerShape(1.5.dp))
+            )
+        }
+    }
+}
+
+@Composable
+fun AttachmentItem(
+    icon: ImageVector,
+    label: String,
+    color: Color,
+    onClick: () -> Unit
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .clickable(onClick = onClick)
+            .padding(8.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(48.dp)
+                .background(color, CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, contentDescription = label, tint = Color.White, modifier = Modifier.size(22.dp))
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(label, color = Color(0xFF8596A0), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+@Composable
+fun StickerMessageBubble(
+    stickerUrl: String,
+    modifier: Modifier = Modifier
+) {
+    val scaleAnim = remember { Animatable(0.7f) }
+    LaunchedEffect(stickerUrl) {
+        scaleAnim.animateTo(
+            targetValue = 1f,
+            animationSpec = spring(
+                dampingRatio = Spring.DampingRatioMediumBouncy,
+                stiffness = Spring.StiffnessLow
+            )
+        )
+    }
+    Box(
+        modifier = modifier
+            .size(130.dp)
+            .graphicsLayer {
+                scaleX = scaleAnim.value
+                scaleY = scaleAnim.value
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        AsyncImage(
+            model = ImageRequest.Builder(LocalContext.current)
+                .data(stickerUrl)
+                .decoderFactory(GifDecoder.Factory())
+                .crossfade(true)
+                .build(),
+            contentDescription = "Sticker",
+            modifier = Modifier.fillMaxSize(),
+            contentScale = ContentScale.Fit
+        )
+    }
+}
+
+@Composable
+fun MessageBubble(
+    message: Message,
+    isMe: Boolean,
+    myAvatarUrl: String?,
+    otherAvatarUrl: String?,
+    textSizeSp: Float = 15f,
+    allMessages: List<Message>,
+    onReply: (Message) -> Unit,
+    onDeleteForMe: (String) -> Unit,
+    onDeleteForEveryone: (String) -> Unit,
+    onForward: (Message) -> Unit,
+    isSelected: Boolean,
+    onSelect: () -> Unit,
+    onImageClick: (String) -> Unit,
+    playingAudioUrl: String?,
+    isAudioPlaying: Boolean,
+    audioProgress: Float,
+    audioDurationMs: Int,
+    audioCurrentPositionMs: Int,
+    audioPlayer: AudioPlayer,
+    onAudioPlayStateChange: (String?, Boolean) -> Unit,
+    reactions: Map<String, String>?,
+    onReact: (String) -> Unit,
+    onToggleFavorite: (Message) -> Unit,
+    isEdited: Boolean = false,
+    onEdit: ((Message) -> Unit)? = null,
+    isHighlighted: Boolean = false,
+    onGhostOpen: (Message) -> Unit = {},
+    onPlaylistAction: (String, String) -> Unit = { _, _ -> }
+) {
+    MessageBubbleEngine(
+        message = message,
+        isMe = isMe,
+        groupPosition = MessageGroupPosition.SINGLE,
+        myAvatarUrl = myAvatarUrl,
+        otherAvatarUrl = otherAvatarUrl,
+        textSizeSp = textSizeSp,
+        allMessages = allMessages,
+        onReply = onReply,
+        onDeleteForMe = onDeleteForMe,
+        onDeleteForEveryone = onDeleteForEveryone,
+        onForward = onForward,
+        isSelected = isSelected,
+        onSelect = onSelect,
+        onImageClick = onImageClick,
+        playingAudioUrl = playingAudioUrl,
+        isAudioPlaying = isAudioPlaying,
+        audioProgress = audioProgress,
+        audioDurationMs = audioDurationMs,
+        audioCurrentPositionMs = audioCurrentPositionMs,
+        audioPlayer = audioPlayer,
+        onAudioPlayStateChange = onAudioPlayStateChange,
+        reactions = reactions,
+        onReact = onReact,
+        onToggleFavorite = onToggleFavorite,
+        isEdited = isEdited,
+        onEdit = onEdit,
+        isHighlighted = isHighlighted,
+        onGhostOpen = onGhostOpen,
+        onPlaylistAction = onPlaylistAction
+    )
+}
+
+@Composable
+fun TypingDotIndicator() {
+    val infiniteTransition = rememberInfiniteTransition(label = "typing")
+    
+    val dot1Offset by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = -6f,
+        animationSpec = infiniteRepeatable(
+            animation = keyframes {
+                durationMillis = 600
+                0f at 0 using LinearEasing
+                -6f at 200 using LinearEasing
+                0f at 400 using LinearEasing
+                0f at 600 using LinearEasing
+            },
+            repeatMode = RepeatMode.Restart,
+            initialStartOffset = StartOffset(0)
+        ),
+        label = "dot1"
+    )
+
+    val dot2Offset by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = -6f,
+        animationSpec = infiniteRepeatable(
+            animation = keyframes {
+                durationMillis = 600
+                0f at 0 using LinearEasing
+                -6f at 200 using LinearEasing
+                0f at 400 using LinearEasing
+                0f at 600 using LinearEasing
+            },
+            repeatMode = RepeatMode.Restart,
+            initialStartOffset = StartOffset(150)
+        ),
+        label = "dot2"
+    )
+
+    val dot3Offset by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = -6f,
+        animationSpec = infiniteRepeatable(
+            animation = keyframes {
+                durationMillis = 600
+                0f at 0 using LinearEasing
+                -6f at 200 using LinearEasing
+                0f at 400 using LinearEasing
+                0f at 600 using LinearEasing
+            },
+            repeatMode = RepeatMode.Restart,
+            initialStartOffset = StartOffset(300)
+        ),
+        label = "dot3"
+    )
+
+    Row(
+        modifier = Modifier.padding(horizontal = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        val colors = listOf(Color(0xFF25D366), Color(0xFF00E676), Color(0xFF05C657))
+        Box(
+            modifier = Modifier
+                .size(6.dp)
+                .graphicsLayer { translationY = dot1Offset }
+                .background(colors[0], CircleShape)
+        )
+        Box(
+            modifier = Modifier
+                .size(6.dp)
+                .graphicsLayer { translationY = dot2Offset }
+                .background(colors[1], CircleShape)
+        )
+        Box(
+            modifier = Modifier
+                .size(6.dp)
+                .graphicsLayer { translationY = dot3Offset }
+                .background(colors[2], CircleShape)
+        )
+    }
+}
+
+@Composable
+fun AudioVisualizer(
+    isPlaying: Boolean,
+    modifier: Modifier = Modifier
+) {
+    val infiniteTransition = rememberInfiniteTransition(label = "audio_visualizer")
+    
+    val animationScale by if (isPlaying) {
+        infiniteTransition.animateFloat(
+            initialValue = 0.3f,
+            targetValue = 1.0f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 450, easing = LinearEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "wave_scale"
+        )
+    } else {
+        remember { mutableStateOf(0.3f) }
+    }
+
+    androidx.compose.foundation.Canvas(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(28.dp)
+            .padding(vertical = 2.dp)
+    ) {
+        val barCount = 40
+        val spacing = 2.dp.toPx()
+        val totalSpacing = spacing * (barCount - 1)
+        val barWidth = (size.width - totalSpacing) / barCount
+        val maxBarHeight = size.height
+        
+        for (i in 0 until barCount) {
+            val wavePhase = (i * 0.2f).toFloat()
+            val dynamicScale = if (isPlaying) {
+                val sinValue = kotlin.math.sin(animationScale * Math.PI * 2 + wavePhase)
+                (kotlin.math.abs(sinValue).toFloat() * 0.7f + 0.3f)
+            } else {
+                val base = kotlin.math.sin(wavePhase)
+                (kotlin.math.abs(base) * 0.4f + 0.2f).toFloat()
+            }
+            
+            val barHeight = maxBarHeight * dynamicScale
+            val x = i * (barWidth + spacing)
+            val y = (maxBarHeight - barHeight) / 2
+            
+            drawRoundRect(
+                color = if (isPlaying) Color(0xFF25D366) else Color(0xFF8596A0).copy(alpha = 0.6f),
+                topLeft = androidx.compose.ui.geometry.Offset(x, y),
+                size = androidx.compose.ui.geometry.Size(barWidth, barHeight),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(barWidth / 2, barWidth / 2)
+            )
+        }
+    }
+}
+
+data class EmojiCategory(val name: String, val icon: String, val emojis: List<String>)
+
+@Composable
+fun EmojiAndMediaSheet(
+    viewModel: ChatViewModel,
+    inputMessage: String,
+    onEmojiSelected: (String) -> Unit,
+    onStickerSelected: (StickerResult) -> Unit,
+    onClose: () -> Unit
+) {
+    val context = LocalContext.current
+    var selectedTab by remember { mutableStateOf(0) } // 0 = Emoji, 1 = GIF, 2 = Sticker
+    var searchQuery by remember { mutableStateOf("") }
+    var debouncedSearchQuery by remember { mutableStateOf("") }
+    var isSearchActive by remember { mutableStateOf(false) }
+
+    // Emoji categories setup
+    val emojiCategories = remember {
+        listOf(
+            EmojiCategory("Smileys", "😀", listOf(
+                "😀", "😃", "😄", "😁", "😆", "😅", "😂", "🤣", "😊", "😇", "🙂", "🙃", "😉", "😌", "😍", "🥰", "😘", "😗", "😙", "😚", "😋", "😛", "😝", "😜", "🤪", "🤨", "🧐", "🤓", "😎", "🥸", "🤩", "🥳", "😏", "😒", "😞", "😔", "😟", "😕", "🙁", "☹️", "😣", "😖", "😫", "😩", "🥺", "😢", "😭", "😤", "😠", "😡", "🤬", "🤯", "😳", "🥵", "🥶", "😱", "😨", "😰", "😥", "😓", "🤗", "🤔", "🫣", "🤭", "🤫", "🤥", "😶", "😶‍🌫️", "😐", "😑", "😬", "🫨", "🫠"
+            )),
+            EmojiCategory("Animales", "🐾", listOf(
+                "🐶", "🐱", "🐭", "🐹", "🐰", "🦊", "🐻", "🐼", "🐨", "🐯", "🦁", "🐮", "🐷", "🐸", "🐵", "🐔", "🐧", "🐦", "🦆", "🦅", "🦉", "🦇", "🐺", "🐗", "🐴", "🦄", "🐝", "🪱", "🐛", "🦋", "🐌", "🐞", "🐜", "🦟", "🦗", "🕷", "🕸", "🦂", "🐢", "🐍", "🦎", "🐙", "🦑", "🦞", "🦀", "🐡", "🐠", "🐟", "🐬", "🐳", "🐋", "🦈"
+            )),
+            EmojiCategory("Comida", "🍔", listOf(
+                "🍏", "🍎", "🍐", "🍊", "🍋", "🍌", "🍉", "🍇", "🍓", "🍈", "🍒", "🍑", "🍍", "🥥", "🥝", "🍅", "🥑", "🥦", "🥬", "🥒", "🌶️", "🌽", "🥕", "🧅", "🥔", "🍠", "🥐", "🥯", "🍞", "🥖", "🥨", "🥞", "🧀", "🍖", "🍗", "🥩", "🥓", "🍔", "🍟", "🍕", "🌭", "🥪", "🌮", "🌯", "🍳", "🥘", "🍲", "🫕"
+            )),
+            EmojiCategory("Deportes", "⚽", listOf(
+                "⚽", "🏀", "🏈", "⚾", "🥎", "🎾", "🏐", "🏉", "🎱", "🏓", "🏸", "🥅", "🏒", "🏑", "🏏", "⛳", "🏹", "🎣", "🥊", "🥋", "🎽", "🛹", "🛷", "🎿", "🏂", "🏋️", "🤸", "🤺", "🤼", "🤽", "🤾", "🤹", "🧘", "🏆", "🥇", "🥈", "🥉", "🏅", "🎖", "🎫", "🎟", "🎪"
+            )),
+            EmojiCategory("Vehículos", "🚗", listOf(
+                "🚗", "🚕", "🚙", "🚌", "🚎", "🏎", "🚓", "🚑", "🚒", "🚐", "🚚", "🚛", "🚜", "🛵", "🏍", "🛺", "🚲", "🛴", "🚏", "🛣", "🛤", "⛽", "🚨", "🚥", "🚦", "🛑", "🚧", "⚓", "⛵", "🚤", "🛳", "🛥", "🚢", "✈️", "🛩", "🚀", "🛸", "🛰"
+            )),
+            EmojiCategory("Objetos", "💡", listOf(
+                "⌚", "📱", "💻", "⌨", "🖥", "🖨", "🖱", "🕹", "💾", "💿", "📀", "📸", "📹", "🎥", "👓", "🕶", "🔬", "🔭", "📡", "🕯", "💡", "🔦", "🏮", "📔", "📕", "📖", "📗", "📘", "📙", "📚", "📓", "📝", "✉️", "📧", "📨", "📩", "📦", "📫", "📪", "📬", "📭", "📮", "📯", "📜", "📂"
+            )),
+            EmojiCategory("Símbolos", "❤️", listOf(
+                "❤️", "🧡", "💛", "💚", "💙", "💜", "🖤", "🤍", "🤎", "💔", "❣️", "💕", "💞", "💓", "💗", "💖", "💘", "💝", "💟", "☮️", "✝️", "☪️", "🕉️", "☸️", "✡️", "🔯", "☯️", "☦️", "🛐", "⛎", "🫵", "👍", "👎", "✊", "👊", "🤛", "🤜", "🤞", "✌️", "🤟", "🤘", "👌", "🤌", "🤏", "👈", "👉", "👆", "👇"
+            )),
+            EmojiCategory("Banderas", "🚩", listOf(
+                "🏳️", "🏴", "🏁", "🚩", "🏳️‍🌈", "🏳️‍⚧️", "🇺🇸", "🇻🇪", "🇪🇸", "🇲🇽", "🇨🇴", "🇦🇷", "🇧🇷", "🇨🇱", "🇵🇪", "🇮🇹", "🇫🇷", "🇩🇪", "🇬🇧", "🪦", "🇨🇦", "🇦🇺", "🇬🇷"
+            ))
+        )
+    }
+    var selectedEmojiCategory by remember { mutableStateOf(0) }
+
+    // Stickers setup
+    var stickersList by remember { mutableStateOf<List<StickerResult>>(emptyList()) }
+    var isStickersLoading by remember { mutableStateOf(false) }
+    var selectedStickerCategory by remember { mutableStateOf("trends") } // "recents", "favorites", "trends", "theme_love", etc.
+
+    // GIFs setup
+    var gifsList by remember { mutableStateOf<List<StickerResult>>(emptyList()) }
+    var isGifsLoading by remember { mutableStateOf(false) }
+
+    var previewSticker by remember { mutableStateOf<StickerResult?>(null) }
+
+    // Debounce searchQuery changes
+    LaunchedEffect(searchQuery) {
+        if (searchQuery.isEmpty()) {
+            debouncedSearchQuery = ""
+        } else {
+            delay(300)
+            debouncedSearchQuery = searchQuery
+        }
+    }
+
+    // LaunchedEffect to reload stickers based on selectedStickerCategory or debounced searchQuery
+    LaunchedEffect(selectedTab, selectedStickerCategory, debouncedSearchQuery) {
+        if (selectedTab == 2) {
+            isStickersLoading = true
+            stickersList = if (debouncedSearchQuery.isNotEmpty()) {
+                StickerRepository.getStickers(context, debouncedSearchQuery)
+            } else {
+                when (selectedStickerCategory) {
+                    "recents" -> StickerRepository.getRecentStickers(context)
+                    "favorites" -> StickerRepository.getFavoriteStickers(context)
+                    "trends" -> StickerRepository.getStickers(context, null)
+                    "theme_love" -> StickerRepository.getStickers(context, "love")
+                    "theme_funny" -> StickerRepository.getStickers(context, "funny")
+                    "theme_hello" -> StickerRepository.getStickers(context, "hello")
+                    "theme_party" -> StickerRepository.getStickers(context, "party")
+                    else -> emptyList()
+                }
+            }
+            isStickersLoading = false
+        }
+    }
+
+    // LaunchedEffect to reload GIFs based on debounced searchQuery
+    LaunchedEffect(selectedTab, debouncedSearchQuery) {
+        if (selectedTab == 1) {
+            isGifsLoading = true
+            try {
+                val queryToUse = if (debouncedSearchQuery.isNotEmpty()) debouncedSearchQuery else "funny"
+                val response = com.example.service.GiphyClient.apiService.searchGifs(
+                    apiKey = "t8xzuvPe8NkWYQgPzfDSLa4RMoUVj5ai",
+                    query = queryToUse,
+                    limit = 24
+                )
+                if (response.isSuccessful) {
+                    val giphyResponse = response.body()
+                    gifsList = giphyResponse?.data?.map { gif ->
+                        StickerResult(
+                            id = gif.id,
+                            url = gif.images.fixedWidth.url,
+                            preview = gif.images.fixedWidth.url,
+                            width = gif.images.fixedWidth.width.toIntOrNull(),
+                            height = gif.images.fixedWidth.height.toIntOrNull()
+                        )
+                    } ?: emptyList()
+                } else {
+                    gifsList = listOf(
+                        StickerResult(id = "gif_fb_1", url = "https://media.giphy.com/media/l0HlSgH9bXWbBMtQ4/giphy.gif", preview = "https://media.giphy.com/media/l0HlSgH9bXWbBMtQ4/giphy.gif"),
+                        StickerResult(id = "gif_fb_2", url = "https://media.giphy.com/media/3o7TKSjRrfIPjeiVyM/giphy.gif", preview = "https://media.giphy.com/media/3o7TKSjRrfIPjeiVyM/giphy.gif"),
+                        StickerResult(id = "gif_fb_3", url = "https://media.giphy.com/media/26AHONQ79FdYzhAI0/giphy.gif", preview = "https://media.giphy.com/media/26AHONQ79FdYzhAI0/giphy.gif"),
+                        StickerResult(id = "gif_fb_4", url = "https://media.giphy.com/media/l41YptBC8A0gD9XEY/giphy.gif", preview = "https://media.giphy.com/media/l41YptBC8A0gD9XEY/giphy.gif")
+                    )
+                }
+            } catch (e: Exception) {
+                gifsList = listOf(
+                    StickerResult(id = "gif_fb_1", url = "https://media.giphy.com/media/l0HlSgH9bXWbBMtQ4/giphy.gif", preview = "https://media.giphy.com/media/l0HlSgH9bXWbBMtQ4/giphy.gif"),
+                    StickerResult(id = "gif_fb_2", url = "https://media.giphy.com/media/3o7TKSjRrfIPjeiVyM/giphy.gif", preview = "https://media.giphy.com/media/3o7TKSjRrfIPjeiVyM/giphy.gif"),
+                    StickerResult(id = "gif_fb_3", url = "https://media.giphy.com/media/26AHONQ79FdYzhAI0/giphy.gif", preview = "https://media.giphy.com/media/26AHONQ79FdYzhAI0/giphy.gif"),
+                    StickerResult(id = "gif_fb_4", url = "https://media.giphy.com/media/l41YptBC8A0gD9XEY/giphy.gif", preview = "https://media.giphy.com/media/l41YptBC8A0gD9XEY/giphy.gif")
+                )
+            } finally {
+                isGifsLoading = false
+            }
+        }
+    }
+
+    // Zoom/Preview Dialog
+    if (previewSticker != null) {
+        Dialog(
+            onDismissRequest = { previewSticker = null },
+            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.7f))
+                    .clickable { previewSticker = null },
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier
+                        .width(260.dp)
+                        .clip(RoundedCornerShape(24.dp))
+                        .background(Color(0xFF1F2C34))
+                        .padding(20.dp)
+                ) {
+                    AsyncImage(
+                        model = previewSticker!!.url,
+                        contentDescription = "Preview",
+                        modifier = Modifier
+                            .size(180.dp)
+                            .padding(8.dp),
+                        contentScale = ContentScale.Fit
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "Vista Previa",
+                        color = Color.White,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Toca fuera de la tarjeta para cerrar",
+                        color = Color(0xFF00A884),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(340.dp)
+            .background(Color(0xFF111B21))
+    ) {
+        // Handle (drag indicator bar)
+        Box(
+            modifier = Modifier
+                .align(Alignment.CenterHorizontally)
+                .padding(vertical = 8.dp)
+                .size(40.dp, 4.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(Color.Gray.copy(alpha = 0.5f))
+        )
+
+        // Unified Header Row or Search Active Row
+        if (isSearchActive) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 4.dp)
+            ) {
+                IconButton(onClick = {
+                    isSearchActive = false
+                    searchQuery = ""
+                }) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Atrás",
+                        tint = Color(0xFF8596A0)
+                    )
+                }
+
+                androidx.compose.foundation.text.BasicTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    modifier = Modifier
+                        .weight(1f)
+                        .background(Color(0xFF202C33), RoundedCornerShape(24.dp))
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 15.sp),
+                    cursorBrush = androidx.compose.ui.graphics.SolidColor(Color(0xFF00A884)),
+                    singleLine = true,
+                    decorationBox = { innerTextField ->
+                        Box(
+                            modifier = Modifier.fillMaxWidth(),
+                            contentAlignment = Alignment.CenterStart
+                        ) {
+                            if (searchQuery.isEmpty()) {
+                                val hintText = when (selectedTab) {
+                                    0 -> "Buscar emoji..."
+                                    1 -> "Buscar GIF..."
+                                    else -> "Buscar stickers..."
+                                }
+                                Text(hintText, color = Color(0xFF8596A0), fontSize = 15.sp)
+                            }
+                            innerTextField()
+                        }
+                    }
+                )
+
+                if (searchQuery.isNotEmpty()) {
+                    IconButton(onClick = { searchQuery = "" }) {
+                        Icon(Icons.Default.Close, contentDescription = "Limpiar", tint = Color(0xFF8596A0))
+                    }
+                }
+            }
+        } else {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                // Left: Search Button
+                IconButton(onClick = { isSearchActive = true }) {
+                    Icon(Icons.Default.Search, contentDescription = "Buscar", tint = Color(0xFF8596A0))
+                }
+
+                // Center: Unified selector of 3 tabs (Emoji, GIF, Sticker)
+                Surface(
+                    shape = RoundedCornerShape(24.dp),
+                    color = Color(0xFF202C33),
+                    modifier = Modifier
+                        .width(220.dp)
+                        .height(38.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        listOf("Emoji", "GIF", "Sticker").forEachIndexed { index, title ->
+                            val isSelected = selectedTab == index
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxHeight()
+                                    .clip(RoundedCornerShape(24.dp))
+                                    .background(if (isSelected) Color(0xFF374248) else Color.Transparent)
+                                    .clickable { selectedTab = index },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (index == 0) {
+                                    Icon(
+                                        imageVector = Icons.Default.SentimentSatisfied,
+                                        contentDescription = "Emojis",
+                                        tint = if (isSelected) Color.White else Color(0xFF8596A0),
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                } else if (index == 1) {
+                                    Text(
+                                        text = "GIF",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp,
+                                        color = if (isSelected) Color.White else Color(0xFF8596A0)
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Default.StickyNote2,
+                                        contentDescription = "Stickers",
+                                        tint = if (isSelected) Color.White else Color(0xFF8596A0),
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Right: Backspace/Clear character
+                IconButton(onClick = {
+                    if (inputMessage.isNotEmpty()) {
+                        val newText = inputMessage.substring(0, inputMessage.length - 1)
+                        viewModel.onInputMessageChange(newText)
+                    }
+                }) {
+                    Icon(Icons.Default.Backspace, contentDescription = "Borrar", tint = Color(0xFF8596A0))
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // Grid Content depending on active tab
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .padding(horizontal = 8.dp)
+        ) {
+            when (selectedTab) {
+                0 -> {
+                    // Pestaña Emoji
+                    val currentEmojis = remember(selectedEmojiCategory, searchQuery) {
+                        if (searchQuery.isNotEmpty()) {
+                            emojiCategories.flatMap { it.emojis }.filter { true }
+                        } else {
+                            emojiCategories[selectedEmojiCategory].emojis
+                        }
+                    }
+
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        LazyVerticalGrid(
+                            columns = GridCells.Fixed(7),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            items(currentEmojis) { emoji ->
+                                Box(
+                                    modifier = Modifier
+                                        .aspectRatio(1f)
+                                        .clip(CircleShape)
+                                        .clickable { onEmojiSelected(emoji) },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(text = emoji, fontSize = 28.sp)
+                                }
+                            }
+                        }
+
+                        // Bottom categories selector bar (ONLY when search is NOT active)
+                        if (!isSearchActive) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(Color(0xFF1F2C34))
+                                    .padding(vertical = 4.dp),
+                                horizontalArrangement = Arrangement.SpaceAround,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                emojiCategories.forEachIndexed { idx, category ->
+                                    val isCatSelected = selectedEmojiCategory == idx
+                                    Box(
+                                        modifier = Modifier
+                                            .size(36.dp)
+                                            .clip(CircleShape)
+                                            .background(if (isCatSelected) Color(0xFF00A884) else Color.Transparent)
+                                            .clickable { selectedEmojiCategory = idx },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(text = category.icon, fontSize = 18.sp)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                1 -> {
+                    // Pestaña GIF
+                    if (isGifsLoading) {
+                        CircularProgressIndicator(
+                            color = Color(0xFF00A884),
+                            modifier = Modifier.align(Alignment.Center)
+                        )
+                    } else if (gifsList.isEmpty()) {
+                        Text(
+                            text = "No se encontraron GIFs",
+                            color = Color(0xFF8596A0),
+                            fontSize = 13.sp,
+                            modifier = Modifier.align(Alignment.Center)
+                        )
+                    } else {
+                        LazyVerticalGrid(
+                            columns = GridCells.Fixed(2),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            items(gifsList) { gif ->
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(100.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(Color(0xFF202C33))
+                                        .clickable {
+                                            onStickerSelected(gif)
+                                        }
+                                ) {
+                                    AsyncImage(
+                                        model = gif.preview,
+                                        contentDescription = "GIF",
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentScale = ContentScale.Crop
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                2 -> {
+                    // Pestaña Sticker
+                    com.example.features.stickers.presentation.StickerPanel(
+                        modifier = Modifier.fillMaxSize(),
+                        onStickerSelected = { sticker ->
+                            onStickerSelected(StickerResult(url = sticker.imageUrl, preview = sticker.imageUrl))
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun PreviewAudioWaveform(
+    waveform: List<Float>,
+    currentPositionMs: Long,
+    durationMs: Long,
+    onSeek: (Long) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val totalDuration = if (durationMs > 0) durationMs else 1000L
+    val progressFraction = (currentPositionMs.toFloat() / totalDuration).coerceIn(0f, 1f)
+    val bars = if (waveform.isNotEmpty()) waveform else List(40) { 0.2f }
+
+    var canvasWidthPx by remember { mutableStateOf(1f) }
+
+    Box(
+        modifier = modifier
+            .pointerInput(totalDuration) {
+                detectTapGestures { offset ->
+                    if (canvasWidthPx > 0) {
+                        val fraction = (offset.x / canvasWidthPx).coerceIn(0f, 1f)
+                        onSeek((fraction * totalDuration).toLong())
+                    }
+                }
+            }
+            .pointerInput(totalDuration) {
+                detectDragGestures { change, _ ->
+                    change.consume()
+                    if (canvasWidthPx > 0) {
+                        val fraction = (change.position.x / canvasWidthPx).coerceIn(0f, 1f)
+                        onSeek((fraction * totalDuration).toLong())
+                    }
+                }
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(
+            modifier = Modifier
+                .fillMaxSize()
+                .onGloballyPositioned { layoutCoordinates ->
+                    canvasWidthPx = layoutCoordinates.size.width.toFloat().coerceAtLeast(1f)
+                }
+        ) {
+            val count = bars.size
+            if (count == 0) return@Canvas
+
+            val spacingPx = 2.dp.toPx()
+            val totalSpacingPx = spacingPx * (count - 1)
+            val barWidthPx = maxOf(1f, (size.width - totalSpacingPx) / count)
+            val centerY = size.height / 2f
+            val maxBarHeight = size.height * 0.9f
+
+            val activeBarIndex = (progressFraction * count).toInt().coerceIn(0, count)
+
+            for (i in 0 until count) {
+                val amplitude = bars[i].coerceIn(0.1f, 1.0f)
+                val barHeight = maxOf(3.dp.toPx(), amplitude * maxBarHeight)
+                val startX = i * (barWidthPx + spacingPx)
+                val isPlayed = i <= activeBarIndex
+
+                val color = if (isPlayed) Color(0xFF00A884) else Color(0xFF53636E)
+
+                drawRoundRect(
+                    color = color,
+                    topLeft = Offset(startX, centerY - barHeight / 2f),
+                    size = Size(barWidthPx, barHeight),
+                    cornerRadius = CornerRadius(barWidthPx / 2f, barWidthPx / 2f)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun PlaylistPickerDialog(
+    playlists: List<com.example.media.playlist.PlaylistEntity>,
+    onPlaylistSelected: (com.example.media.playlist.PlaylistEntity) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Selecciona una Playlist", color = Color.White) },
+        text = {
+            if (playlists.isEmpty()) {
+                Box(modifier = Modifier.fillMaxWidth().height(100.dp), contentAlignment = Alignment.Center) {
+                    Text("No tienes playlists creadas", color = Color.Gray)
+                }
+            } else {
+                LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
+                    items(playlists) { playlist ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onPlaylistSelected(playlist) }
+                                .padding(vertical = 12.dp, horizontal = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(Color(0xFF202C33)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (playlist.coverPath != null) {
+                                    AsyncImage(
+                                        model = playlist.coverPath,
+                                        contentDescription = null,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                } else {
+                                    Icon(Icons.Default.MusicNote, contentDescription = null, tint = Color.Gray)
+                                }
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(playlist.name, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Text("Playlist • Actualizada recientemente", color = Color.Gray, fontSize = 11.sp)
+                            }
+                        }
+                        HorizontalDivider(color = Color.White.copy(alpha = 0.1f))
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancelar", color = Color(0xFF00A884))
+            }
+        },
+        containerColor = Color(0xFF1F2C34),
+        shape = RoundedCornerShape(28.dp)
+    )
+}

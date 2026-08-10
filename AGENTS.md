@@ -1,0 +1,65 @@
+# Rules for Panalink Development
+
+## 🛡️ Mandate: Zero Regressions (Cero Regresiones)
+
+Every modification to any class must follow a strict "Zero Regression" policy. Before any code is changed, the following functional checklist must be verified, and then re-verified after the change to guarantee no existing features are broken.
+
+---
+
+## 📋 Functional Checklist
+
+### 💬 Mensajería
+- [ ] **Envío de mensajes de texto**: Confirm text messages can be composed and sent.
+- [ ] **Recepción en tiempo real**: Confirm real-time updates of incoming messages are functional via Supabase Realtime without manually leaving or reopening the screen.
+- [ ] **Carga del historial existente**: Verify existing message history loads correctly when entering the chat screen.
+- [ ] **Persistencia en Room**: Confirm that messages are persisted to Room database locally for offline-first support.
+- [ ] **Sincronización con Supabase**: Verify background sync and database upload sync tasks correctly synchronize states with the Supabase backend.
+- [ ] **Mensajes optimistas**: Verify that sending a message immediately places it in the UI with a "sending" state for instant user feedback.
+- [ ] **Reemplazo del ID temporal por el definitivo**: Ensure that once Supabase saves the message, the temporary ID (`temp_...`) is replaced in the database and UI by the final remote ID.
+- [ ] **Reconexión después de perder Internet**: Confirm that the app gracefully recovers and reconnects to Realtime channels after network loss.
+
+### 📊 Estados del mensaje
+- [ ] **Status transitions**: Check that messages move properly through statuses:
+  - `sending` -> `sent` -> `delivered` -> `read` -> `failed`
+- [ ] **Realtime + Room updates**: Ensure state changes arrive in real-time from the backend and instantly update Room.
+
+### 📡 Señalización (Signaling)
+- [ ] **Usuario escribiendo**: Real-time typing indicators are visible and update instantly.
+- [ ] **Usuario grabando audio**: Real-time recording indicators are visible and update instantly.
+- [ ] **Usuario subiendo archivo**: Real-time uploading indicators function as expected.
+- [ ] **Doble tilde gris**: Indicates message was successfully delivered to the remote service.
+- [ ] **Doble tilde azul**: Indicates message was read.
+- [ ] **Instant update**: All signaling indicators update in real-time without leaving the chat.
+
+### 📦 Multimedia
+- [ ] **File type verification**: Check image, video, document, voice note, and stickers.
+- [ ] **Performance testing matrix**:
+  - Small file uploads and downloads.
+  - Large file uploads and downloads (handling large files without memory spikes).
+  - Offline mode (queueing files while disconnected).
+  - Connection recovery (WorkManager automatically uploads queued media upon regaining internet).
+  - App termination (closing the app while uploading, confirming WorkManager resumes successfully).
+  - Device reboot (verifying scheduled jobs persist and resume).
+
+### 🎬 Estados (Stories / Status)
+- [ ] **Subidas (Uploads)**: Status/stories continue to upload successfully without regressions.
+- [ ] **Descargas (Downloads)**: Status media downloads cleanly.
+- [ ] **Reproducción (Playback)**: Video/image stories render and play correctly.
+- [ ] **WorkManager Isolation**: Confirm that chat's WorkManager migration has absolutely no side-effects on Stories uploading.
+
+### 👤 Perfil (Profile)
+- [ ] **Foto de perfil**: Changing the profile picture works flawlessly and uses current local stream/upload logic.
+
+### 📰 Publicaciones (Reels & Feed)
+- [ ] **UploadRepository integration**: Verify that feed publications, comments, and other media-heavy screens continue to use `UploadRepository` unmodified and function correctly.
+
+---
+
+## 📊 Phase 1 Post-Implementation Metrics (Rendimiento)
+To confirm Phase 1 success, the following metrics must be tracked and presented:
+1. Max RAM usage during media upload (must avoid out-of-memory exceptions).
+2. Average upload time for media files.
+3. Recovery time after connection loss.
+4. Resumption time after app force close.
+5. Temp files generated vs. successfully cleaned up.
+6. Number of full-read `readBytes()` calls eliminated from the main UI thread.

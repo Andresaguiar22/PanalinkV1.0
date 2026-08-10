@@ -1,0 +1,99 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- 1. Metallic silver outline for letter P -->
+    <path
+        android:pathData="M 38,76 L 38,34 A 8,8 0 0,1 46,26 L 62,26 A 8,8 0 0,1 70,34 L 70,50 A 8,8 0 0,1 62,58 L 38,58"
+        android:strokeWidth="15"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000">
+        <aapt:attr name="android:strokeColor">
+            <gradient
+                android:startX="25"
+                android:startY="20"
+                android:endX="85"
+                android:endY="85"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#FFFFFF" />
+                <item android:offset="0.2" android:color="#B0B5BC" />
+                <item android:offset="0.4" android:color="#7F848C" />
+                <item android:offset="0.6" android:color="#E1E4E6" />
+                <item android:offset="0.8" android:color="#9AA0A6" />
+                <item android:offset="1.0" android:color="#4F5357" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- 2. Dark groove inset for letter P -->
+    <path
+        android:pathData="M 38,76 L 38,34 A 8,8 0 0,1 46,26 L 62,26 A 8,8 0 0,1 70,34 L 70,50 A 8,8 0 0,1 62,58 L 38,58"
+        android:strokeColor="#141619"
+        android:strokeWidth="10"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+
+    <!-- 3. Ambient neon green glow layer 1 (outer wide) -->
+    <path
+        android:pathData="M 38,76 L 38,34 A 8,8 0 0,1 46,26 L 62,26 A 8,8 0 0,1 70,34 L 70,50 A 8,8 0 0,1 62,58 L 38,58"
+        android:strokeColor="#00FF85"
+        android:strokeWidth="12"
+        android:strokeAlpha="0.22"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+
+    <!-- 4. Inner neon green glow layer 2 (medium) -->
+    <path
+        android:pathData="M 38,76 L 38,34 A 8,8 0 0,1 46,26 L 62,26 A 8,8 0 0,1 70,34 L 70,50 A 8,8 0 0,1 62,58 L 38,58"
+        android:strokeColor="#00FF85"
+        android:strokeWidth="6"
+        android:strokeAlpha="0.80"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+
+    <!-- 5. Neon green pure core white light tube -->
+    <path
+        android:pathData="M 38,76 L 38,34 A 8,8 0 0,1 46,26 L 62,26 A 8,8 0 0,1 70,34 L 70,50 A 8,8 0 0,1 62,58 L 38,58"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+
+    <!-- 6. Neon Green Heart - Ambient outer glow -->
+    <path
+        android:pathData="M 79,82 C 75,79 71,76 71,73 C 71,70 74,67 78,70 L 79,71 L 80,70 C 84,67 87,70 87,73 C 87,76 83,79 79,82 Z"
+        android:fillColor="#00FF85"
+        android:fillAlpha="0.27"
+        android:strokeColor="#00FF85"
+        android:strokeWidth="4"
+        android:strokeAlpha="0.27"
+        android:strokeLineJoin="round" />
+
+    <!-- 7. Neon Green Heart - Main Inner Glow -->
+    <path
+        android:pathData="M 79,82 C 75,79 71,76 71,73 C 71,70 74,67 78,70 L 79,71 L 80,70 C 84,67 87,70 87,73 C 87,76 83,79 79,82 Z"
+        android:fillColor="#00FF85"
+        android:fillAlpha="0.85"
+        android:strokeColor="#00FF85"
+        android:strokeWidth="1.5"
+        android:strokeAlpha="0.85"
+        android:strokeLineJoin="round" />
+
+    <!-- 8. Neon Green Heart - White Core Glow -->
+    <path
+        android:pathData="M 79,82 C 75,79 71,76 71,73 C 71,70 74,67 78,70 L 79,71 L 80,70 C 84,67 87,70 87,73 C 87,76 83,79 79,82 Z"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+</vector>
+

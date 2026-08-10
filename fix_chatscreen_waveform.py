@@ -1,0 +1,7 @@
+with open("app/src/main/java/com/example/ui/screen/ChatScreen.kt", "r") as f:
+    content = f.read()
+
+content = content.replace("                            PreviewAudioWaveform(\n                                waveform = previewWaveform,\n                                currentPositionMs = previewPlayerState.currentPositionMs,\n                                durationMs = totalDurationMs,\n                                onSeek = { posMs ->\n                                    viewModel.seekPreviewAudio(posMs)\n                                },\n                                modifier = Modifier\n                                    .fillMaxWidth()\n                                    .height(24.dp)\n                            )", "                            PreviewAudioWaveform(\n                                waveform = previewWaveform,\n                                currentPositionMs = previewPlayerState.currentPositionMs,\n                                durationMs = totalDurationMs,\n                                onSeek = { posMs ->\n                                    viewModel.seekPreviewAudio(posMs)\n                                },\n                                modifier = Modifier\n                                    .fillMaxWidth()\n                                    .height(24.dp)\n                            )")
+
+with open("app/src/main/java/com/example/ui/screen/ChatScreen.kt", "w") as f:
+    f.write(content)

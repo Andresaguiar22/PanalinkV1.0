@@ -1,0 +1,86 @@
+name: Android CI
+
+on:
+  push:
+    branches: [ "main", "master", "develop" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      # 1. Descarga e instala Gradle 9.3.1
+      - name: Download and Install Gradle 9.3.1
+        run: |
+          wget -q https://services.gradle.org/distributions/gradle-9.3.1-bin.zip
+          unzip -q gradle-9.3.1-bin.zip
+          echo "$GITHUB_WORKSPACE/gradle-9.3.1/bin" >> $GITHUB_PATH
+
+      # 2. Archivos temporales
+      - name: Create Dummy Secrets Files
+        run: |
+          touch secrets.properties
+          touch secrets.defaults.properties
+          touch app/secrets.properties
+          touch app/secrets.defaults.properties
+
+      # 2.1 Inyectar google-services.json
+      - name: Inyectar Google Services JSON
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          cat << 'EOF' > app/google-services.json
+          ${{ secrets.GOOGLE_SERVICES_JSON }}
+          EOF
+
+      # 3. Decode Keystore
+      - name: Decode Keystore
+        run: |
+          cat << 'EOF' > base64_temp.txt
+          ${{ secrets.KEYSTORE_BASE64 }}
+          EOF
+          base64 --decode --ignore-garbage base64_temp.txt > app/release-key.jks
+
+      # 3.1 LA PRUEBA DE FUEGO (Si esto pasa, coronamos)
+      - name: Test Keystore Integrity
+        env:
+          KEY_PASS_RAW: ${{ secrets.KEYSTORE_PASSWORD }}
+        run: |
+          CLEAN_PASS=$(echo "$KEY_PASS_RAW" | xargs)
+          echo "=== ABRIENDO LA BÓVEDA EN GITHUB ==="
+          keytool -list -keystore app/release-key.jks -storepass "$CLEAN_PASS" || { echo "❌ ERROR: O copiaste el Base64 incompleto, o la clave no cuadra."; exit 1; }
+          echo "✅ ¡BÓVEDA ABIERTA CON ÉXITO!"
+
+      # 4. Compila el APK de Release (Variables purificadas)
+      - name: Build Release APK
+        env:
+          KEY_ALIAS_RAW: ${{ secrets.KEY_ALIAS }}
+          KEY_PASS_RAW: ${{ secrets.KEYSTORE_PASSWORD }}
+        run: |
+          export KEY_ALIAS=$(echo "$KEY_ALIAS_RAW" | xargs)
+          export KEYSTORE_PASSWORD=$(echo "$KEY_PASS_RAW" | xargs)
+          export KEYSTORE_FILE="release-key.jks"
+          
+          gradle assembleRelease
+
+      # 5. Clean up Keystore
+      - name: Clean up Keystore
+        if: always()
+        run: rm -f app/release-key.jks
+
+      # 6. Sube el APK listo para descargar
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Panalink-Release-APK
+          path: app/build/outputs/apk/release/*.apk

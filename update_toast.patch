@@ -1,0 +1,28 @@
+--- app/src/main/java/com/example/data/repository/MessagesRepository.kt
++++ app/src/main/java/com/example/data/repository/MessagesRepository.kt
+@@ -775,6 +775,13 @@
+             } else {
+                 messageDao.updateMessageStatus(tempId, "failed")
+                 scheduleSync()
++                try {
++                    val file = java.io.File(com.example.PanaApplication.instance.filesDir, "last_send_error.txt")
++                    file.writeText("Response Error: ${response?.code()} - ${response?.errorBody()?.string()}")
++                    android.util.Log.e(TAG, "Failed to send msg: ${file.readText()}")
++                } catch (t: Throwable) {}
+                 return@withContext Result.failure(Exception("Failed to send message: ${response?.errorBody()?.string()}"))
+             }
+         } catch (e: Exception) {
+             Log.e(TAG, "sendMessage exception", e)
+             withContext(Dispatchers.Main) {
+@@ -783,6 +790,12 @@
+                         com.example.PanaApplication.instance,
+                         "Error de envío: ${e.localizedMessage}",
+                         android.widget.Toast.LENGTH_LONG
+                     ).show()
++                    try {
++                        val file = java.io.File(com.example.PanaApplication.instance.filesDir, "last_send_error.txt")
++                        file.writeText("Exception Error: ${e.localizedMessage}\n${android.util.Log.getStackTraceString(e)}")
++                        android.util.Log.e(TAG, "Exception in send msg: ${file.readText()}")
++                    } catch (t: Throwable) {}
+                 } catch (t: Throwable) {}
+             }

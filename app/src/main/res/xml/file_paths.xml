@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <external-files-path name="my_docs" path="Panalink/Documents/" />
+    <files-path name="internal_docs" path="pending_media/" />
+    <cache-path name="cache_docs" path="docs/" />
+    <cache-path name="app_updates" path="updates/" />
+</paths>

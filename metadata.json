@@ -1,0 +1,8 @@
+{
+  "name": "Remix Panalink V1.0",
+  "description": "Premium real-time messaging app featuring secure 1:1 chats, email verification, and 24-hour expiring photo and video statuses.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
