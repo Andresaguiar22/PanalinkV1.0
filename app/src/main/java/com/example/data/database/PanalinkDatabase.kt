@@ -31,9 +31,10 @@ import com.example.notification.engine.storage.entity.NotificationEntityV2
         com.example.media.playlist.PlaylistEntity::class,
         com.example.media.playlist.PlaylistTrackEntity::class,
         com.example.media.playlist.PlaylistCollaboratorEntity::class,
-        com.example.media.playlist.PlaylistInvitationEntity::class
+        com.example.media.playlist.PlaylistInvitationEntity::class,
+        PublicProfileEntity::class
     ],
-    version = 35,
+    version = 36,
     exportSchema = true
 )
 @TypeConverters(NotificationConverters::class)
@@ -41,6 +42,7 @@ abstract class PanalinkDatabase : RoomDatabase() {
     abstract fun messageDao(): MessageDao
     abstract fun chatDao(): ChatDao
     abstract fun profileDao(): ProfileDao
+    abstract fun publicProfileDao(): PublicProfileDao
     abstract fun draftDao(): DraftDao
     abstract fun reactionDao(): ReactionDao
     abstract fun pendingUploadDao(): PendingUploadDao
@@ -435,6 +437,23 @@ abstract class PanalinkDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_35_36 = object : Migration(35, 36) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `public_profiles` (
+                        `id` TEXT NOT NULL,
+                        `displayName` TEXT,
+                        `firstName` TEXT,
+                        `lastName` TEXT,
+                        `avatarUrl` TEXT,
+                        `updatedAt` TEXT,
+                        `lastSyncedAt` INTEGER NOT NULL,
+                        PRIMARY KEY(`id`)
+                    )
+                """.trimIndent())
+            }
+        }
+
         fun getDatabase(context: Context): PanalinkDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -446,7 +465,7 @@ abstract class PanalinkDatabase : RoomDatabase() {
                     MIGRATION_11_12, MIGRATION_12_13, MIGRATION_22_23, MIGRATION_23_24,
                     MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29,
                     MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33,
-                    MIGRATION_33_34, MIGRATION_34_35
+                    MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36
                 )
                 .build()
                 INSTANCE = instance
