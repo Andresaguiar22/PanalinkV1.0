@@ -530,79 +530,40 @@ class ProfilesRepository {
             }
             val apiKey = SupabaseClient.supabaseAnonKey
 
-            val response = runCall { b -> service.getContactsWithProfiles(apiKey, b, ownerFilter = "eq.$currentUid") }
+            val response = runCall { b -> service.getContacts(apiKey, b, select = "*", ownerFilter = "eq.$currentUid") }
             val statusCode = response?.code() ?: -1
             val isSuccess = response != null && response.isSuccessful
             Log.d("CONTACTS_DEBUG", "HTTP status de la petición contacts: $statusCode")
 
             if (isSuccess) {
-                val data = response!!.body() ?: emptyList()
-                Log.d(TAG, "getMyContacts: Fetched ${data.size} contacts from server")
-                Log.d("CONTACTS_DEBUG", "cantidad de contactos recibidos de Supabase: ${data.size}")
-                Log.d("CONTACTS_DEBUG", "cantidad de contactos antes de mapear: ${data.size}")
+                val contacts = response!!.body() ?: emptyList()
+                Log.d(TAG, "getMyContacts: Fetched ${contacts.size} contacts from server")
+                Log.d("CONTACTS_DEBUG", "cantidad de contactos recibidos de Supabase: ${contacts.size}")
 
-                val embeddedProfilesCount = data.count { it.rawProfile != null }
-                val missingProfilesCount = data.count { it.rawProfile == null }
-                Log.d("CONTACTS_DEBUG", "cantidad de perfiles embebidos: $embeddedProfilesCount")
-                Log.d("CONTACTS_DEBUG", "cantidad de perfiles faltantes: $missingProfilesCount")
+                val targetUserIds = contacts.map { it.contactUserId }.filter { it.isNotBlank() }.distinct()
 
-                val missingUserIds = data
-                    .filter { it.rawProfile == null && it.contactUserId.isNotBlank() }
-                    .map { it.contactUserId }
-                    .distinct()
+                val publicProfileRepo = PublicProfileRepository.getInstance()
+                val fetchResult = publicProfileRepo.getPublicProfiles(targetUserIds, forceRefresh = forceRefresh)
 
-                val batchProfilesMap = if (missingUserIds.isNotEmpty()) {
-                    Log.d(TAG, "getMyContacts: Fetching batch fallback profiles for ${missingUserIds.size} missing contacts")
-                    try {
-                        val filter = "in.(${missingUserIds.joinToString(",")})"
-                        val profResponse = runCall { b -> service.getProfiles(apiKey, b, idFilter = filter) }
-                        Log.d("CONTACTS_DEBUG", "Batch profiles request status: ${profResponse?.code()}")
-                        if (profResponse != null && profResponse.isSuccessful) {
-                            profResponse.body()?.associateBy { it.id } ?: emptyMap()
-                        } else {
-                            Log.d("CONTACTS_DEBUG", "Batch profiles request failed errorBody: ${profResponse?.errorBody()?.string()}")
-                            emptyMap()
-                        }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Error fetching batch profiles for contacts", e)
-                        emptyMap()
-                    }
-                } else emptyMap()
-
-                Log.d("CONTACTS_DEBUG", "cantidad de perfiles recuperados mediante batch: ${batchProfilesMap.size}")
-
-                var fallbackProfilesCount = 0
-                val contactProfiles = data.map { contact ->
-                    val embedded = contact.rawProfile
-                    val hasEmbedded = embedded != null
-                    val profileToUse = if (embedded != null) {
-                        embedded
-                    } else {
-                        val fallback = batchProfilesMap[contact.contactUserId]
-                        if (fallback != null) {
-                            fallback
-                        } else {
-                            fallbackProfilesCount++
-                            Log.w(TAG, "getMyContacts: No profile row found for contact_user_id=${contact.contactUserId}, creating base profile model")
-                            Profile(
-                                id = contact.contactUserId,
-                                displayName = "Usuario",
-                                avatarUrl = null
-                            )
-                        }
-                    }
-
-                    val rawAvatar = profileToUse.avatarUrl
-                    val finalAvatarUrl = CdnManager.resolveAvatarUrl(rawAvatar)
-                    Log.d("CONTACTS_DEBUG", "Contact detail -> contact_user_id: ${contact.contactUserId}, hasEmbeddedProfile: $hasEmbedded, resolvedDisplayName: ${profileToUse.displayName}, raw avatar_url: $rawAvatar, avatar URL final: $finalAvatarUrl")
-
-                    profileToUse
+                val publicProfilesMap = when (fetchResult) {
+                    is PublicProfileFetchResult.Success -> fetchResult.data
+                    else -> emptyMap()
                 }
 
-                Log.d("CONTACTS_DEBUG", "cantidad de contactos después del JOIN: ${contactProfiles.size}")
-                Log.d("CONTACTS_DEBUG", "cantidad de contactos descartados: 0")
-                Log.d("CONTACTS_DEBUG", "razón exacta de cada descarte: N/A")
-                Log.d("CONTACTS_DEBUG", "cantidad de perfiles que quedaron en fallback: $fallbackProfilesCount")
+                val contactProfiles = contacts.map { contact ->
+                    val pub = publicProfilesMap[contact.contactUserId]
+                    val displayName = pub?.displayName ?: pub?.firstName ?: contact.contactUserId
+                    val avatarUrl = CdnManager.resolveAvatarUrl(pub?.avatarUrl)
+
+                    Profile(
+                        id = contact.contactUserId,
+                        displayName = displayName,
+                        firstName = pub?.firstName,
+                        lastName = pub?.lastName,
+                        avatarUrl = avatarUrl
+                    )
+                }
+
                 Log.d("CONTACTS_DEBUG", "cantidad final entregada al ViewModel: ${contactProfiles.size}")
                 Log.d("CONTACTS_DEBUG", "[CONTACTS_DEBUG_END]")
 

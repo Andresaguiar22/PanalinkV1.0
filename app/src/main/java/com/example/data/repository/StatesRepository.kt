@@ -847,12 +847,18 @@ class StatesRepository {
             )
             if (response.isSuccessful) {
                 val viewsDto = response.body() ?: emptyList()
-                val profilesResp = service.getProfiles(apiKey, bearer)
+                val viewerIds = viewsDto.map { it.viewerId }.filter { it.isNotBlank() }.distinct()
+                val publicResult = PublicProfileRepository.getInstance().getPublicProfiles(viewerIds)
+                val publicProfilesMap = if (publicResult is PublicProfileFetchResult.Success) {
+                    publicResult.data
+                } else emptyMap()
+
                 val views = viewsDto.map { dto ->
+                    val pub = publicProfilesMap[dto.viewerId]
                     StatusViewer(
                         viewerId = dto.viewerId,
-                        name = dto.profiles?.displayName ?: "Pana",
-                        avatarUrl = dto.profiles?.avatarUrl,
+                        name = pub?.displayName ?: pub?.firstName ?: dto.profiles?.displayName ?: "Usuario",
+                        avatarUrl = CdnManager.resolveAvatarUrl(pub?.avatarUrl ?: dto.profiles?.avatarUrl),
                         viewedAt = dto.createdAt
                     )
                 }

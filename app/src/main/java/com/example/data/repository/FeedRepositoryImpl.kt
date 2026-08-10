@@ -4,6 +4,7 @@ import android.util.Log
 import com.example.data.model.PostCommentDto
 import com.example.data.model.PostDto
 import com.example.data.model.PostLikeDto
+import com.example.data.model.Profile
 import com.example.data.supabase.SessionManager
 import com.example.data.supabase.SupabaseClient
 import kotlinx.coroutines.Dispatchers
@@ -91,22 +92,28 @@ class FeedRepositoryImpl : FeedRepository {
                 if (posts.isNotEmpty()) {
                     // Step 2: Try to map profiles manually to avoid cross-schema join issues
                     try {
-                        val userIds = posts.mapNotNull { it.userId }.distinct()
+                        val userIds = posts.mapNotNull { it.userId }.filter { it.isNotBlank() }.distinct()
                         if (userIds.isNotEmpty()) {
-                            val idFilter = "in.(${userIds.joinToString(",")})"
-                            val profilesResponse = runCall { b -> 
-                                service.getProfiles(
-                                    apiKey = SupabaseClient.supabaseAnonKey,
-                                    authorization = b,
-                                    idFilter = idFilter
-                                ) 
-                            }
-                            if (profilesResponse != null && profilesResponse.isSuccessful) {
-                                val profilesMap = profilesResponse.body()?.associateBy { it.id } ?: emptyMap()
-                                posts = posts.map { it.copy(profile = if (it.userId != null) profilesMap[it.userId] else null) }
-                                Log.d(TAG, "Mapped profiles for ${profilesMap.size} users")
-                            } else {
-                                Log.w(TAG, "Manual profile mapping failed: ${profilesResponse?.code()}")
+                            val publicResult = PublicProfileRepository.getInstance().getPublicProfiles(userIds)
+                            if (publicResult is PublicProfileFetchResult.Success) {
+                                val publicProfilesMap = publicResult.data
+                                posts = posts.map { post ->
+                                    val pub = if (post.userId != null) publicProfilesMap[post.userId] else null
+                                    if (pub != null) {
+                                        post.copy(
+                                            profile = Profile(
+                                                id = pub.id,
+                                                displayName = pub.displayName ?: pub.firstName ?: pub.id,
+                                                firstName = pub.firstName,
+                                                lastName = pub.lastName,
+                                                avatarUrl = CdnManager.resolveAvatarUrl(pub.avatarUrl)
+                                            )
+                                        )
+                                    } else {
+                                        post
+                                    }
+                                }
+                                Log.d(TAG, "Mapped public profiles for ${publicProfilesMap.size} users")
                             }
                         }
                     } catch (e: Exception) {
@@ -306,16 +313,22 @@ class FeedRepositoryImpl : FeedRepository {
             if (response != null && response.isSuccessful && !response.body().isNullOrEmpty()) {
                 var post = response.body()!!.first()
                 
-                // Fetch profile manually
+                // Fetch profile manually via PublicProfileRepository
                 try {
                     val userId = post.userId
                     if (userId != null) {
-                        val profilesResponse = runCall { b -> 
-                            service.getProfiles(SupabaseClient.supabaseAnonKey, b, "eq.$userId")
-                        }
-                        if (profilesResponse != null && profilesResponse.isSuccessful) {
-                            val profile = profilesResponse.body()?.firstOrNull()
-                            post = post.copy(profile = profile)
+                        val publicResult = PublicProfileRepository.getInstance().getPublicProfile(userId)
+                        if (publicResult is PublicProfileFetchResult.Success) {
+                            val pub = publicResult.data
+                            post = post.copy(
+                                profile = Profile(
+                                    id = pub.id,
+                                    displayName = pub.displayName ?: pub.firstName ?: pub.id,
+                                    firstName = pub.firstName,
+                                    lastName = pub.lastName,
+                                    avatarUrl = CdnManager.resolveAvatarUrl(pub.avatarUrl)
+                                )
+                            )
                         }
                     }
                 } catch (e: Exception) {

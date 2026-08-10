@@ -32,7 +32,7 @@ class PublicProfileArchitectureTest {
         assertEquals("Juan Perez", model.displayName)
         assertEquals("Juan", model.firstName)
         assertEquals("Perez", model.lastName)
-        assertEquals("avatars/juan.png", model.avatarUrl)
+        assertEquals("https://tivqjfgjdxgzicrridaz.supabase.co/storage/v1/object/public/avatars/juan.png", model.avatarUrl)
         assertEquals("2026-08-10T10:00:00Z", model.updatedAt)
     }
 
@@ -76,7 +76,7 @@ class PublicProfileArchitectureTest {
         assertEquals("Carlos Lopez", model.displayName)
         assertEquals("Carlos", model.firstName)
         assertEquals("Lopez", model.lastName)
-        assertEquals("avatars/carlos.png", model.avatarUrl)
+        assertEquals("https://tivqjfgjdxgzicrridaz.supabase.co/storage/v1/object/public/avatars/carlos.png", model.avatarUrl)
         assertEquals("2026-08-10T12:00:00Z", model.updatedAt)
     }
 

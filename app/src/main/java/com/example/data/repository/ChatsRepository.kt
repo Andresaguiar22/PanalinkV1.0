@@ -161,15 +161,28 @@ class ChatsRepository {
                 
                 // Collect unique other member IDs to fetch their profiles specifically
                 val otherMemberIds = threads.map { if (it.userA == currentUid) it.userB else it.userA }.toSet()
+                val publicProfileRepo = PublicProfileRepository.getInstance()
                 val profilesMap = if (otherMemberIds.isNotEmpty()) {
-                    val idFilter = "in.(${otherMemberIds.joinToString(",")})"
-                    val profilesResponse = runCall { b -> service.getProfiles(apiKey, b, idFilter = idFilter) }
-                    if (profilesResponse != null && profilesResponse.isSuccessful) {
-                        profilesResponse.body()?.associateBy { it.id } ?: emptyMap()
-                    } else {
-                        // Fallback to local DB if profile fetch fails
-                        otherMemberIds.associateWith { profileDao.getProfileById(it)?.toProfile() }.filterValues { it != null } as Map<String, Profile>
+                    val publicResult = publicProfileRepo.getPublicProfiles(otherMemberIds.toList())
+                    val map = mutableMapOf<String, Profile>()
+                    if (publicResult is PublicProfileFetchResult.Success) {
+                        for ((id, pub) in publicResult.data) {
+                            map[id] = Profile(
+                                id = pub.id,
+                                displayName = pub.displayName ?: pub.firstName ?: pub.id,
+                                firstName = pub.firstName,
+                                lastName = pub.lastName,
+                                avatarUrl = CdnManager.resolveAvatarUrl(pub.avatarUrl)
+                            )
+                        }
                     }
+                    // Fallback to local profileDao if missing
+                    for (id in otherMemberIds) {
+                        if (!map.containsKey(id)) {
+                            profileDao.getProfileById(id)?.toProfile()?.let { map[id] = it }
+                        }
+                    }
+                    map
                 } else {
                     emptyMap()
                 }

@@ -52,6 +52,7 @@ enum class RecordState {
 class ChatViewModel : ViewModel() {
     private val messagesRepo = MessagesRepository.getInstance()
     private val profilesRepo = ProfilesRepository()
+    private val publicProfileRepo = com.example.data.repository.PublicProfileRepository.getInstance()
     private val chatsRepo = com.example.data.repository.ChatsRepository()
     private val playlistRepo = com.example.media.playlist.PlaylistRepository(
         com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance).playlistDao(),
@@ -207,10 +208,22 @@ private var chatJob: kotlinx.coroutines.Job? = null
 
         chatJob?.cancel()
         chatJob = viewModelScope.launch {
-            // 1. Load local profile first from ProfilesRepository (Offline-First)
+            // 1. Load local profile first from PublicProfileRepository / Room (Offline-First)
             var currentOtherProfile: Profile? = null
             if (otherUserId.isNotBlank()) {
-                currentOtherProfile = profilesRepo.getCachedProfile(otherUserId)
+                val cachedPublic = publicProfileRepo.getPublicProfile(otherUserId, forceRefresh = false)
+                if (cachedPublic is com.example.data.repository.PublicProfileFetchResult.Success) {
+                    val pub = cachedPublic.data
+                    currentOtherProfile = Profile(
+                        id = pub.id,
+                        displayName = pub.displayName ?: pub.firstName ?: pub.id,
+                        firstName = pub.firstName,
+                        lastName = pub.lastName,
+                        avatarUrl = com.example.data.repository.CdnManager.resolveAvatarUrl(pub.avatarUrl)
+                    )
+                } else {
+                    currentOtherProfile = profilesRepo.getCachedProfile(otherUserId)
+                }
             }
 
             // 2. Load cached messages list
@@ -227,12 +240,20 @@ private var chatJob: kotlinx.coroutines.Job? = null
                 _uiState.value = ChatUiState.Loading
             }
 
-            // 3. Launch background job to fetch remote profile and update cache & State
+            // 3. Launch background job to fetch remote public profile and update cache & State
             if (otherUserId.isNotBlank()) {
                 viewModelScope.launch(Dispatchers.IO) {
                     try {
-                        val result = profilesRepo.getProfile(otherUserId)
-                        result.getOrNull()?.let { remoteProfile ->
+                        val result = publicProfileRepo.getPublicProfile(otherUserId, forceRefresh = true)
+                        if (result is com.example.data.repository.PublicProfileFetchResult.Success) {
+                            val pub = result.data
+                            val remoteProfile = Profile(
+                                id = pub.id,
+                                displayName = pub.displayName ?: pub.firstName ?: pub.id,
+                                firstName = pub.firstName,
+                                lastName = pub.lastName,
+                                avatarUrl = com.example.data.repository.CdnManager.resolveAvatarUrl(pub.avatarUrl)
+                            )
                             currentOtherProfile = remoteProfile
                             profilesRepo.saveProfileToCache(remoteProfile)
                             
@@ -241,6 +262,10 @@ private var chatJob: kotlinx.coroutines.Job? = null
                             if (currentState is ChatUiState.Success) {
                                 _uiState.value = currentState.copy(otherUser = remoteProfile)
                             }
+                        } else if (result is com.example.data.repository.PublicProfileFetchResult.NotFound) {
+                            Log.w("ChatViewModel", "Public profile not found for $otherUserId")
+                        } else {
+                            Log.w("ChatViewModel", "Public profile fetch error for $otherUserId: $result")
                         }
                     } catch (e: Exception) {
                         Log.e("ChatViewModel", "Error updating remote profile", e)

@@ -32,6 +32,17 @@ class PublicProfileRepository(
 ) {
     companion object {
         private const val TAG = "PublicProfileRepo"
+
+        @Volatile
+        private var instance: PublicProfileRepository? = null
+
+        fun getInstance(context: android.content.Context = com.example.PanaApplication.instance): PublicProfileRepository {
+            return instance ?: synchronized(this) {
+                instance ?: PublicProfileRepository(
+                    publicProfileDao = com.example.data.database.PanalinkDatabase.getDatabase(context.applicationContext).publicProfileDao()
+                ).also { instance = it }
+            }
+        }
     }
 
     /**

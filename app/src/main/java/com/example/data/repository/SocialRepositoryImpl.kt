@@ -123,19 +123,20 @@ class SocialRepositoryImpl : SocialRepository {
             if (response.isSuccessful) {
                 val commentsDto = response.body() ?: emptyList()
                 
-                // Fetch profiles manually to avoid cross-schema join errors
-                val profilesResp = service.getProfiles(apiKey, bearer)
-                val profilesMap = if (profilesResp.isSuccessful) {
-                    profilesResp.body()?.associateBy { it.id } ?: emptyMap()
+                // Fetch public profiles via PublicProfileRepository
+                val userIds = commentsDto.map { it.toDomain().userId }.filter { it.isNotBlank() }.distinct()
+                val publicResult = PublicProfileRepository.getInstance().getPublicProfiles(userIds)
+                val publicProfilesMap = if (publicResult is PublicProfileFetchResult.Success) {
+                    publicResult.data
                 } else emptyMap()
 
                 commentsDto.map { dto -> 
                     val domainComment = dto.toDomain()
-                    val profile = profilesMap[domainComment.userId]
+                    val profile = publicProfilesMap[domainComment.userId]
                     if (profile != null) {
                         domainComment.copy(
-                            authorName = profile.displayName,
-                            avatarUrl = profile.avatarUrl
+                            authorName = profile.displayName ?: profile.firstName ?: domainComment.authorName,
+                            avatarUrl = CdnManager.resolveAvatarUrl(profile.avatarUrl) ?: domainComment.avatarUrl
                         )
                     } else {
                         domainComment
