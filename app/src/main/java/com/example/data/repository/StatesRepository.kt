@@ -517,82 +517,33 @@ class StatesRepository {
     }
     suspend fun toggleLike(stateId: String, currentLikeState: Boolean, isReel: Boolean): Result<com.example.data.model.ToggleLikeResponseDto> = withContext(Dispatchers.IO) {
         val currentUid = SupabaseClient.currentUser?.id ?: return@withContext Result.failure(Exception("Not authenticated"))
-        try {
-            val service = SupabaseClient.apiService ?: return@withContext Result.failure(Exception("Supabase not configured"))
-            val token = SupabaseClient.currentToken ?: return@withContext Result.failure(Exception("Session expired"))
-            val apiKey = SupabaseClient.supabaseAnonKey
-            val bearer = "Bearer $token"
-
-            if (isReel) {
-                val params = mapOf("p_reel_id" to stateId)
-                Log.d("AUDIT_LIKE", "Calling toggle_reel_like RPC: reelId=$stateId")
-                val response = service.toggleReelLikeRpc(apiKey, bearer, params)
-                if (response.isSuccessful) {
-                    val body = response.body()
-                    if (body != null) {
-                        Log.d("AUDIT_LIKE", "toggle_reel_like RPC success: liked=${body.liked}, count=${body.likesCount}")
-                        if (body.liked) {
-                            try {
-                                com.example.notification.engine.core.NotificationProducerAdapters.publishReelLikeOrComment(
-                                    reelId = stateId,
-                                    actorId = currentUid,
-                                    actorName = currentUid,
-                                    isComment = false
-                                )
-                            } catch (e: Exception) {
-                                Log.e("StatesRepository", "Error emitting reel like event", e)
-                            }
-                        }
-                        Result.success(body)
-                    } else {
-                        Result.failure(Exception("Empty response body from toggle_reel_like RPC"))
-                    }
-                } else {
-                    val errorStr = response.errorBody()?.string()
-                    Log.e("AUDIT_LIKE", "toggle_reel_like RPC error: $errorStr")
-                    Result.failure(Exception(SupabaseClient.parseSupabaseError(errorStr, "toggle_reel_like RPC failed")))
-                }
-            } else {
-                var response = service.toggleStoryLikeRpc(apiKey, bearer, mapOf("p_story_id" to stateId))
-                if (!response.isSuccessful) {
-                    val alt1 = service.toggleStoryLikeRpc(apiKey, bearer, mapOf("p_state_id" to stateId))
-                    if (alt1.isSuccessful) response = alt1
-                    else {
-                        val alt2 = service.toggleStoryLikeRpc(apiKey, bearer, mapOf("p_status_id" to stateId))
-                        if (alt2.isSuccessful) response = alt2
-                    }
-                }
-                if (response.isSuccessful) {
-                    val body = response.body()
-                    if (body != null) {
-                        Log.d("AUDIT_LIKE", "toggle_story_like RPC success: liked=${body.liked}, count=${body.likesCount}")
-                        if (body.liked) {
-                            try {
-                                com.example.notification.engine.core.NotificationProducerAdapters.publishStoryViewOrReaction(
-                                    storyId = stateId,
-                                    actorId = currentUid,
-                                    actorName = currentUid,
-                                    isReaction = true,
-                                    reactionEmoji = "❤️"
-                                )
-                            } catch (e: Exception) {
-                                Log.e("StatesRepository", "Error emitting story reaction event", e)
-                            }
-                        }
-                        Result.success(body)
-                    } else {
-                        Result.failure(Exception("Empty response body from toggle_story_like RPC"))
-                    }
-                } else {
-                    val errorStr = response.errorBody()?.string()
-                    Log.e("AUDIT_LIKE", "toggle_story_like RPC error: $errorStr")
-                    Result.failure(Exception(SupabaseClient.parseSupabaseError(errorStr, "toggle_story_like RPC failed")))
-                }
-            }
-        } catch (e: Exception) {
-            Log.e("AUDIT_LIKE", "Exception in toggleLike", e)
-            Result.failure(e)
+        
+        // 1. Update local Room state immediately
+        val existing = statesDao.getStateById(stateId)
+        val newLiked = !currentLikeState
+        val newCount = if (currentLikeState) (existing?.likesCount ?: 1 - 1).coerceAtLeast(0) else (existing?.likesCount ?: 0) + 1
+        if (existing != null) {
+            statesDao.insertState(existing.copy(likedByMe = newLiked, likesCount = newCount))
         }
+
+        // 2. Coalesce/queue action locally
+        val pendingDao = db.pendingSocialActionDao()
+        pendingDao.deleteLikeActionsForTarget(currentUid, stateId)
+        val actionType = if (currentLikeState) "UNLIKE" else "LIKE"
+        val action = com.example.data.database.PendingSocialActionEntity(
+            localActionId = java.util.UUID.randomUUID().toString(),
+            userId = currentUid,
+            targetId = stateId,
+            actionType = actionType,
+            payload = null,
+            isReel = isReel
+        )
+        pendingDao.insertAction(action)
+
+        // 3. Enqueue Background Sync
+        com.example.worker.SocialSyncWorker.enqueue(com.example.PanaApplication.instance)
+
+        Result.success(com.example.data.model.ToggleLikeResponseDto(liked = newLiked, likesCount = newCount))
     }
 
     suspend fun toggleFavorite(stateId: String, currentFavState: Boolean, isReel: Boolean): Result<com.example.data.model.ToggleFavoriteResponseDto> = withContext(Dispatchers.IO) {
@@ -726,109 +677,109 @@ class StatesRepository {
         }
     }
 
+    fun getCommentsFlow(stateId: String, isReel: Boolean): Flow<List<Comment>> {
+        return db.commentDao().getCommentsFlow(stateId, isReel).map { entities ->
+            entities.map { it.toStateComment() }
+        }
+    }
+
     suspend fun addComment(stateId: String, commentText: String, isReel: Boolean, parentId: String? = null): Result<Unit> = withContext(Dispatchers.IO) {
         if (commentText.isBlank()) return@withContext Result.failure(Exception("Comment cannot be empty"))
         val currentUid = SupabaseClient.currentUser?.id ?: return@withContext Result.failure(Exception("Not authenticated"))
         
-        try {
-            val service = SupabaseClient.apiService ?: return@withContext Result.failure(Exception("Supabase not configured"))
-            val token = SupabaseClient.currentToken ?: return@withContext Result.failure(Exception("Session expired"))
-            val apiKey = SupabaseClient.supabaseAnonKey
-            val bearer = "Bearer $token"
+        val commentDao = db.commentDao()
+        val pendingDao = db.pendingSocialActionDao()
 
-            val tableName = if (isReel) "reel_comments" else "story_comments"
-            val idColumns = if (isReel) listOf("reel_id") else listOf("story_id", "status_id", "state_id")
-            val userColumns = listOf("author_id", "user_id")
-            val textColumns = listOf("body", "text", "content", "comment_text")
+        val tempCommentId = "temp_" + java.util.UUID.randomUUID().toString()
+        val timestamp = com.example.data.supabase.SupabaseClient.getNowIsoString()
 
-            var lastError = "Error adding comment"
-            for (idCol in idColumns) {
-                for (userCol in userColumns) {
-                    for (textCol in textColumns) {
-                        val bodyMap = mutableMapOf<String, String>(
-                            idCol to stateId,
-                            userCol to currentUid,
-                            textCol to commentText,
-                            "created_at" to SupabaseClient.getNowIsoString()
-                        )
-                        if (parentId != null) {
-                            bodyMap["parent_comment_id"] = parentId
-                        }
-                        Log.d("AUDIT_COMMENT", "Attempting COMMENT POST /rest/v1/$tableName with keys: $idCol, $userCol, $textCol")
-                        val response = service.commentState(tableName, apiKey, bearer, bodyMap)
-                        if (response.isSuccessful) {
-                            Log.d("AUDIT_COMMENT", "addComment succeeded with keys: $idCol, $userCol, $textCol")
-                            try {
-                                if (isReel) {
-                                    com.example.notification.engine.core.NotificationProducerAdapters.publishReelLikeOrComment(
-                                        reelId = stateId,
-                                        actorId = currentUid,
-                                        actorName = currentUid,
-                                        isComment = true,
-                                        commentText = commentText
-                                    )
-                                } else {
-                                    com.example.notification.engine.producers.social.CommentNotificationAdapter.publishPostComment(
-                                        postId = stateId,
-                                        commentId = java.util.UUID.randomUUID().toString(),
-                                        postAuthorId = "",
-                                        actorId = currentUid,
-                                        actorName = currentUid,
-                                        commentText = commentText,
-                                        isReply = parentId != null
-                                    )
-                                }
-                            } catch (e: Exception) {
-                                Log.e("StatesRepository", "Error publishing comment notification", e)
-                            }
-                            return@withContext Result.success(Unit)
-                        } else {
-                            val err = response.errorBody()?.string() ?: ""
-                            lastError = err
-                            if (response.code() == 401 || response.code() == 403) break
-                        }
-                    }
-                }
-            }
-            Result.failure(Exception(SupabaseClient.parseSupabaseError(lastError, "Error adding comment")))
-        } catch (e: Exception) {
-            Log.e("AUDIT_COMMENT", "Exception in addComment", e)
-            Result.failure(e)
+        // 1. Increment local comments count
+        val existing = statesDao.getStateById(stateId)
+        if (existing != null) {
+            statesDao.insertState(existing.copy(commentsCount = existing.commentsCount + 1))
         }
+
+        // Get my profile info if available
+        val myProfileEntity = db.profileDao().getProfile(currentUid)
+        val myProfile = myProfileEntity?.toProfile()
+
+        // 2. Insert temporary comment locally
+        val tempCommentEntity = com.example.data.database.CommentEntity(
+            id = tempCommentId,
+            targetId = stateId,
+            authorId = currentUid,
+            authorName = myProfile?.displayName ?: "Yo",
+            authorAvatarUrl = myProfile?.avatarUrl,
+            content = commentText,
+            createdAt = timestamp,
+            isReel = isReel,
+            parentCommentId = parentId,
+            syncStatus = "pending_add"
+        )
+        commentDao.upsert(tempCommentEntity)
+
+        // 3. Queue action locally
+        val action = com.example.data.database.PendingSocialActionEntity(
+            localActionId = tempCommentId,
+            userId = currentUid,
+            targetId = stateId,
+            actionType = "COMMENT",
+            payload = commentText,
+            isReel = isReel
+        )
+        pendingDao.insertAction(action)
+
+        // 4. Enqueue Background Sync
+        com.example.worker.SocialSyncWorker.enqueue(com.example.PanaApplication.instance)
+
+        Result.success(Unit)
     }
 
     suspend fun getStateComments(stateId: String, isReel: Boolean): Result<List<Comment>> = withContext(Dispatchers.IO) {
-        try {
-            val service = SupabaseClient.apiService ?: return@withContext Result.failure(Exception("Supabase not configured"))
-            val token = SupabaseClient.currentToken ?: return@withContext Result.failure(Exception("Session expired"))
-            val apiKey = SupabaseClient.supabaseAnonKey
-            val bearer = "Bearer $token"
+        val commentDao = db.commentDao()
 
-            val tableName = if (isReel) "reel_comments" else "story_comments"
-            val idColumns = if (isReel) listOf("reel_id") else listOf("story_id", "status_id", "state_id")
+        // 1. Return immediately cached comments
+        val cachedEntities = commentDao.getComments(stateId, isReel)
+        val cachedComments = cachedEntities.map { it.toStateComment() }
 
-            var response: retrofit2.Response<List<com.example.data.model.StateCommentDto>>? = null
-            for (idCol in idColumns) {
-                response = service.getStateComments(
-                    table = tableName,
-                    apiKey = apiKey,
-                    authorization = bearer,
-                    filters = mapOf(idCol to "eq.$stateId")
-                )
-                if (response.isSuccessful) break
+        // 2. Fetch/Refresh from Supabase in the background
+        if (SupabaseClient.isConfigured) {
+            val job = kotlinx.coroutines.GlobalScope.launch(Dispatchers.IO) {
+                try {
+                    val service = SupabaseClient.apiService ?: return@launch
+                    val token = SupabaseClient.currentToken ?: return@launch
+                    val apiKey = SupabaseClient.supabaseAnonKey
+                    val bearer = "Bearer $token"
+
+                    val tableName = if (isReel) "reel_comments" else "story_comments"
+                    val idColumns = if (isReel) listOf("reel_id") else listOf("story_id", "status_id", "state_id")
+
+                    var response: retrofit2.Response<List<com.example.data.model.StateCommentDto>>? = null
+                    for (idCol in idColumns) {
+                        response = service.getStateComments(
+                            table = tableName,
+                            apiKey = apiKey,
+                            authorization = bearer,
+                            filters = mapOf(idCol to "eq.$stateId")
+                        )
+                        if (response.isSuccessful) break
+                    }
+
+                    if (response != null && response.isSuccessful) {
+                        val commentsDto = response.body() ?: emptyList()
+                        val comments = commentsDto.map { it.toDomain() }
+
+                        // Save to Room
+                        val entities = comments.map { com.example.data.database.CommentEntity.fromStateComment(it, isReel) }
+                        commentDao.upsertAll(entities)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Background sync comments failed", e)
+                }
             }
-
-            if (response != null && response.isSuccessful) {
-                val commentsDto = response.body() ?: emptyList()
-                val comments = commentsDto.map { it.toDomain() }
-                Result.success(comments)
-            } else {
-                val errorStr = response?.errorBody()?.string()
-                Result.failure(Exception(SupabaseClient.parseSupabaseError(errorStr, "Error fetching comments")))
-            }
-        } catch (e: Exception) {
-            Result.failure(e)
         }
+
+        Result.success(cachedComments)
     }
 
     suspend fun deleteComment(commentId: String, isReel: Boolean): Result<Unit> = withContext(Dispatchers.IO) {

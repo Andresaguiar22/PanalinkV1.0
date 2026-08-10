@@ -33,9 +33,11 @@ import com.example.notification.engine.storage.entity.NotificationEntityV2
         com.example.media.playlist.PlaylistCollaboratorEntity::class,
         com.example.media.playlist.PlaylistInvitationEntity::class,
         PublicProfileEntity::class,
-        PostEntity::class
+        PostEntity::class,
+        CommentEntity::class,
+        PendingSocialActionEntity::class
     ],
-    version = 37,
+    version = 38,
     exportSchema = true
 )
 @TypeConverters(NotificationConverters::class)
@@ -58,6 +60,8 @@ abstract class PanalinkDatabase : RoomDatabase() {
     abstract fun collaboratorDao(): com.example.media.playlist.CollaboratorDao
     abstract fun invitationDao(): com.example.media.playlist.PlaylistInvitationDao
     abstract fun postDao(): PostDao
+    abstract fun commentDao(): CommentDao
+    abstract fun pendingSocialActionDao(): PendingSocialActionDao
 
     companion object {
         @Volatile
@@ -484,6 +488,41 @@ abstract class PanalinkDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_37_38 = object : Migration(37, 38) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `local_comments` (
+                        `id` TEXT NOT NULL,
+                        `targetId` TEXT NOT NULL,
+                        `authorId` TEXT NOT NULL,
+                        `authorName` TEXT NOT NULL,
+                        `authorAvatarUrl` TEXT,
+                        `content` TEXT NOT NULL,
+                        `createdAt` TEXT NOT NULL,
+                        `isReel` INTEGER NOT NULL,
+                        `parentCommentId` TEXT,
+                        `deletedAt` TEXT,
+                        `syncStatus` TEXT NOT NULL,
+                        PRIMARY KEY(`id`)
+                    )
+                """.trimIndent())
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `pending_social_actions` (
+                        `localActionId` TEXT NOT NULL,
+                        `userId` TEXT NOT NULL,
+                        `targetId` TEXT NOT NULL,
+                        `actionType` TEXT NOT NULL,
+                        `payload` TEXT,
+                        `isReel` INTEGER NOT NULL,
+                        `createdAt` INTEGER NOT NULL,
+                        `retryCount` INTEGER NOT NULL,
+                        `status` TEXT NOT NULL,
+                        PRIMARY KEY(`localActionId`)
+                    )
+                """.trimIndent())
+            }
+        }
+
         fun getDatabase(context: Context): PanalinkDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -495,7 +534,8 @@ abstract class PanalinkDatabase : RoomDatabase() {
                     MIGRATION_11_12, MIGRATION_12_13, MIGRATION_22_23, MIGRATION_23_24,
                     MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29,
                     MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33,
-                    MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36, MIGRATION_36_37
+                    MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36, MIGRATION_36_37,
+                    MIGRATION_37_38
                 )
                 .build()
                 INSTANCE = instance

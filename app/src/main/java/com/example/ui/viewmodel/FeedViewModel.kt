@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
 
 data class FeedUiState(
     val isLoading: Boolean = false,
@@ -139,17 +140,20 @@ class FeedViewModel(
     private val _postComments = MutableStateFlow<Map<String, List<com.example.data.model.PostCommentDto>>>(emptyMap())
     val postComments: StateFlow<Map<String, List<com.example.data.model.PostCommentDto>>> = _postComments.asStateFlow()
 
+    private val commentJobs = java.util.concurrent.ConcurrentHashMap<String, Job>()
+
     fun loadComments(postId: String) {
-        viewModelScope.launch(errorHandler + kotlinx.coroutines.Dispatchers.IO) {
-            val result = feedRepository.getCommentsForPost(postId)
-            if (result.isSuccess) {
-                val comments = result.getOrNull() ?: emptyList()
+        if (commentJobs.containsKey(postId)) return
+        val job = viewModelScope.launch(errorHandler + kotlinx.coroutines.Dispatchers.IO) {
+            feedRepository.getCommentsForPost(postId)
+            feedRepository.getCommentsFlow(postId).collect { comments ->
                 val sortedComments = comments.sortedByDescending { it.createdAt }
                 val current = _postComments.value.toMutableMap()
                 current[postId] = sortedComments
                 _postComments.value = current
             }
         }
+        commentJobs[postId] = job
     }
 
     fun addComment(postId: String, content: String, onSuccess: () -> Unit) {

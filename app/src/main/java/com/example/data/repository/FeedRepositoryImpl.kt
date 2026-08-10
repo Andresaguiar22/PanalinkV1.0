@@ -9,6 +9,8 @@ import com.example.data.model.Profile
 import com.example.data.supabase.SessionManager
 import com.example.data.supabase.SupabaseClient
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
@@ -21,6 +23,7 @@ interface FeedRepository {
     suspend fun toggleLike(postId: String, userId: String, isLiked: Boolean): Result<Unit>
     suspend fun addComment(postId: String, userId: String, content: String): Result<PostCommentDto>
     suspend fun getCommentsForPost(postId: String): Result<List<PostCommentDto>>
+    fun getCommentsFlow(postId: String): Flow<List<PostCommentDto>>
     suspend fun deletePost(postId: String): Result<Unit>
     suspend fun updatePost(postId: String, content: String): Result<PostDto>
     suspend fun getPostById(postId: String): Result<PostDto>
@@ -225,138 +228,145 @@ class FeedRepositoryImpl : FeedRepository {
         }
     }
 
+    override fun getCommentsFlow(postId: String): Flow<List<PostCommentDto>> {
+        val database = com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance)
+        return database.commentDao().getCommentsFlow(postId, isReel = false).map { entities ->
+            entities.map { it.toPostCommentDto() }
+        }
+    }
+
     override suspend fun toggleLike(postId: String, userId: String, isLiked: Boolean): Result<Unit> = withContext(Dispatchers.IO) {
         val database = com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance)
         val postDao = database.postDao()
+        val pendingDao = database.pendingSocialActionDao()
         val existing = postDao.getPostById(postId)
         
+        // 1. Update Room immediately
         if (existing != null) {
             val newLiked = !isLiked
             val newCount = if (isLiked) (existing.likesCount - 1).coerceAtLeast(0) else existing.likesCount + 1
             postDao.upsert(existing.copy(currentUserLiked = newLiked, likesCount = newCount))
         }
 
-        try {
-            val service = SupabaseClient.apiService ?: return@withContext Result.failure(Exception("Supabase not configured"))
-            
-            val response = if (isLiked) {
-                runCall { b -> service.removeLike(SupabaseClient.supabaseAnonKey, b, "eq.$postId", "eq.$userId") }
-            } else {
-                val likeDto = PostLikeDto(postId = postId, userId = userId)
-                runCall { b -> service.addLike(SupabaseClient.supabaseAnonKey, b, likeDto) }
-            }
+        // 2. Coalesce/queue the action locally
+        pendingDao.deleteLikeActionsForTarget(userId, postId)
+        val actionType = if (isLiked) "UNLIKE" else "LIKE"
+        val action = com.example.data.database.PendingSocialActionEntity(
+            localActionId = java.util.UUID.randomUUID().toString(),
+            userId = userId,
+            targetId = postId,
+            actionType = actionType,
+            payload = null,
+            isReel = false
+        )
+        pendingDao.insertAction(action)
 
-            val isSuccess = response != null && (
-                response.isSuccessful || 
-                (!isLiked && response.code() == 409) || 
-                (isLiked && response.code() == 404)
-            )
+        // 3. Enqueue Background Sync
+        com.example.worker.SocialSyncWorker.enqueue(com.example.PanaApplication.instance)
 
-            if (isSuccess) {
-                if (!isLiked) {
-                    try {
-                        com.example.notification.engine.producers.social.PostNotificationAdapter.publishPostLike(
-                            postId = postId,
-                            postAuthorId = "",
-                            actorId = userId,
-                            actorName = userId
-                        )
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Error publishing post like event", e)
-                    }
-                }
-                Result.success(Unit)
-            } else {
-                if (existing != null) {
-                    postDao.upsert(existing)
-                }
-                val code = response?.code()
-                val errorBody = response?.errorBody()?.string()
-                Log.e(TAG, "Failed to toggle like: code=$code, error=$errorBody, isLiked=$isLiked")
-                Result.failure(Exception("Failed to toggle like: code=$code, error=$errorBody"))
-            }
-        } catch (e: Exception) {
-            if (existing != null) {
-                postDao.upsert(existing)
-            }
-            Log.e(TAG, "Exception in toggleLike", e)
-            Result.failure(e)
-        }
+        Result.success(Unit)
     }
 
     override suspend fun addComment(postId: String, userId: String, content: String): Result<PostCommentDto> = withContext(Dispatchers.IO) {
-        try {
-            val service = SupabaseClient.apiService ?: return@withContext Result.failure(Exception("Supabase not configured"))
-            val commentDto = PostCommentDto(postId = postId, userId = userId, content = content)
-            val response = runCall { b -> service.addComment(SupabaseClient.supabaseAnonKey, b, commentDto) }
-            
-            if (response != null && response.isSuccessful && !response.body().isNullOrEmpty()) {
-                val createdComment = response.body()!!.first()
-                
-                // Increment local comment count in Room
-                val database = com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance)
-                val postDao = database.postDao()
-                val existing = postDao.getPostById(postId)
-                if (existing != null) {
-                    postDao.upsert(existing.copy(commentsCount = existing.commentsCount + 1))
-                }
+        val database = com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance)
+        val postDao = database.postDao()
+        val commentDao = database.commentDao()
+        val pendingDao = database.pendingSocialActionDao()
 
-                try {
-                    com.example.notification.engine.producers.social.CommentNotificationAdapter.publishPostComment(
-                        postId = postId,
-                        commentId = createdComment.id ?: java.util.UUID.randomUUID().toString(),
-                        postAuthorId = "",
-                        actorId = userId,
-                        actorName = userId,
-                        commentText = content
-                    )
-                } catch (e: Exception) {
-                    Log.e("FeedRepositoryImpl", "Error publishing comment event", e)
-                }
-                Result.success(createdComment)
-            } else {
-                Result.failure(Exception("Failed to add comment: ${response?.code()}"))
-            }
-        } catch (e: Exception) {
-            Result.failure(e)
+        val tempCommentId = "temp_" + java.util.UUID.randomUUID().toString()
+        val timestamp = com.example.data.supabase.SupabaseClient.getNowIsoString()
+
+        // 1. Increment comments count locally
+        val existing = postDao.getPostById(postId)
+        if (existing != null) {
+            postDao.upsert(existing.copy(commentsCount = existing.commentsCount + 1))
         }
+
+        // Get my profile info if available
+        val myProfileEntity = database.profileDao().getProfile(userId)
+        val myProfile = myProfileEntity?.toProfile()
+
+        // 2. Insert temporary comment locally
+        val tempCommentEntity = com.example.data.database.CommentEntity(
+            id = tempCommentId,
+            targetId = postId,
+            authorId = userId,
+            authorName = myProfile?.displayName ?: "Yo",
+            authorAvatarUrl = myProfile?.avatarUrl,
+            content = content,
+            createdAt = timestamp,
+            isReel = false,
+            syncStatus = "pending_add"
+        )
+        commentDao.upsert(tempCommentEntity)
+
+        // 3. Insert pending action
+        val action = com.example.data.database.PendingSocialActionEntity(
+            localActionId = tempCommentId, // associate with temporary comment ID
+            userId = userId,
+            targetId = postId,
+            actionType = "COMMENT",
+            payload = content,
+            isReel = false
+        )
+        pendingDao.insertAction(action)
+
+        // 4. Enqueue Background Sync
+        com.example.worker.SocialSyncWorker.enqueue(com.example.PanaApplication.instance)
+
+        Result.success(tempCommentEntity.toPostCommentDto())
     }
 
     override suspend fun getCommentsForPost(postId: String): Result<List<PostCommentDto>> = withContext(Dispatchers.IO) {
-        try {
-            val service = SupabaseClient.apiService ?: return@withContext Result.failure(Exception("Supabase not configured"))
-            val response = runCall { b -> service.getCommentsForPost(SupabaseClient.supabaseAnonKey, b, "eq.$postId") }
-            
-            if (response != null && response.isSuccessful) {
-                var comments = response.body() ?: emptyList()
-                if (comments.isNotEmpty()) {
-                    try {
-                        val userIds = comments.mapNotNull { it.userId }.filter { it.isNotBlank() }.distinct()
-                        if (userIds.isNotEmpty()) {
-                            val publicResult = PublicProfileRepository.getInstance().getPublicProfiles(userIds)
-                            if (publicResult is PublicProfileFetchResult.Success) {
-                                val publicProfilesMap = publicResult.data
-                                comments = comments.map { comment ->
-                                    val pub = if (comment.userId != null) publicProfilesMap[comment.userId] else null
-                                    if (pub != null) {
-                                        comment.copy(profile = PublicProfileResolver.toProfile(pub))
-                                    } else {
-                                        comment
+        val database = com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance)
+        val commentDao = database.commentDao()
+
+        // 1. Fetch from Room immediately
+        val cachedEntities = commentDao.getComments(postId, isReel = false)
+        val cachedComments = cachedEntities.map { it.toPostCommentDto() }
+
+        // 2. Background Sync/Refresh from Supabase if configured
+        if (SupabaseClient.isConfigured) {
+            val job = kotlinx.coroutines.GlobalScope.launch(Dispatchers.IO) {
+                try {
+                    val service = SupabaseClient.apiService ?: return@launch
+                    val response = runCall { b -> service.getCommentsForPost(SupabaseClient.supabaseAnonKey, b, "eq.$postId") }
+                    
+                    if (response != null && response.isSuccessful) {
+                        var comments = response.body() ?: emptyList()
+                        if (comments.isNotEmpty()) {
+                            try {
+                                val userIds = comments.mapNotNull { it.userId }.filter { it.isNotBlank() }.distinct()
+                                if (userIds.isNotEmpty()) {
+                                    val publicResult = PublicProfileRepository.getInstance().getPublicProfiles(userIds)
+                                    if (publicResult is PublicProfileFetchResult.Success) {
+                                        val publicProfilesMap = publicResult.data
+                                        comments = comments.map { comment ->
+                                            val pub = if (comment.userId != null) publicProfilesMap[comment.userId] else null
+                                            if (pub != null) {
+                                                comment.copy(profile = PublicProfileResolver.toProfile(pub))
+                                            } else {
+                                                comment
+                                            }
+                                        }
                                     }
                                 }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Resilient comment profile mapping failed", e)
                             }
+
+                            // Save remote comments to Room
+                            val entities = comments.map { com.example.data.database.CommentEntity.fromPostCommentDto(it) }
+                            commentDao.upsertAll(entities)
                         }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Resilient comment profile mapping failed", e)
                     }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Background sync comments failed", e)
                 }
-                Result.success(comments)
-            } else {
-                Result.failure(Exception("Failed to fetch comments: ${response?.code()}"))
             }
-        } catch (e: Exception) {
-            Result.failure(e)
         }
+
+        Result.success(cachedComments)
     }
 
     override suspend fun deletePost(postId: String): Result<Unit> = withContext(Dispatchers.IO) {
