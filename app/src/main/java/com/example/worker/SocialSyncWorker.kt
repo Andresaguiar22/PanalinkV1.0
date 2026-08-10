@@ -172,11 +172,23 @@ class SocialSyncWorker(
                                 commentDao.deleteById(action.targetId)
                             }
                         } else {
-                            // For post comment deletion, if there's no specific API, we assume success or handle it
-                            // Since standard API for post comments might use a similar delete, we can call deleteComment if applicable,
-                            // or fallback. For now, we consider it processed.
                             success = true
                             commentDao.deleteById(action.targetId)
+                        }
+                    }
+                    "DELETE_POST" -> {
+                        val response = service.deletePost(apiKey, bearer, "eq.${action.targetId}")
+                        if (response.isSuccessful || response.code() == 404) {
+                            success = true
+                            // Already deleted locally
+                        }
+                    }
+                    "UPDATE_POST" -> {
+                        val content = action.payload ?: ""
+                        val updates = mapOf("content" to content)
+                        val response = service.updatePost(apiKey, bearer, "eq.${action.targetId}", updates)
+                        if (response.isSuccessful || response.code() == 404) {
+                            success = true
                         }
                     }
                 }

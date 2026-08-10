@@ -110,37 +110,22 @@ class PanalinkRealtimeService : Service() {
                         val db = com.example.data.database.PanalinkDatabase.getDatabase(this@PanalinkRealtimeService)
                         val statesDao = db.statesDao()
                         val currentUid = SupabaseClient.currentUser?.id
-                        val tempProfile = if (newState.userId == currentUid && SupabaseClient.currentProfile != null) {
+                        
+                        val pubRepo = com.example.data.repository.PublicProfileRepository.getInstance(applicationContext)
+                        val result = pubRepo.getPublicProfile(newState.userId)
+                        val finalProfile = if (result is com.example.data.repository.PublicProfileFetchResult.Success) {
+                            com.example.data.repository.PublicProfileResolver.toProfile(result.data)
+                        } else if (newState.userId == currentUid && SupabaseClient.currentProfile != null) {
                             SupabaseClient.currentProfile!!
                         } else {
-                            com.example.data.model.Profile(newState.userId, "Pana de la Comunidad 🇻🇪", null)
+                            com.example.data.model.Profile(newState.userId, "Usuario", null)
                         }
                         
-                        // Save basic temporary/placeholder local state
                         val entity = com.example.data.database.StateEntity.fromUserStateWithUser(
-                            com.example.data.model.UserStateWithUser(newState, tempProfile)
+                            com.example.data.model.UserStateWithUser(newState, finalProfile)
                         )
                         statesDao.insertState(entity)
-                        Log.d(TAG, "Saved placeholder live status ${newState.id} in Room")
-                        
-                        // Resolve actual profile asynchronously
-                        launch {
-                            try {
-                                val pubRepo = com.example.data.repository.PublicProfileRepository.getInstance(applicationContext)
-                                val result = pubRepo.getPublicProfile(newState.userId)
-                                val finalProfile = if (result is com.example.data.repository.PublicProfileFetchResult.Success) {
-                                    com.example.data.repository.PublicProfileResolver.toProfile(result.data)
-                                } else {
-                                    tempProfile
-                                }
-                                statesDao.insertState(com.example.data.database.StateEntity.fromUserStateWithUser(
-                                    com.example.data.model.UserStateWithUser(newState, finalProfile)
-                                ))
-                                Log.d(TAG, "Updated resolved profile for live status ${newState.id} in Room")
-                            } catch (e: Exception) {
-                                Log.e(TAG, "Error resolving profile for live status", e)
-                            }
-                        }
+                        Log.d(TAG, "Saved resolved live status ${newState.id} in Room")
                     } catch (e: Exception) {
                         Log.e(TAG, "Error saving live status to Room", e)
                     }
@@ -150,14 +135,21 @@ class PanalinkRealtimeService : Service() {
             // 3. Likes Flow
             launch {
                 Log.d(TAG, "Subscribing to SupabaseClient.realtimeLikes flow...")
-                SupabaseClient.realtimeLikes.collect { statusId ->
+                SupabaseClient.realtimeLikes.collect { update ->
                     try {
                         val db = com.example.data.database.PanalinkDatabase.getDatabase(this@PanalinkRealtimeService)
                         val statesDao = db.statesDao()
-                        val existing = statesDao.getStateById(statusId)
+                        val existing = statesDao.getStateById(update.statusId)
                         if (existing != null) {
-                            statesDao.insertState(existing.copy(likesCount = existing.likesCount + 1))
-                            Log.d(TAG, "Incremented live like for status $statusId in Room")
+                            val newCount = when (update.eventType) {
+                                "INSERT" -> existing.likesCount + 1
+                                "DELETE" -> maxOf(0, existing.likesCount - 1)
+                                else -> existing.likesCount
+                            }
+                            if (newCount != existing.likesCount) {
+                                statesDao.insertState(existing.copy(likesCount = newCount))
+                                Log.d(TAG, "Updated live like for status ${update.statusId} in Room to $newCount")
+                            }
                         }
                     } catch (e: Exception) {
                         Log.e(TAG, "Error updating live like in Room", e)
@@ -168,14 +160,21 @@ class PanalinkRealtimeService : Service() {
             // 4. Comments Flow
             launch {
                 Log.d(TAG, "Subscribing to SupabaseClient.realtimeComments flow...")
-                SupabaseClient.realtimeComments.collect { statusId ->
+                SupabaseClient.realtimeComments.collect { update ->
                     try {
                         val db = com.example.data.database.PanalinkDatabase.getDatabase(this@PanalinkRealtimeService)
                         val statesDao = db.statesDao()
-                        val existing = statesDao.getStateById(statusId)
+                        val existing = statesDao.getStateById(update.statusId)
                         if (existing != null) {
-                            statesDao.insertState(existing.copy(commentsCount = existing.commentsCount + 1))
-                            Log.d(TAG, "Incremented live comment count for status $statusId in Room")
+                            val newCount = when (update.eventType) {
+                                "INSERT" -> existing.commentsCount + 1
+                                "DELETE" -> maxOf(0, existing.commentsCount - 1)
+                                else -> existing.commentsCount
+                            }
+                            if (newCount != existing.commentsCount) {
+                                statesDao.insertState(existing.copy(commentsCount = newCount))
+                                Log.d(TAG, "Updated live comment count for status ${update.statusId} in Room to $newCount")
+                            }
                         }
                     } catch (e: Exception) {
                         Log.e(TAG, "Error updating live comment count in Room", e)
@@ -186,9 +185,18 @@ class PanalinkRealtimeService : Service() {
             // 5. App Notifications Flow
             launch {
                 Log.d(TAG, "Subscribing to SupabaseClient.realtimeNotifications flow...")
-                SupabaseClient.realtimeNotifications.collect { notification ->
+                SupabaseClient.realtimeNotifications.collect { dto ->
                     try {
-                        com.example.data.repository.NotificationsRepository().addLocalNotification(notification)
+                        val finalProfile = if (!dto.actorId.isNullOrEmpty()) {
+                            val pubRepo = com.example.data.repository.PublicProfileRepository.getInstance(applicationContext)
+                            val result = pubRepo.getPublicProfile(dto.actorId)
+                            if (result is com.example.data.repository.PublicProfileFetchResult.Success) {
+                                com.example.data.repository.PublicProfileResolver.toProfile(result.data)
+                            } else null
+                        } else null
+                        
+                        val domainNotif = dto.copy(actorProfile = finalProfile).toDomain()
+                        com.example.data.repository.NotificationsRepository().addLocalNotification(domainNotif)
                     } catch (e: Exception) {
                         Log.e(TAG, "Error saving realtime notification", e)
                     }

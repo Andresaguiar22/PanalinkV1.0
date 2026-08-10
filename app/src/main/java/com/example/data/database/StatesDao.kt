@@ -5,6 +5,9 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface StatesDao {
+    @Query("SELECT * FROM user_states ORDER BY createdAt DESC")
+    suspend fun getAllStatesSync(): List<StateEntity>
+
     @Query("SELECT * FROM user_states WHERE isReel = :isReel ORDER BY createdAt DESC")
     fun getStatesFlow(isReel: Boolean): Flow<List<StateEntity>>
 

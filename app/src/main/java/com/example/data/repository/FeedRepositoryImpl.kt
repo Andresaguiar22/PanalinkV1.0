@@ -17,11 +17,11 @@ import retrofit2.Response
 
 interface FeedRepository {
     fun getLocalPostsFlow(limit: Int = 20): Flow<List<PostDto>>
-    suspend fun getFeed(limit: Int = 20, lastCreatedAt: String? = null): Result<List<PostDto>>
+    suspend fun getFeed(limit: Int = 20, lastCreatedAt: String? = null): Result<Unit>
     suspend fun createPost(post: PostDto): Result<PostDto>
     suspend fun toggleLike(postId: String, userId: String, isLiked: Boolean): Result<Unit>
     suspend fun addComment(postId: String, userId: String, content: String): Result<PostCommentDto>
-    suspend fun getCommentsForPost(postId: String): Result<List<PostCommentDto>>
+    suspend fun getCommentsForPost(postId: String): Result<Unit>
     fun getCommentsFlow(postId: String): Flow<List<PostCommentDto>>
     suspend fun deletePost(postId: String): Result<Unit>
     suspend fun updatePost(postId: String, content: String): Result<PostDto>
@@ -97,17 +97,12 @@ class FeedRepositoryImpl : FeedRepository {
         }
     }
 
-    override suspend fun getFeed(limit: Int, lastCreatedAt: String?): Result<List<PostDto>> = withContext(Dispatchers.IO) {
+    override suspend fun getFeed(limit: Int, lastCreatedAt: String?): Result<Unit> = withContext(Dispatchers.IO) {
         val database = com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance)
         val postDao = database.postDao()
 
         if (!SupabaseClient.isConfigured) {
-            val cachedPosts = if (lastCreatedAt == null) {
-                postDao.getPosts(limit)
-            } else {
-                postDao.getPostsPaged(limit, lastCreatedAt)
-            }
-            return@withContext Result.success(cachedPosts.map { it.toPostDto() })
+            return@withContext Result.success(Unit)
         }
 
         try {
@@ -166,26 +161,16 @@ class FeedRepositoryImpl : FeedRepository {
                     }
                 }
                 
-                Result.success(posts)
+                Result.success(Unit)
             } else {
                 val errorBody = response?.errorBody()?.string()
                 Log.e(TAG, "Failed to fetch feed: ${response?.code()} - $errorBody")
                 
-                val cachedPosts = if (lastCreatedAt == null) {
-                    postDao.getPosts(limit)
-                } else {
-                    postDao.getPostsPaged(limit, lastCreatedAt)
-                }
-                Result.success(cachedPosts.map { it.toPostDto() })
+                Result.success(Unit)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Exception in getFeed", e)
-            val cachedPosts = if (lastCreatedAt == null) {
-                postDao.getPosts(limit)
-            } else {
-                postDao.getPostsPaged(limit, lastCreatedAt)
-            }
-            Result.success(cachedPosts.map { it.toPostDto() })
+            Result.success(Unit)
         }
     }
 
@@ -316,13 +301,9 @@ class FeedRepositoryImpl : FeedRepository {
         Result.success(tempCommentEntity.toPostCommentDto())
     }
 
-    override suspend fun getCommentsForPost(postId: String): Result<List<PostCommentDto>> = withContext(Dispatchers.IO) {
+    override suspend fun getCommentsForPost(postId: String): Result<Unit> = withContext(Dispatchers.IO) {
         val database = com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance)
         val commentDao = database.commentDao()
-
-        // 1. Fetch from Room immediately
-        val cachedEntities = commentDao.getComments(postId, isReel = false)
-        val cachedComments = cachedEntities.map { it.toPostCommentDto() }
 
         // 2. Refresh from Supabase if configured
         if (SupabaseClient.isConfigured) {
@@ -365,22 +346,26 @@ class FeedRepositoryImpl : FeedRepository {
             }
         }
 
-        Result.success(cachedComments)
+        Result.success(Unit)
     }
 
     override suspend fun deletePost(postId: String): Result<Unit> = withContext(Dispatchers.IO) {
         try {
             val database = com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance)
             database.postDao().deletePostById(postId)
-
-            val service = SupabaseClient.apiService ?: return@withContext Result.failure(Exception("Supabase not configured"))
-            val response = runCall { b -> service.deletePost(SupabaseClient.supabaseAnonKey, b, "eq.$postId") }
-            if (response != null && response.isSuccessful) {
-                Result.success(Unit)
-            } else {
-                val errorBody = response?.errorBody()?.string()
-                Result.failure(Exception("Failed to delete post: ${response?.code()} - $errorBody"))
-            }
+            
+            val userId = SupabaseClient.currentUser?.id ?: return@withContext Result.success(Unit)
+            val action = com.example.data.database.PendingSocialActionEntity(
+                localActionId = java.util.UUID.randomUUID().toString(),
+                userId = userId,
+                targetId = postId,
+                actionType = "DELETE_POST",
+                payload = null,
+                isReel = false
+            )
+            database.pendingSocialActionDao().insertAction(action)
+            com.example.worker.SocialSyncWorker.enqueue(com.example.PanaApplication.instance)
+            Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -395,17 +380,20 @@ class FeedRepositoryImpl : FeedRepository {
                 postDao.upsert(existing.copy(content = content, updatedAt = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.US).format(java.util.Date())))
             }
 
-            val service = SupabaseClient.apiService ?: return@withContext Result.failure(Exception("Supabase not configured"))
-            val updates = mapOf("content" to content)
-            val response = runCall { b -> service.updatePost(SupabaseClient.supabaseAnonKey, b, "eq.$postId", updates) }
-            if (response != null && response.isSuccessful && !response.body().isNullOrEmpty()) {
-                val updatedDto = response.body()!!.first()
-                postDao.upsert(PostEntity.fromPostDto(updatedDto))
-                Result.success(updatedDto)
-            } else {
-                val errorBody = response?.errorBody()?.string()
-                Result.failure(Exception("Failed to update post: ${response?.code()} - $errorBody"))
-            }
+            val userId = SupabaseClient.currentUser?.id ?: return@withContext Result.failure(Exception("Not authenticated"))
+            val action = com.example.data.database.PendingSocialActionEntity(
+                localActionId = java.util.UUID.randomUUID().toString(),
+                userId = userId,
+                targetId = postId,
+                actionType = "UPDATE_POST",
+                payload = content,
+                isReel = false
+            )
+            database.pendingSocialActionDao().insertAction(action)
+            com.example.worker.SocialSyncWorker.enqueue(com.example.PanaApplication.instance)
+            
+            val updatedDto = existing?.toPostDto()?.copy(content = content) ?: throw Exception("Post not found locally")
+            Result.success(updatedDto)
         } catch (e: Exception) {
             Result.failure(e)
         }

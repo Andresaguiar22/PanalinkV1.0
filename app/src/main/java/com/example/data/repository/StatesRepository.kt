@@ -26,7 +26,6 @@ class StatesRepository {
     
     private val db by lazy { com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance) }
     private val statesDao by lazy { db.statesDao() }
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     private var bearer = ""
 
@@ -78,7 +77,7 @@ class StatesRepository {
     }
 
     // Fetch unexpired states, sorted by creation date (filtered by contacts)
-    suspend fun getActiveStates(): Result<List<UserStateWithUser>> = withContext(Dispatchers.IO) {
+    suspend fun getActiveStates(): Result<Unit> = withContext(Dispatchers.IO) {
         try {
             val service = SupabaseClient.apiService ?: return@withContext Result.failure(Exception("Supabase not configured"))
             
@@ -338,21 +337,19 @@ class StatesRepository {
                         }
                     }
                     statesDao.insertStates(finalEntities)
-                    // Offload expired states deletion to background scope to keep UI response fast
+                    // Purge expired states synchronously within this IO dispatcher
                     val now = SupabaseClient.getNowIsoString()
-                    scope.launch(Dispatchers.IO) {
-                        try {
-                            statesDao.deleteExpired(now)
-                        } catch (ex: Exception) {
-                            Log.e(TAG, "Error purging expired states in background", ex)
-                        }
+                    try {
+                        statesDao.deleteExpired(now)
+                    } catch (ex: Exception) {
+                        Log.e(TAG, "Error purging expired states", ex)
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to save states to local DB", e)
                 }
 
                 SessionManager.setOffline(false)
-                Result.success(resolvedList)
+                Result.success(Unit)
             } else {
                 val errorMsg = if (reelsResponse?.isSuccessful == false) reelsResponse.errorBody()?.string()
                               else storiesResponse?.errorBody()?.string()
@@ -362,14 +359,6 @@ class StatesRepository {
             Log.e(TAG, "getActiveStates exception", e)
             SessionManager.setOffline(true)
             Result.failure(e)
-        }
-    }
-
-    suspend fun getStatesByHashtag(hashtag: String): Result<List<UserStateWithUser>> = withContext(Dispatchers.IO) {
-        getActiveStates().map { states ->
-            states.filter { item ->
-                item.state.caption?.contains(hashtag, ignoreCase = true) == true
-            }
         }
     }
 
@@ -588,14 +577,13 @@ class StatesRepository {
             val storyFavIds = storyFavsRes?.body()?.mapNotNull { it.stateId.takeIf { s -> s.isNotBlank() } }?.toSet() ?: emptySet()
             val allFavIds = reelFavIds + storyFavIds
 
-            val allStatesRes = getActiveStates()
-            if (allStatesRes.isSuccess) {
-                val allStates = allStatesRes.getOrNull() ?: emptyList()
-                val saved = allStates.filter { it.state.id in allFavIds || it.state.favoritedByMe == true }
-                Result.success(saved)
-            } else {
-                allStatesRes
-            }
+            getActiveStates()
+            val db = com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance)
+            val statesDao = db.statesDao()
+            val localStates = statesDao.getAllStatesSync()
+            val allStates = localStates.map { it.toUserStateWithUser() }
+            val saved = allStates.filter { it.state.id in allFavIds || it.state.favoritedByMe == true }
+            Result.success(saved)
         } catch (e: Exception) {
             Log.e(TAG, "Error in getSavedStates", e)
             Result.failure(e)

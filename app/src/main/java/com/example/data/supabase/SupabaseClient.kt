@@ -114,15 +114,16 @@ object SupabaseClient {
     private val _realtimeReactions = MutableSharedFlow<ReactionBroadcast>(extraBufferCapacity = 64)
     val realtimeReactions: SharedFlow<ReactionBroadcast> = _realtimeReactions
     
-    // Add this:
-    private val _realtimeLikes = MutableSharedFlow<String>(extraBufferCapacity = 64)
-    val realtimeLikes: SharedFlow<String> = _realtimeLikes
+    data class SocialInteractionUpdate(val statusId: String, val isReel: Boolean, val eventType: String, val recordId: String, val record: org.json.JSONObject)
     
-    private val _realtimeComments = MutableSharedFlow<String>(extraBufferCapacity = 64)
-    val realtimeComments: SharedFlow<String> = _realtimeComments
+    private val _realtimeLikes = MutableSharedFlow<SocialInteractionUpdate>(extraBufferCapacity = 64)
+    val realtimeLikes: SharedFlow<SocialInteractionUpdate> = _realtimeLikes
+    
+    private val _realtimeComments = MutableSharedFlow<SocialInteractionUpdate>(extraBufferCapacity = 64)
+    val realtimeComments: SharedFlow<SocialInteractionUpdate> = _realtimeComments
 
-    private val _realtimeNotifications = MutableSharedFlow<com.example.data.model.Notification>(extraBufferCapacity = 64)
-    val realtimeNotifications: SharedFlow<com.example.data.model.Notification> = _realtimeNotifications
+    private val _realtimeNotifications = MutableSharedFlow<com.example.data.model.NotificationDto>(extraBufferCapacity = 64)
+    val realtimeNotifications: SharedFlow<com.example.data.model.NotificationDto> = _realtimeNotifications
 
     // Music Social Flow
     data class MusicUpdate(val table: String, val eventType: String, val record: JSONObject)
@@ -602,18 +603,32 @@ object SupabaseClient {
                             ?: dataObj?.optJSONObject("old_record")
                             ?: payload?.optJSONObject("old_record")
                             
-                        if (eventType == "DELETE" && record != null) {
-                            val deletedId = record.optString("id", "")
-                            if (deletedId.isNotEmpty()) {
-                                Log.d(TAG, "Realtime DELETE event received for message ID: $deletedId in table $table")
-                                clientScope.launch {
-                                    _realtimeMessageDeletions.emit(deletedId)
+                        if (record != null) {
+                            if (eventType == "DELETE") {
+                                val deletedId = record.optString("id", "")
+                                if (deletedId.isNotEmpty()) {
+                                    if (table == "messages") {
+                                        Log.d(TAG, "Realtime DELETE event received for message ID: $deletedId in table $table")
+                                        clientScope.launch {
+                                            _realtimeMessageDeletions.emit(deletedId)
+                                        }
+                                    } else if (table.contains("likes") && (table.contains("reel") || table.contains("story"))) {
+                                        val statusId = record.optString("status_id", "")
+                                        if (statusId.isNotEmpty()) {
+                                            clientScope.launch {
+                                                _realtimeLikes.emit(SocialInteractionUpdate(statusId, table.contains("reel"), eventType, deletedId, record))
+                                            }
+                                        }
+                                    } else if (table.contains("comments") && (table.contains("reel") || table.contains("story"))) {
+                                        val statusId = record.optString("status_id", "")
+                                        if (statusId.isNotEmpty()) {
+                                            clientScope.launch {
+                                                _realtimeComments.emit(SocialInteractionUpdate(statusId, table.contains("reel"), eventType, deletedId, record))
+                                            }
+                                        }
+                                    }
                                 }
-                            }
-                        }
-
-                        if (record != null && eventType != "DELETE") {
-                            if (table == "global_server_config" || topic.contains("global_server_config")) {
+                            } else if (table == "global_server_config" || topic.contains("global_server_config")) {
                                 val cdnUrl = record.optString("cdn_url", "")
                                 if (cdnUrl.isNotEmpty()) {
                                     clientScope.launch {
@@ -643,18 +658,20 @@ object SupabaseClient {
                                 emitRealtimeStatus(statusObj)
                             } else if (table.contains("likes") && (table.contains("reel") || table.contains("story"))) {
                                 val statusId = record.optString("status_id", "")
+                                val recordId = record.optString("id", "")
                                 if (statusId.isNotEmpty()) {
                                     Log.d(TAG, "Like changed for status: $statusId in $table")
                                     clientScope.launch {
-                                        _realtimeLikes.emit(statusId)
+                                        _realtimeLikes.emit(SocialInteractionUpdate(statusId, table.contains("reel"), eventType, recordId, record))
                                     }
                                 }
                             } else if (table.contains("comments") && (table.contains("reel") || table.contains("story"))) {
                                 val statusId = record.optString("status_id", "")
+                                val recordId = record.optString("id", "")
                                 if (statusId.isNotEmpty()) {
                                     Log.d(TAG, "Comment changed for status: $statusId in $table")
                                     clientScope.launch {
-                                        _realtimeComments.emit(statusId)
+                                        _realtimeComments.emit(SocialInteractionUpdate(statusId, table.contains("reel"), eventType, recordId, record))
                                     }
                                 }
                             } else if (table == "notifications" || topic.contains("notifications")) {
@@ -679,24 +696,8 @@ object SupabaseClient {
                                         actorProfile = null
                                     )
                                     clientScope.launch {
-                                        val finalProfile = try {
-                                            if (actorId.isNotEmpty()) {
-                                                val pubRepo = com.example.data.repository.PublicProfileRepository.getInstance(com.example.PanaApplication.instance)
-                                                val result = pubRepo.getPublicProfile(actorId)
-                                                when (result) {
-                                                    is com.example.data.repository.PublicProfileFetchResult.Success -> {
-                                                        com.example.data.repository.PublicProfileResolver.toProfile(result.data)
-                                                    }
-                                                    else -> null
-                                                }
-                                            } else null
-                                        } catch (e: Exception) {
-                                            null
-                                        }
-
-                                        val dtoWithProfile = dto.copy(actorProfile = finalProfile)
-                                        Log.d(TAG, "Realtime notification received for user: $dtoWithProfile")
-                                        _realtimeNotifications.emit(dtoWithProfile.toDomain())
+                                        Log.d(TAG, "Realtime notification received for user: $dto")
+                                        _realtimeNotifications.emit(dto)
                                     }
                                 }
                             } else if (table.startsWith("music_")) {
