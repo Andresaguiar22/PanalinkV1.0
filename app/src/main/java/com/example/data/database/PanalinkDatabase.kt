@@ -32,9 +32,10 @@ import com.example.notification.engine.storage.entity.NotificationEntityV2
         com.example.media.playlist.PlaylistTrackEntity::class,
         com.example.media.playlist.PlaylistCollaboratorEntity::class,
         com.example.media.playlist.PlaylistInvitationEntity::class,
-        PublicProfileEntity::class
+        PublicProfileEntity::class,
+        PostEntity::class
     ],
-    version = 36,
+    version = 37,
     exportSchema = true
 )
 @TypeConverters(NotificationConverters::class)
@@ -56,6 +57,7 @@ abstract class PanalinkDatabase : RoomDatabase() {
     abstract fun playlistDao(): com.example.media.playlist.PlaylistDao
     abstract fun collaboratorDao(): com.example.media.playlist.CollaboratorDao
     abstract fun invitationDao(): com.example.media.playlist.PlaylistInvitationDao
+    abstract fun postDao(): PostDao
 
     companion object {
         @Volatile
@@ -454,6 +456,34 @@ abstract class PanalinkDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_36_37 = object : Migration(36, 37) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `local_posts` (
+                        `id` TEXT NOT NULL,
+                        `authorId` TEXT NOT NULL,
+                        `type` TEXT,
+                        `content` TEXT,
+                        `mediaUrlsJson` TEXT,
+                        `audioUrl` TEXT,
+                        `privacy` TEXT,
+                        `likesCount` INTEGER NOT NULL,
+                        `commentsCount` INTEGER NOT NULL,
+                        `shareCount` INTEGER NOT NULL DEFAULT 0,
+                        `currentUserLiked` INTEGER NOT NULL,
+                        `visibility` TEXT,
+                        `deletedAt` TEXT,
+                        `createdAt` TEXT,
+                        `updatedAt` TEXT,
+                        `syncedAt` INTEGER NOT NULL,
+                        `previewMetadataJson` TEXT,
+                        `customMediaIdsJson` TEXT,
+                        PRIMARY KEY(`id`)
+                    )
+                """.trimIndent())
+            }
+        }
+
         fun getDatabase(context: Context): PanalinkDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -465,7 +495,7 @@ abstract class PanalinkDatabase : RoomDatabase() {
                     MIGRATION_11_12, MIGRATION_12_13, MIGRATION_22_23, MIGRATION_23_24,
                     MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29,
                     MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33,
-                    MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36
+                    MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36, MIGRATION_36_37
                 )
                 .build()
                 INSTANCE = instance

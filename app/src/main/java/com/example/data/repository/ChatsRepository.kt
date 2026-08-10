@@ -15,7 +15,6 @@ class ChatsRepository {
     private val TAG = "ChatsRepository"
     private val db = com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance)
     private val chatDao = db.chatDao()
-    private val profileDao = db.profileDao()
     private val messageDao = db.messageDao()
 
     private suspend fun <R> runCall(call: suspend (String) -> retrofit2.Response<R>): retrofit2.Response<R>? {
@@ -65,11 +64,7 @@ class ChatsRepository {
                 if (pubEntity != null) {
                     PublicProfileResolver.toProfile(com.example.data.mapper.PublicProfileMapper.entityToModel(pubEntity))
                 } else {
-                    profileDao.getProfileById(otherId)?.toProfile()?.let { p ->
-                        val cleanName = PublicProfileResolver.resolveDisplayName(null, p.displayName, p.id)
-                        val cleanAvatar = CdnManager.resolveAvatarUrl(p.avatarUrl)
-                        p.copy(displayName = cleanName, avatarUrl = cleanAvatar)
-                    }
+                    null
                 }
             }
             // Actually, we can get the last message directly from messageDao for this chat
@@ -111,7 +106,17 @@ class ChatsRepository {
                     
                     // Cache them
                     chatDao.insertChat(ChatEntity.fromChat(chat, otherMemberId, lastMsg?.id))
-                    otherProfile?.let { profileDao.insertProfile(com.example.data.database.ProfileEntity.fromProfile(it)) }
+                    otherProfile?.let { p: com.example.data.model.Profile ->
+                        val pubEntity = com.example.data.database.PublicProfileEntity(
+                            id = p.id,
+                            displayName = p.displayName,
+                            firstName = p.firstName,
+                            lastName = p.lastName,
+                            avatarUrl = p.avatarUrl,
+                            updatedAt = p.lastProfileEdit
+                        )
+                        publicProfileDao.upsert(pubEntity)
+                    }
                 }
                 demoList.sortWith(
                     compareByDescending<ChatWithDetails> { it.chat.isPinned }
@@ -128,6 +133,7 @@ class ChatsRepository {
 
     suspend fun syncChatsWithSupabase(): Result<Unit> = withContext(Dispatchers.IO) {
         val currentUid = SupabaseClient.currentUser?.id ?: return@withContext Result.failure(Exception("Not authenticated"))
+        val publicProfileDao = db.publicProfileDao()
         if (!SupabaseClient.isConfigured) return@withContext Result.success(Unit)
 
         try {
@@ -184,16 +190,6 @@ class ChatsRepository {
                             map[id] = PublicProfileResolver.toProfile(pub)
                         }
                     }
-                    // Fallback to local profileDao if missing
-                    for (id in otherMemberIds) {
-                        if (!map.containsKey(id)) {
-                            profileDao.getProfileById(id)?.toProfile()?.let { p ->
-                                val cleanName = PublicProfileResolver.resolveDisplayName(null, p.displayName, p.id)
-                                val cleanAvatar = CdnManager.resolveAvatarUrl(p.avatarUrl)
-                                map[id] = p.copy(displayName = cleanName, avatarUrl = cleanAvatar)
-                            }
-                        }
-                    }
                     map
                 } else {
                     emptyMap()
@@ -214,26 +210,31 @@ class ChatsRepository {
                     val otherMemberId = if (thread.userA == currentUid) thread.userB else thread.userA
                     val otherProfile = profilesMap[otherMemberId]
 
-                    val msgResponse = runCallLocal { b -> service.getThreadMessages(apiKey = apiKey, authorization = b, threadIdFilter = "eq.${thread.id}", order = "created_at.desc", limit = 1) }
-                    val lastMsg = if (msgResponse != null && msgResponse.isSuccessful && !msgResponse.body().isNullOrEmpty()) {
-                        val msg = msgResponse.body()!![0].toMessage()
-                        val msgsRepo = com.example.data.repository.MessagesRepository.getInstance()
-                        val effectiveClearedAt = msgsRepo.getEffectiveClearedAt(thread.id, myMember?.lastClearedAt)
-                        val shouldKeep = com.example.util.MessageFilter.shouldKeepMessage(
-                            messageId = msg.id,
-                            messageClientUuid = msg.clientMessageUuid,
-                            messageCreatedAt = msg.createdAt,
-                            lastClearedAt = effectiveClearedAt,
-                            deletedMessageIds = msgsRepo.getUserDeletedMessageIds()
-                        )
-                        if (shouldKeep) {
-                            messageDao.insertMessage(com.example.data.database.MessageEntity.fromMessage(msg))
-                            msg
+                    val localLastEntity = messageDao.getLastMessageForChat(thread.id)
+                    val lastMsg = if (localLastEntity != null) {
+                        localLastEntity.toMessage()
+                    } else {
+                        val msgResponse = runCallLocal { b -> service.getThreadMessages(apiKey = apiKey, authorization = b, threadIdFilter = "eq.${thread.id}", order = "created_at.desc", limit = 1) }
+                        if (msgResponse != null && msgResponse.isSuccessful && !msgResponse.body().isNullOrEmpty()) {
+                            val msg = msgResponse.body()!![0].toMessage()
+                            val msgsRepo = com.example.data.repository.MessagesRepository.getInstance()
+                            val effectiveClearedAt = msgsRepo.getEffectiveClearedAt(thread.id, myMember?.lastClearedAt)
+                            val shouldKeep = com.example.util.MessageFilter.shouldKeepMessage(
+                                messageId = msg.id,
+                                messageClientUuid = msg.clientMessageUuid,
+                                messageCreatedAt = msg.createdAt,
+                                lastClearedAt = effectiveClearedAt,
+                                deletedMessageIds = msgsRepo.getUserDeletedMessageIds()
+                            )
+                            if (shouldKeep) {
+                                messageDao.insertMessage(com.example.data.database.MessageEntity.fromMessage(msg))
+                                msg
+                            } else {
+                                null
+                            }
                         } else {
                             null
                         }
-                    } else {
-                        null
                     }
 
                     val unreadCount = try {
@@ -250,7 +251,17 @@ class ChatsRepository {
 
                     // Sync to DB
                     chatDao.insertChat(ChatEntity.fromChat(chat, otherMemberId, lastMsg?.id, unreadCount))
-                    otherProfile?.let { profileDao.insertProfile(com.example.data.database.ProfileEntity.fromProfile(it)) }
+                    otherProfile?.let { p: com.example.data.model.Profile ->
+                        val pubEntity = com.example.data.database.PublicProfileEntity(
+                            id = p.id,
+                            displayName = p.displayName,
+                            firstName = p.firstName,
+                            lastName = p.lastName,
+                            avatarUrl = p.avatarUrl,
+                            updatedAt = p.lastProfileEdit
+                        )
+                        publicProfileDao.upsert(pubEntity)
+                    }
                 }
                 Result.success(Unit)
             } else {

@@ -1574,14 +1574,10 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
                 if (!otherUserId.isNullOrEmpty()) {
                     otherPubKey = com.example.util.CryptoManager.publicKeyCache[otherUserId]
                     if (otherPubKey.isNullOrEmpty()) {
-                        // Pre-fetch from database once
-                        val profile = db.profileDao().getProfileById(otherUserId)
-                        if (profile != null && !profile.publicKey.isNullOrBlank()) {
-                            val cleanKey = com.example.util.CryptoManager.cleanPublicKey(profile.publicKey)
-                            if (cleanKey.isNotEmpty()) {
-                                com.example.util.CryptoManager.publicKeyCache[otherUserId] = cleanKey
-                                otherPubKey = cleanKey
-                            }
+                        // Pre-fetch using UserKeysRepository
+                        val fetchedKey = com.example.data.repository.UserKeysRepository.getPublicKeyForUser(otherUserId)
+                        if (!fetchedKey.isNullOrEmpty()) {
+                            otherPubKey = fetchedKey
                         }
                     }
                 }
@@ -1594,13 +1590,9 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
                         val msgSenderId = msg.senderId
                         var senderKey = com.example.util.CryptoManager.publicKeyCache[msgSenderId]
                         if (senderKey.isNullOrEmpty()) {
-                            val profile = db.profileDao().getProfileById(msgSenderId)
-                            if (profile != null && !profile.publicKey.isNullOrBlank()) {
-                                val cleanKey = com.example.util.CryptoManager.cleanPublicKey(profile.publicKey)
-                                if (cleanKey.isNotEmpty()) {
-                                    com.example.util.CryptoManager.publicKeyCache[msgSenderId] = cleanKey
-                                    senderKey = cleanKey
-                                }
+                            val fetchedKey = com.example.data.repository.UserKeysRepository.getPublicKeyForUser(msgSenderId)
+                            if (!fetchedKey.isNullOrEmpty()) {
+                                senderKey = fetchedKey
                             }
                         }
                         if (!senderKey.isNullOrEmpty()) {

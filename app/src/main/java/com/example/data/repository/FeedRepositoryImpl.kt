@@ -1,6 +1,7 @@
 package com.example.data.repository
 
 import android.util.Log
+import com.example.data.database.PostEntity
 import com.example.data.model.PostCommentDto
 import com.example.data.model.PostDto
 import com.example.data.model.PostLikeDto
@@ -8,10 +9,13 @@ import com.example.data.model.Profile
 import com.example.data.supabase.SessionManager
 import com.example.data.supabase.SupabaseClient
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import retrofit2.Response
 
 interface FeedRepository {
+    fun getLocalPostsFlow(limit: Int = 20): Flow<List<PostDto>>
     suspend fun getFeed(limit: Int = 20, lastCreatedAt: String? = null): Result<List<PostDto>>
     suspend fun createPost(post: PostDto): Result<PostDto>
     suspend fun toggleLike(postId: String, userId: String, isLiked: Boolean): Result<Unit>
@@ -63,21 +67,60 @@ class FeedRepositoryImpl : FeedRepository {
         }
     }
 
+    override fun getLocalPostsFlow(limit: Int): Flow<List<PostDto>> {
+        val database = com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance)
+        val postDao = database.postDao()
+        val publicProfileRepo = PublicProfileRepository.getInstance()
+        return postDao.getPostsFlow(limit).map { entities ->
+            val userIds = entities.map { it.authorId }.distinct().filter { it.isNotBlank() }
+            val profilesMap = if (userIds.isNotEmpty()) {
+                val publicResult = publicProfileRepo.getPublicProfiles(userIds)
+                if (publicResult is PublicProfileFetchResult.Success) {
+                    publicResult.data
+                } else {
+                    emptyMap()
+                }
+            } else {
+                emptyMap()
+            }
+            entities.map { entity ->
+                val dto = entity.toPostDto()
+                val pub = profilesMap[entity.authorId]
+                if (pub != null) {
+                    dto.copy(profile = PublicProfileResolver.toProfile(pub))
+                } else {
+                    dto
+                }
+            }
+        }
+    }
+
     override suspend fun getFeed(limit: Int, lastCreatedAt: String?): Result<List<PostDto>> = withContext(Dispatchers.IO) {
+        val database = com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance)
+        val postDao = database.postDao()
+
+        if (!SupabaseClient.isConfigured) {
+            val cachedPosts = if (lastCreatedAt == null) {
+                postDao.getPosts(limit)
+            } else {
+                postDao.getPostsPaged(limit, lastCreatedAt)
+            }
+            return@withContext Result.success(cachedPosts.map { it.toPostDto() })
+        }
+
         try {
             val service = SupabaseClient.apiService ?: return@withContext Result.failure(Exception("Supabase not configured"))
             val cursorParam = lastCreatedAt?.let { "lt.$it" }
             
             Log.d(TAG, "Fetching feed: limit=$limit, cursor=$cursorParam")
             
-            // Step 1: Fetch posts without the profile join to be as robust as possible
             val response = runCall { b -> 
                 service.getFeedPosts(
                     apiKey = SupabaseClient.supabaseAnonKey,
                     authorization = b,
                     limit = limit,
                     createdAtLt = cursorParam,
-                    select = "*" // Explicitly fetch everything from posts only first
+                    select = "*"
                 ) 
             }
 
@@ -85,34 +128,7 @@ class FeedRepositoryImpl : FeedRepository {
                 var posts = response.body() ?: emptyList()
                 Log.d(TAG, "Fetched ${posts.size} posts from Supabase. IDs: ${posts.map { it.id }}")
                 
-                if (posts.isEmpty()) {
-                    Log.w(TAG, "Supabase returned an empty list of posts. This usually means no records match the criteria or RLS is blocking them.")
-                }
-                
                 if (posts.isNotEmpty()) {
-                    // Step 2: Try to map profiles manually to avoid cross-schema join issues
-                    try {
-                        val userIds = posts.mapNotNull { it.userId }.filter { it.isNotBlank() }.distinct()
-                        if (userIds.isNotEmpty()) {
-                            val publicResult = PublicProfileRepository.getInstance().getPublicProfiles(userIds)
-                            if (publicResult is PublicProfileFetchResult.Success) {
-                                val publicProfilesMap = publicResult.data
-                                posts = posts.map { post ->
-                                    val pub = if (post.userId != null) publicProfilesMap[post.userId] else null
-                                    if (pub != null) {
-                                        post.copy(profile = PublicProfileResolver.toProfile(pub))
-                                    } else {
-                                        post
-                                    }
-                                }
-                                Log.d(TAG, "Mapped public profiles for ${publicProfilesMap.size} users")
-                            }
-                        }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Resilient profile mapping failed", e)
-                    }
-
-                    // Step 3: Get likes for the current user to populate isLikedByMe (Resiliently)
                     val currentUser = SupabaseClient.currentUser
                     if (currentUser != null) {
                         try {
@@ -127,12 +143,24 @@ class FeedRepositoryImpl : FeedRepository {
                                 val userLikes = likesResponse.body()?.mapNotNull { it.postId }?.toSet() ?: emptySet()
                                 posts = posts.map { it.copy(isLikedByMe = userLikes.contains(it.id)) }
                                 Log.d(TAG, "Fetched and mapped ${userLikes.size} user likes")
-                            } else {
-                                Log.w(TAG, "User likes fetch failed (resiliently): ${likesResponse?.code()}")
                             }
                         } catch (e: Exception) {
                             Log.e(TAG, "Error fetching user likes (resiliently)", e)
                         }
+                    }
+
+                    // Save to Room
+                    val entities = posts.map { PostEntity.fromPostDto(it) }
+                    postDao.upsertAll(entities)
+
+                    // Trigger resolution of profiles in the background to warm the cache
+                    try {
+                        val userIds = posts.mapNotNull { it.userId }.filter { it.isNotBlank() }.distinct()
+                        if (userIds.isNotEmpty()) {
+                            PublicProfileRepository.getInstance().getPublicProfiles(userIds)
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Background profiles warming failed", e)
                     }
                 }
                 
@@ -140,11 +168,22 @@ class FeedRepositoryImpl : FeedRepository {
             } else {
                 val errorBody = response?.errorBody()?.string()
                 Log.e(TAG, "Failed to fetch feed: ${response?.code()} - $errorBody")
-                Result.failure(Exception("Failed to fetch feed: ${response?.code()} - $errorBody"))
+                
+                val cachedPosts = if (lastCreatedAt == null) {
+                    postDao.getPosts(limit)
+                } else {
+                    postDao.getPostsPaged(limit, lastCreatedAt)
+                }
+                Result.success(cachedPosts.map { it.toPostDto() })
             }
         } catch (e: Exception) {
             Log.e(TAG, "Exception in getFeed", e)
-            Result.failure(e)
+            val cachedPosts = if (lastCreatedAt == null) {
+                postDao.getPosts(limit)
+            } else {
+                postDao.getPostsPaged(limit, lastCreatedAt)
+            }
+            Result.success(cachedPosts.map { it.toPostDto() })
         }
     }
 
@@ -155,6 +194,11 @@ class FeedRepositoryImpl : FeedRepository {
             
             if (response != null && response.isSuccessful && !response.body().isNullOrEmpty()) {
                 val createdPost = response.body()!!.first()
+                
+                // Save to Room immediately
+                val database = com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance)
+                database.postDao().upsert(PostEntity.fromPostDto(createdPost))
+
                 try {
                     com.example.notification.engine.producers.social.PostNotificationAdapter.publishPostCreated(
                         postId = createdPost.id ?: "",
@@ -163,13 +207,14 @@ class FeedRepositoryImpl : FeedRepository {
                         caption = createdPost.content
                     )
                 } catch (e: Exception) {
-                    android.util.Log.e("FeedRepositoryImpl", "Error publishing post created event", e)
+                    Log.e("FeedRepositoryImpl", "Error publishing post created event", e)
                 }
                 Result.success(createdPost)
             } else {
                 val errorBody = response?.errorBody()?.string()
                 if (errorBody?.contains("23505") == true) {
-                    // Duplicate key means it was already created, treat as success
+                    val database = com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance)
+                    database.postDao().upsert(PostEntity.fromPostDto(post))
                     Result.success(post)
                 } else {
                     Result.failure(Exception("Failed to create post: ${response?.code()} - $errorBody"))
@@ -181,6 +226,16 @@ class FeedRepositoryImpl : FeedRepository {
     }
 
     override suspend fun toggleLike(postId: String, userId: String, isLiked: Boolean): Result<Unit> = withContext(Dispatchers.IO) {
+        val database = com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance)
+        val postDao = database.postDao()
+        val existing = postDao.getPostById(postId)
+        
+        if (existing != null) {
+            val newLiked = !isLiked
+            val newCount = if (isLiked) (existing.likesCount - 1).coerceAtLeast(0) else existing.likesCount + 1
+            postDao.upsert(existing.copy(currentUserLiked = newLiked, likesCount = newCount))
+        }
+
         try {
             val service = SupabaseClient.apiService ?: return@withContext Result.failure(Exception("Supabase not configured"))
             
@@ -207,17 +262,23 @@ class FeedRepositoryImpl : FeedRepository {
                             actorName = userId
                         )
                     } catch (e: Exception) {
-                        android.util.Log.e("FeedRepositoryImpl", "Error publishing post like event", e)
+                        Log.e(TAG, "Error publishing post like event", e)
                     }
                 }
                 Result.success(Unit)
             } else {
+                if (existing != null) {
+                    postDao.upsert(existing)
+                }
                 val code = response?.code()
                 val errorBody = response?.errorBody()?.string()
                 Log.e(TAG, "Failed to toggle like: code=$code, error=$errorBody, isLiked=$isLiked")
                 Result.failure(Exception("Failed to toggle like: code=$code, error=$errorBody"))
             }
         } catch (e: Exception) {
+            if (existing != null) {
+                postDao.upsert(existing)
+            }
             Log.e(TAG, "Exception in toggleLike", e)
             Result.failure(e)
         }
@@ -231,6 +292,15 @@ class FeedRepositoryImpl : FeedRepository {
             
             if (response != null && response.isSuccessful && !response.body().isNullOrEmpty()) {
                 val createdComment = response.body()!!.first()
+                
+                // Increment local comment count in Room
+                val database = com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance)
+                val postDao = database.postDao()
+                val existing = postDao.getPostById(postId)
+                if (existing != null) {
+                    postDao.upsert(existing.copy(commentsCount = existing.commentsCount + 1))
+                }
+
                 try {
                     com.example.notification.engine.producers.social.CommentNotificationAdapter.publishPostComment(
                         postId = postId,
@@ -241,7 +311,7 @@ class FeedRepositoryImpl : FeedRepository {
                         commentText = content
                     )
                 } catch (e: Exception) {
-                    android.util.Log.e("FeedRepositoryImpl", "Error publishing comment event", e)
+                    Log.e("FeedRepositoryImpl", "Error publishing comment event", e)
                 }
                 Result.success(createdComment)
             } else {
@@ -291,6 +361,9 @@ class FeedRepositoryImpl : FeedRepository {
 
     override suspend fun deletePost(postId: String): Result<Unit> = withContext(Dispatchers.IO) {
         try {
+            val database = com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance)
+            database.postDao().deletePostById(postId)
+
             val service = SupabaseClient.apiService ?: return@withContext Result.failure(Exception("Supabase not configured"))
             val response = runCall { b -> service.deletePost(SupabaseClient.supabaseAnonKey, b, "eq.$postId") }
             if (response != null && response.isSuccessful) {
@@ -306,11 +379,20 @@ class FeedRepositoryImpl : FeedRepository {
 
     override suspend fun updatePost(postId: String, content: String): Result<PostDto> = withContext(Dispatchers.IO) {
         try {
+            val database = com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance)
+            val postDao = database.postDao()
+            val existing = postDao.getPostById(postId)
+            if (existing != null) {
+                postDao.upsert(existing.copy(content = content, updatedAt = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.US).format(java.util.Date())))
+            }
+
             val service = SupabaseClient.apiService ?: return@withContext Result.failure(Exception("Supabase not configured"))
             val updates = mapOf("content" to content)
             val response = runCall { b -> service.updatePost(SupabaseClient.supabaseAnonKey, b, "eq.$postId", updates) }
             if (response != null && response.isSuccessful && !response.body().isNullOrEmpty()) {
-                Result.success(response.body()!!.first())
+                val updatedDto = response.body()!!.first()
+                postDao.upsert(PostEntity.fromPostDto(updatedDto))
+                Result.success(updatedDto)
             } else {
                 val errorBody = response?.errorBody()?.string()
                 Result.failure(Exception("Failed to update post: ${response?.code()} - $errorBody"))
@@ -321,29 +403,16 @@ class FeedRepositoryImpl : FeedRepository {
     }
 
     override suspend fun getPostById(postId: String): Result<PostDto> = withContext(Dispatchers.IO) {
+        val database = com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance)
+        val postDao = database.postDao()
+        val local = postDao.getPostById(postId)
+
         try {
             val service = SupabaseClient.apiService ?: return@withContext Result.failure(Exception("Supabase not configured"))
             val response = runCall { b -> service.getPostById(SupabaseClient.supabaseAnonKey, b, "eq.$postId") }
             if (response != null && response.isSuccessful && !response.body().isNullOrEmpty()) {
                 var post = response.body()!!.first()
                 
-                // Fetch profile manually via PublicProfileRepository
-                try {
-                    val userId = post.userId
-                    if (userId != null) {
-                        val publicResult = PublicProfileRepository.getInstance().getPublicProfile(userId)
-                        if (publicResult is PublicProfileFetchResult.Success) {
-                            val pub = publicResult.data
-                            post = post.copy(
-                                profile = PublicProfileResolver.toProfile(pub)
-                            )
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error fetching profile for single post", e)
-                }
-
-                // Fetch isLikedByMe
                 val currentUser = SupabaseClient.currentUser
                 if (currentUser != null) {
                     try {
@@ -359,13 +428,38 @@ class FeedRepositoryImpl : FeedRepository {
                     }
                 }
                 
+                postDao.upsert(PostEntity.fromPostDto(post))
+                
+                try {
+                    val userId = post.userId
+                    if (userId != null) {
+                        val publicResult = PublicProfileRepository.getInstance().getPublicProfile(userId)
+                        if (publicResult is PublicProfileFetchResult.Success) {
+                            val pub = publicResult.data
+                            post = post.copy(
+                                profile = PublicProfileResolver.toProfile(pub)
+                            )
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error fetching profile for single post", e)
+                }
+
                 Result.success(post)
             } else {
-                val errorBody = response?.errorBody()?.string()
-                Result.failure(Exception("Failed to fetch post: ${response?.code()} - $errorBody"))
+                if (local != null) {
+                    Result.success(local.toPostDto())
+                } else {
+                    val errorBody = response?.errorBody()?.string()
+                    Result.failure(Exception("Failed to fetch post: ${response?.code()} - $errorBody"))
+                }
             }
         } catch (e: Exception) {
-            Result.failure(e)
+            if (local != null) {
+                Result.success(local.toPostDto())
+            } else {
+                Result.failure(e)
+            }
         }
     }
 }

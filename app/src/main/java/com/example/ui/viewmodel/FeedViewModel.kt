@@ -15,6 +15,7 @@ import com.example.data.supabase.SupabaseClient
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.launch
 
 data class FeedUiState(
@@ -42,11 +43,37 @@ class FeedViewModel(
     private val db by lazy { com.example.data.database.PanalinkDatabase.getDatabase(application) }
     private val pendingPostDao by lazy { db.pendingPostDao() }
 
+    private val localLimit = MutableStateFlow(20)
+
     init {
+        observeLocalFeed()
         loadFeed()
         observePendingPosts()
         observeUploadProgress()
         observeUploadSuccess()
+    }
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private fun observeLocalFeed() {
+        viewModelScope.launch(errorHandler + kotlinx.coroutines.Dispatchers.IO) {
+            localLimit.flatMapLatest { limit ->
+                feedRepository.getLocalPostsFlow(limit)
+            }.collect { localPosts ->
+                _uiState.value = _uiState.value.copy(
+                    posts = localPosts,
+                    hasMore = localPosts.size >= localLimit.value
+                )
+                
+                // If a post is selected, update details reactively
+                val selected = _selectedPostDetail.value
+                if (selected != null) {
+                    val updatedSelected = localPosts.find { it.id == selected.id }
+                    if (updatedSelected != null) {
+                        _selectedPostDetail.value = updatedSelected
+                    }
+                }
+            }
+        }
     }
 
     private fun observeUploadSuccess() {
@@ -79,21 +106,8 @@ class FeedViewModel(
         _uiState.value = _uiState.value.copy(isLoading = true, error = null)
 
         viewModelScope.launch(errorHandler + kotlinx.coroutines.Dispatchers.IO) {
-            val result = feedRepository.getFeed(limit = 20)
-            if (result.isSuccess) {
-                val newPosts = result.getOrNull() ?: emptyList()
-                _uiState.value = _uiState.value.copy(
-                    isLoading = false,
-                    posts = newPosts,
-                    hasMore = newPosts.size == 20
-                )
-            } else {
-                android.util.Log.e("FeedViewModel", "Error loading feed: ${result.exceptionOrNull()?.message}")
-                _uiState.value = _uiState.value.copy(
-                    isLoading = false
-                    // Silently fail, do not show error on UI to keep experience stable
-                )
-            }
+            feedRepository.getFeed(limit = localLimit.value)
+            _uiState.value = _uiState.value.copy(isLoading = false)
         }
     }
 
@@ -102,21 +116,9 @@ class FeedViewModel(
         _uiState.value = _uiState.value.copy(isRefreshing = true, error = null)
         
         viewModelScope.launch(errorHandler + kotlinx.coroutines.Dispatchers.IO) {
-            val result = feedRepository.getFeed(limit = 20)
-            if (result.isSuccess) {
-                val newPosts = result.getOrNull() ?: emptyList()
-                _uiState.value = _uiState.value.copy(
-                    isRefreshing = false,
-                    posts = newPosts,
-                    hasMore = newPosts.size == 20
-                )
-            } else {
-                android.util.Log.e("FeedViewModel", "Error refreshing feed: ${result.exceptionOrNull()?.message}")
-                _uiState.value = _uiState.value.copy(
-                    isRefreshing = false
-                    // Silently fail on refresh
-                )
-            }
+            localLimit.value = 20
+            feedRepository.getFeed(limit = 20)
+            _uiState.value = _uiState.value.copy(isRefreshing = false)
         }
     }
 
@@ -124,24 +126,13 @@ class FeedViewModel(
         val currentState = _uiState.value
         if (currentState.isLoading || !currentState.hasMore || currentState.posts.isEmpty()) return
 
-        // _uiState.value = currentState.copy(isLoading = true, error = null)
+        _uiState.value = _uiState.value.copy(isLoading = true)
         val lastCreatedAt = currentState.posts.last().createdAt
 
         viewModelScope.launch(errorHandler + kotlinx.coroutines.Dispatchers.IO) {
-            val result = feedRepository.getFeed(limit = 20, lastCreatedAt = lastCreatedAt)
-            if (result.isSuccess) {
-                val newPosts = result.getOrNull() ?: emptyList()
-                _uiState.value = _uiState.value.copy(
-                    isLoading = false,
-                    posts = currentState.posts + newPosts,
-                    hasMore = newPosts.size == 20
-                )
-            } else {
-                _uiState.value = _uiState.value.copy(
-                    isLoading = false,
-                    error = result.exceptionOrNull()?.message ?: "Error loading more feed"
-                )
-            }
+            localLimit.value = localLimit.value + 20
+            feedRepository.getFeed(limit = 20, lastCreatedAt = lastCreatedAt)
+            _uiState.value = _uiState.value.copy(isLoading = false)
         }
     }
 
@@ -166,21 +157,7 @@ class FeedViewModel(
         viewModelScope.launch(errorHandler + kotlinx.coroutines.Dispatchers.IO) {
             val result = feedRepository.addComment(postId, currentUserId, content)
             if (result.isSuccess) {
-                // Refresh comments
                 loadComments(postId)
-                // Optimistically update comment count in UI state
-                val currentState = _uiState.value
-                val updatedPosts = currentState.posts.map { post ->
-                    if (post.id == postId) post.copy(commentsCount = post.commentsCount + 1) else post
-                }
-                _uiState.value = currentState.copy(posts = updatedPosts)
-                
-                if (_selectedPostDetail.value?.id == postId) {
-                    _selectedPostDetail.value = _selectedPostDetail.value?.copy(
-                        commentsCount = (_selectedPostDetail.value?.commentsCount ?: 0) + 1
-                    )
-                }
-                
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
                     onSuccess()
                 }
@@ -190,39 +167,10 @@ class FeedViewModel(
 
     fun toggleLike(post: PostDto) {
         val currentUserId = SupabaseClient.currentUser?.id ?: return
-        val currentState = _uiState.value
-        val previousSelectedPost = _selectedPostDetail.value
-        
-        // Optimistic update
         val isCurrentlyLiked = post.isLikedByMe
-        val newLikesCount = if (isCurrentlyLiked) (post.likesCount - 1).coerceAtLeast(0) else post.likesCount + 1
         
-        val updatedPost = post.copy(
-            isLikedByMe = !isCurrentlyLiked,
-            likesCount = newLikesCount
-        )
-        
-        val updatedPosts = currentState.posts.map {
-            if (it.id == post.id) updatedPost else it
-        }
-        
-        _uiState.value = currentState.copy(posts = updatedPosts)
-        
-        if (_selectedPostDetail.value?.id == post.id) {
-            _selectedPostDetail.value = updatedPost
-        }
-        
-        // Background sync
         viewModelScope.launch(errorHandler) {
-            val result = feedRepository.toggleLike(post.id!!, currentUserId, isCurrentlyLiked)
-            if (result.isFailure) {
-                android.util.Log.e("FeedViewModel", "Failed to toggle like on server: ${result.exceptionOrNull()?.message}")
-                // Revert on failure
-                _uiState.value = currentState
-                if (_selectedPostDetail.value?.id == post.id) {
-                    _selectedPostDetail.value = previousSelectedPost
-                }
-            }
+            feedRepository.toggleLike(post.id!!, currentUserId, isCurrentlyLiked)
         }
     }
 
@@ -267,42 +215,13 @@ class FeedViewModel(
 
     fun deletePost(postId: String) {
         viewModelScope.launch(errorHandler + kotlinx.coroutines.Dispatchers.IO) {
-            val result = feedRepository.deletePost(postId)
-            if (result.isSuccess) {
-                // Remove from UI state
-                val currentState = _uiState.value
-                val updatedPosts = currentState.posts.filter { it.id != postId }
-                // _uiState.value = currentState.copy(posts = updatedPosts)
-            } else {
-                android.util.Log.e("FeedViewModel", "Error deleting post: ${result.exceptionOrNull()?.message}")
-            }
+            feedRepository.deletePost(postId)
         }
     }
 
     fun updatePost(postId: String, content: String) {
         viewModelScope.launch(errorHandler + kotlinx.coroutines.Dispatchers.IO) {
-            val result = feedRepository.updatePost(postId, content)
-            if (result.isSuccess) {
-                val updatedPost = result.getOrNull()
-                if (updatedPost != null) {
-                    // Update in UI state
-                    val currentState = _uiState.value
-                    val updatedPosts = currentState.posts.map {
-                        if (it.id == postId) {
-                            val existing = it
-                            updatedPost.copy(
-                                profile = existing.profile,
-                                isLikedByMe = existing.isLikedByMe,
-                                likesCount = existing.likesCount,
-                                commentsCount = existing.commentsCount
-                            )
-                        } else it
-                    }
-                    // _uiState.value = currentState.copy(posts = updatedPosts)
-                }
-            } else {
-                android.util.Log.e("FeedViewModel", "Error updating post: ${result.exceptionOrNull()?.message}")
-            }
+            feedRepository.updatePost(postId, content)
         }
     }
 
@@ -319,7 +238,6 @@ class FeedViewModel(
             val result = feedRepository.getPostById(postId)
             if (result.isSuccess) {
                 _selectedPostDetail.value = result.getOrNull()
-                // Also load comments for this post
                 loadComments(postId)
             } else {
                 android.util.Log.e("FeedViewModel", "Error fetching post detail: ${result.exceptionOrNull()?.message}")

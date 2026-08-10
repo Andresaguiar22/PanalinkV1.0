@@ -39,10 +39,54 @@ interface MessageDao {
     suspend fun getMessageById(id: String): MessageEntity?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertMessage(message: MessageEntity)
+    suspend fun insertMessageRaw(message: MessageEntity)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertMessages(messages: List<MessageEntity>)
+    suspend fun insertMessagesRaw(messages: List<MessageEntity>)
+
+    @Query("UPDATE local_chats SET lastMessageId = :lastMessageId, unreadCount = CASE WHEN :shouldIncrementUnread = 1 THEN unreadCount + 1 ELSE unreadCount END WHERE id = :chatId")
+    suspend fun updateChatLastMessageAndUnread(chatId: String, lastMessageId: String, shouldIncrementUnread: Int)
+
+    @Query("SELECT COUNT(*) FROM local_chats WHERE id = :chatId")
+    suspend fun hasChat(chatId: String): Int
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertChatPlaceholder(chat: ChatEntity)
+
+    @Transaction
+    suspend fun updateChatMetadataForMessage(message: MessageEntity) {
+        val myUserId = try { com.example.data.supabase.SupabaseClient.currentUser?.id ?: "" } catch (e: Exception) { "" }
+        val isChatActive = com.example.data.supabase.SupabaseClient.isChatScreenActive && com.example.data.supabase.SupabaseClient.activeChatId == message.chatId
+        val shouldIncrementUnread = if (message.senderId != myUserId && !isChatActive && message.status != "seen" && message.seenAt == null) 1 else 0
+        
+        val chatExists = hasChat(message.chatId) > 0
+        if (!chatExists) {
+            val otherUserId = if (message.senderId != myUserId) message.senderId else null
+            val newChat = ChatEntity(
+                id = message.chatId,
+                createdAt = message.createdAt,
+                type = "dm",
+                otherUserId = otherUserId,
+                lastMessageId = message.id,
+                unreadCount = shouldIncrementUnread
+            )
+            insertChatPlaceholder(newChat)
+        } else {
+            updateChatLastMessageAndUnread(message.chatId, message.id, shouldIncrementUnread)
+        }
+    }
+
+    @Transaction
+    suspend fun insertMessage(message: MessageEntity) {
+        insertMessageRaw(message)
+        updateChatMetadataForMessage(message)
+    }
+
+    @Transaction
+    suspend fun insertMessages(messages: List<MessageEntity>) {
+        insertMessagesRaw(messages)
+        messages.forEach { updateChatMetadataForMessage(it) }
+    }
 
     @Query("DELETE FROM local_messages WHERE id = :id")
     suspend fun deleteMessageById(id: String)

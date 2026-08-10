@@ -59,40 +59,6 @@ class ChatsViewModel(
 
     init {
         viewModelScope.launch(exceptionHandler) {
-            com.example.data.supabase.SupabaseClient.realtimeMessages.collect { msg ->
-                val currentState = _chatsState.value
-                if (currentState is ChatsUiState.Success) {
-                    val currentUid = com.example.data.supabase.SupabaseClient.currentUser?.id ?: ""
-                    val isChatScreenActive = com.example.data.supabase.SupabaseClient.isChatScreenActive
-                    val activeChatId = com.example.data.supabase.SupabaseClient.activeChatId
-                    
-                    val updatedChats = currentState.chats.map { chatDetail ->
-                        if (chatDetail.chat.id == msg.chatId) {
-                            val isCurrentChatOpen = isChatScreenActive && activeChatId == msg.chatId
-                            val isFromOther = msg.senderId != currentUid
-                            val newUnread = if (isFromOther && !isCurrentChatOpen) {
-                                chatDetail.unreadCount + 1
-                            } else {
-                                chatDetail.unreadCount
-                            }
-                            chatDetail.copy(
-                                lastMessage = msg,
-                                unreadCount = newUnread
-                            )
-                        } else {
-                            chatDetail
-                        }
-                    }.sortedByDescending { it.lastMessage?.createdAt ?: it.chat.createdAt ?: "" }
-                    
-                    _chatsState.value = ChatsUiState.Success(updatedChats)
-                } else {
-                    // Fallback to loadChats if not loaded yet
-                    loadChats(forceRefresh = false)
-                }
-            }
-        }
-        
-        viewModelScope.launch(exceptionHandler) {
             com.example.data.supabase.SupabaseClient.realtimeTyping.collect { status ->
                 val currentUid = com.example.data.supabase.SupabaseClient.currentUser?.id ?: ""
                 if (status.userId != currentUid) {
@@ -153,14 +119,10 @@ class ChatsViewModel(
                         if (pubEntity != null) {
                             com.example.data.repository.PublicProfileResolver.toProfile(com.example.data.mapper.PublicProfileMapper.entityToModel(pubEntity))
                         } else {
-                            profileDao.getProfileById(otherId)?.toProfile()?.let { p ->
-                                val cleanName = com.example.data.repository.PublicProfileResolver.resolveDisplayName(null, p.displayName, p.id)
-                                val cleanAvatar = com.example.data.repository.CdnManager.resolveAvatarUrl(p.avatarUrl)
-                                p.copy(displayName = cleanName, avatarUrl = cleanAvatar)
-                            }
+                            null
                         }
                     }
-                    val lastMsg = messageDao.getMessagesForChat(chatEntity.id).maxByOrNull { it.createdAt }?.toMessage()
+                    val lastMsg = messageDao.getLastMessageForChat(chatEntity.id)?.toMessage()
                     val decryptedLastMsg = lastMsg?.let { com.example.util.CryptoManager.decryptMessageIfNeeded(it) }
                     
                     ChatWithDetails(
