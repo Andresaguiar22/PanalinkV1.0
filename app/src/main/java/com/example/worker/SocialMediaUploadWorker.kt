@@ -97,7 +97,7 @@ class SocialMediaUploadWorker(
                     }
                     if (compressed.exists() && compressed.length() > 0) {
                         if (file.name.contains("upload_temp_") || file.name.contains("reel_selected_")) {
-                            file.delete()
+                            try { file.delete() } catch (e: Exception) {}
                         }
                         finalUploadFile = compressed
                         val updatedEntity = uploadingEntity.copy(
@@ -106,6 +106,11 @@ class SocialMediaUploadWorker(
                         )
                         pendingUploadDao.updateUpload(updatedEntity)
                         Log.i(TAG, "Video compressed successfully: ${compressed.absolutePath}")
+                    } else {
+                        // Cleanup failed compressed file if created
+                        if (compressed.exists()) {
+                            try { compressed.delete() } catch (e: Exception) {}
+                        }
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Fallo al comprimir video, subiendo original", e)

@@ -129,13 +129,6 @@ object UserKeysRepository {
                     val pubKey = CryptoManager.cleanPublicKey(body[0].publicKey)
                     if (pubKey.isNotEmpty()) {
                         CryptoManager.publicKeyCache[userId] = pubKey
-                        try {
-                            val db = com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance)
-                            val profile = db.profileDao().getProfileById(userId)
-                            if (profile != null) {
-                                db.profileDao().insertProfile(profile.copy(publicKey = pubKey))
-                            }
-                        } catch (e: Throwable) { }
                         return@withContext pubKey
                     }
                 }

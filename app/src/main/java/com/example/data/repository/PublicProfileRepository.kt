@@ -6,7 +6,10 @@ import com.example.data.mapper.PublicProfileMapper
 import com.example.data.model.PublicProfile
 import com.example.data.supabase.SupabaseApiService
 import com.example.data.supabase.SupabaseClient
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 
 /**
@@ -30,6 +33,8 @@ class PublicProfileRepository(
     private val publicProfileDao: PublicProfileDao,
     private val apiServiceSupplier: () -> SupabaseApiService? = { SupabaseClient.apiService }
 ) {
+    private val inFlightRequests = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Deferred<PublicProfileFetchResult<Map<String, PublicProfile>>>>()
+
     companion object {
         private const val TAG = "PublicProfileRepo"
 
@@ -102,28 +107,64 @@ class PublicProfileRepository(
             return@withContext PublicProfileFetchResult.Success(resultMap)
         }
 
-        // 4. Batch fetch from remote API
+        // 4. Single-flight deduplication check
+        coroutineScope {
+            val existingDeferreds = missingIds.mapNotNull { id -> inFlightRequests[id]?.let { id to it } }.toMap()
+            val idsToFetch = missingIds.filter { !existingDeferreds.containsKey(it) }
+
+            val newDeferred = if (idsToFetch.isNotEmpty()) {
+                val deferred = async(Dispatchers.IO) {
+                    fetchRemoteProfilesBatch(idsToFetch)
+                }
+                idsToFetch.forEach { id -> inFlightRequests[id] = deferred }
+                deferred
+            } else null
+
+            try {
+                // Await newly created deferred if any
+                if (newDeferred != null) {
+                    val res = newDeferred.await()
+                    if (res is PublicProfileFetchResult.Success<*>) {
+                        @Suppress("UNCHECKED_CAST")
+                        resultMap.putAll(res.data as Map<String, PublicProfile>)
+                    }
+                }
+                // Await existing in-flight deferreds
+                for ((_, def) in existingDeferreds) {
+                    val res = def.await()
+                    if (res is PublicProfileFetchResult.Success<*>) {
+                        @Suppress("UNCHECKED_CAST")
+                        resultMap.putAll(res.data as Map<String, PublicProfile>)
+                    }
+                }
+            } finally {
+                if (idsToFetch.isNotEmpty()) {
+                    idsToFetch.forEach { id -> inFlightRequests.remove(id) }
+                }
+            }
+        }
+
+        if (resultMap.isNotEmpty()) {
+            PublicProfileFetchResult.Success(resultMap)
+        } else {
+            PublicProfileFetchResult.NotFound
+        }
+    }
+
+    private suspend fun fetchRemoteProfilesBatch(
+        missingIds: List<String>
+    ): PublicProfileFetchResult<Map<String, PublicProfile>> = withContext(Dispatchers.IO) {
+        val resultMap = mutableMapOf<String, PublicProfile>()
         val sessionToken = SupabaseClient.currentToken
         if (sessionToken.isNullOrBlank()) {
             Log.e(TAG, "No valid session JWT available for PublicProfile request")
-            return@withContext if (resultMap.isNotEmpty()) {
-                PublicProfileFetchResult.Success(resultMap)
-            } else {
-                PublicProfileFetchResult.AuthError("No valid session token")
-            }
+            return@withContext PublicProfileFetchResult.AuthError("No valid session token")
         }
 
         val service = apiServiceSupplier()
-        if (service == null) {
-            return@withContext if (resultMap.isNotEmpty()) {
-                PublicProfileFetchResult.Success(resultMap)
-            } else {
-                PublicProfileFetchResult.NetworkError(message = "Supabase service uninitialized")
-            }
-        }
+            ?: return@withContext PublicProfileFetchResult.NetworkError(message = "Supabase service uninitialized")
 
         val apiKey = SupabaseClient.supabaseAnonKey
-
         val bearerToken = "Bearer $sessionToken"
         val idFilter = "in.(${missingIds.joinToString(",")})"
 
@@ -142,43 +183,17 @@ class PublicProfileRepository(
                     }
                 }
 
-                return@withContext PublicProfileFetchResult.Success(resultMap)
+                PublicProfileFetchResult.Success(resultMap)
             } else {
                 when (statusCode) {
-                    401, 403 -> {
-                        Log.e(TAG, "Authorization error $statusCode while fetching public profiles: ${response.errorBody()?.string()}")
-                        if (resultMap.isNotEmpty()) {
-                            PublicProfileFetchResult.Success(resultMap)
-                        } else {
-                            PublicProfileFetchResult.AuthError(message = "Authorization failed ($statusCode)", code = statusCode)
-                        }
-                    }
-                    404 -> {
-                        Log.w(TAG, "Public profiles endpoint or view not found ($statusCode)")
-                        if (resultMap.isNotEmpty()) {
-                            PublicProfileFetchResult.Success(resultMap)
-                        } else {
-                            PublicProfileFetchResult.NotFound
-                        }
-                    }
-                    else -> {
-                        val err = response.errorBody()?.string()
-                        Log.e(TAG, "Server error $statusCode: $err")
-                        if (resultMap.isNotEmpty()) {
-                            PublicProfileFetchResult.Success(resultMap)
-                        } else {
-                            PublicProfileFetchResult.NetworkError(code = statusCode, message = err)
-                        }
-                    }
+                    401, 403 -> PublicProfileFetchResult.AuthError("Authorization failed ($statusCode)", statusCode)
+                    404 -> PublicProfileFetchResult.NotFound
+                    else -> PublicProfileFetchResult.NetworkError(code = statusCode, message = response.errorBody()?.string())
                 }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Exception fetching public profiles", e)
-            if (resultMap.isNotEmpty()) {
-                PublicProfileFetchResult.Success(resultMap)
-            } else {
-                PublicProfileFetchResult.NetworkError(exception = e, message = e.localizedMessage)
-            }
+            PublicProfileFetchResult.NetworkError(exception = e, message = e.localizedMessage)
         }
     }
 

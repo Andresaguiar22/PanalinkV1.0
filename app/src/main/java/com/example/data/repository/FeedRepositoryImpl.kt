@@ -258,7 +258,29 @@ class FeedRepositoryImpl : FeedRepository {
             val response = runCall { b -> service.getCommentsForPost(SupabaseClient.supabaseAnonKey, b, "eq.$postId") }
             
             if (response != null && response.isSuccessful) {
-                Result.success(response.body() ?: emptyList())
+                var comments = response.body() ?: emptyList()
+                if (comments.isNotEmpty()) {
+                    try {
+                        val userIds = comments.mapNotNull { it.userId }.filter { it.isNotBlank() }.distinct()
+                        if (userIds.isNotEmpty()) {
+                            val publicResult = PublicProfileRepository.getInstance().getPublicProfiles(userIds)
+                            if (publicResult is PublicProfileFetchResult.Success) {
+                                val publicProfilesMap = publicResult.data
+                                comments = comments.map { comment ->
+                                    val pub = if (comment.userId != null) publicProfilesMap[comment.userId] else null
+                                    if (pub != null) {
+                                        comment.copy(profile = PublicProfileResolver.toProfile(pub))
+                                    } else {
+                                        comment
+                                    }
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Resilient comment profile mapping failed", e)
+                    }
+                }
+                Result.success(comments)
             } else {
                 Result.failure(Exception("Failed to fetch comments: ${response?.code()}"))
             }

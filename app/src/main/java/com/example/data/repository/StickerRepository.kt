@@ -41,12 +41,6 @@ object StickerRepository {
                     val auth = SupabaseClient.currentToken?.let { "Bearer $it" } ?: ""
                     
                     val requestBody = SearchStickersRequest(query = query ?: "", limit = limit)
-                    // TODO: Replace with direct Giphy API call
-                    // val response = service.getGiphyStickers(
-                    //     apiKey = SupabaseClient.supabaseAnonKey,
-                    //     authorization = auth,
-                    //     request = requestBody
-                    // )
                     
                     // Directly call Giphy API
                     val response = com.example.service.GiphyClient.apiService.searchStickers(
