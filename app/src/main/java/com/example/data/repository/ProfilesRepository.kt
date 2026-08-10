@@ -512,15 +512,45 @@ class ProfilesRepository {
             if (response != null && response.isSuccessful) {
                 val data = response.body() ?: emptyList()
                 Log.d(TAG, "getMyContacts: Fetched ${data.size} contacts from server")
-                val contactProfiles = data.mapNotNull { contact ->
-                    var profile = contact.getProfile(SupabaseClient.moshi)
-                    if (profile == null) {
-                        Log.d(TAG, "getMyContacts: Join returned null profile for ${contact.contactUserId}, fetching direct fallback...")
-                        profile = getProfile(contact.contactUserId).getOrNull()
+
+                val missingUserIds = data
+                    .filter { it.rawProfile == null && it.contactUserId.isNotBlank() }
+                    .map { it.contactUserId }
+                    .distinct()
+
+                val batchProfilesMap = if (missingUserIds.isNotEmpty()) {
+                    Log.d(TAG, "getMyContacts: Fetching batch fallback profiles for ${missingUserIds.size} missing contacts")
+                    try {
+                        val filter = "in.(${missingUserIds.joinToString(",")})"
+                        val profResponse = runCall { b -> service.getProfiles(apiKey, b, idFilter = filter) }
+                        if (profResponse != null && profResponse.isSuccessful) {
+                            profResponse.body()?.associateBy { it.id } ?: emptyMap()
+                        } else emptyMap()
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error fetching batch profiles for contacts", e)
+                        emptyMap()
                     }
-                    profile
+                } else emptyMap()
+
+                val contactProfiles = data.map { contact ->
+                    val embedded = contact.rawProfile
+                    if (embedded != null) {
+                        embedded
+                    } else {
+                        val fallback = batchProfilesMap[contact.contactUserId]
+                        if (fallback != null) {
+                            fallback
+                        } else {
+                            Log.w(TAG, "getMyContacts: No profile row found for contact_user_id=${contact.contactUserId}, creating base profile model")
+                            Profile(
+                                id = contact.contactUserId,
+                                displayName = "Usuario",
+                                avatarUrl = null
+                            )
+                        }
+                    }
                 }
-                
+
                 SessionManager.saveCacheList("cached_contacts", contactProfiles, Profile::class.java)
                 SessionManager.setOffline(false)
                 Result.success(contactProfiles)

@@ -162,6 +162,56 @@ object CdnManager {
     }
 
     /**
+     * Centralized function to resolve avatar URLs into valid absolute HTTPS/CDN/Local URLs.
+     */
+    fun resolveAvatarUrl(rawUrl: String?): String? {
+        val trimmed = rawUrl?.trim()
+        if (trimmed.isNullOrEmpty() || 
+            trimmed.equals("null", ignoreCase = true) || 
+            trimmed.equals("undefined", ignoreCase = true)
+        ) {
+            return null
+        }
+
+        if (trimmed.startsWith("content://") || 
+            trimmed.startsWith("file://") || 
+            trimmed.startsWith("android.resource://") ||
+            trimmed.startsWith("preset:")
+        ) {
+            return trimmed
+        }
+
+        val baseSupabaseStorage = "https://tivqjfgjdxgzicrridaz.supabase.co/storage/v1/object/public"
+
+        val absoluteUrl = when {
+            trimmed.startsWith("http://") || trimmed.startsWith("https://") -> {
+                if (trimmed.contains("supabase.co") && trimmed.startsWith("http://")) {
+                    trimmed.replace("http://", "https://")
+                } else {
+                    trimmed
+                }
+            }
+            trimmed.startsWith("/storage/v1/object/public/") -> {
+                "https://tivqjfgjdxgzicrridaz.supabase.co$trimmed"
+            }
+            trimmed.startsWith("storage/v1/object/public/") -> {
+                "https://tivqjfgjdxgzicrridaz.supabase.co/$trimmed"
+            }
+            trimmed.startsWith("avatars/") || trimmed.startsWith("/avatars/") -> {
+                val cleanPath = trimmed.removePrefix("/")
+                "$baseSupabaseStorage/$cleanPath"
+            }
+            else -> {
+                val cleanPath = trimmed.removePrefix("/")
+                "$baseSupabaseStorage/avatars/$cleanPath"
+            }
+        }
+
+        val resolved = resolveMediaUrlSync(absoluteUrl)
+        return resolved.ifEmpty { null }
+    }
+
+    /**
      * Synchronous version of resolveMediaUrl utilizing the cached CDN URL.
      * Prevents blockages or having to launch coroutines in UI rendering components.
      */

@@ -1,8 +1,10 @@
 package com.example.data.model
 
 import androidx.compose.runtime.Immutable
+import com.squareup.moshi.FromJson
 import com.squareup.moshi.Json
 import com.squareup.moshi.JsonClass
+import com.squareup.moshi.ToJson
 
 @Immutable
 data class Profile(
@@ -133,24 +135,66 @@ data class ContactWithProfileEntity(
     @Json(name = "owner_user_id") val ownerUserId: String,
     @Json(name = "contact_user_id") val contactUserId: String,
     @Json(name = "created_at") val createdAt: String? = null,
-    @Json(name = "profiles") val profiles: Any? = null
+    @Json(name = "profiles") val profiles: EmbeddedProfile? = null
 ) {
+    val rawProfile: Profile? get() = profiles?.profile
+
     fun getProfile(moshi: com.squareup.moshi.Moshi): Profile? {
-        if (profiles == null) return null
+        return rawProfile
+    }
+}
+
+data class EmbeddedProfile(val profile: Profile?)
+
+class EmbeddedProfileAdapter {
+    @FromJson
+    fun fromJson(
+        reader: com.squareup.moshi.JsonReader,
+        delegate: com.squareup.moshi.JsonAdapter<Profile>
+    ): EmbeddedProfile? {
         return try {
-            // Attempt to parse as single object
-            val adapter = moshi.adapter(Profile::class.java)
-            adapter.fromJsonValue(profiles)
-        } catch (e: Exception) {
-            try {
-                // Attempt to parse as list and take first
-                val listType = com.squareup.moshi.Types.newParameterizedType(List::class.java, Profile::class.java)
-                val listAdapter: com.squareup.moshi.JsonAdapter<List<Profile>> = moshi.adapter(listType)
-                val list = listAdapter.fromJsonValue(profiles)
-                list?.firstOrNull()
-            } catch (e2: Exception) {
-                null
+            when (reader.peek()) {
+                com.squareup.moshi.JsonReader.Token.BEGIN_ARRAY -> {
+                    reader.beginArray()
+                    var prof: Profile? = null
+                    if (reader.hasNext() && reader.peek() != com.squareup.moshi.JsonReader.Token.END_ARRAY) {
+                        prof = delegate.fromJson(reader)
+                    }
+                    while (reader.hasNext()) {
+                        reader.skipValue()
+                    }
+                    reader.endArray()
+                    EmbeddedProfile(prof)
+                }
+                com.squareup.moshi.JsonReader.Token.BEGIN_OBJECT -> {
+                    val prof = delegate.fromJson(reader)
+                    EmbeddedProfile(prof)
+                }
+                com.squareup.moshi.JsonReader.Token.NULL -> {
+                    reader.nextNull<Unit>()
+                    null
+                }
+                else -> {
+                    reader.skipValue()
+                    null
+                }
             }
+        } catch (e: Exception) {
+            android.util.Log.e("EmbeddedProfileAdapter", "Deserialization error in embedded profile JSON", e)
+            null
+        }
+    }
+
+    @ToJson
+    fun toJson(
+        writer: com.squareup.moshi.JsonWriter,
+        value: EmbeddedProfile?,
+        delegate: com.squareup.moshi.JsonAdapter<Profile>
+    ) {
+        if (value?.profile == null) {
+            writer.nullValue()
+        } else {
+            delegate.toJson(writer, value.profile)
         }
     }
 }

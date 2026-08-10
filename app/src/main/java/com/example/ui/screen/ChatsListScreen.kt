@@ -2386,9 +2386,7 @@ fun EstadosTabContent(
                                 ) {
                                     Box(modifier = Modifier.fillMaxSize()) {
                                         val resolvedAvatar = remember(SupabaseClient.currentProfile?.avatarUrl) {
-                                            if (!SupabaseClient.currentProfile?.avatarUrl.isNullOrEmpty()) {
-                                                com.example.data.repository.CdnManager.resolveMediaUrlSync(SupabaseClient.currentProfile?.avatarUrl)
-                                            } else null
+                                            com.example.data.repository.CdnManager.resolveAvatarUrl(SupabaseClient.currentProfile?.avatarUrl)
                                         }
                                         // My avatar
                                         AsyncImage(
@@ -3108,9 +3106,7 @@ fun ChatAvatar(
                 .background(getAvatarGradient(name))
         ) {
             val resolvedUrl = remember(avatarUrl) {
-                if (!avatarUrl.isNullOrEmpty()) {
-                    com.example.data.repository.CdnManager.resolveMediaUrlSync(avatarUrl)
-                } else null
+                com.example.data.repository.CdnManager.resolveAvatarUrl(avatarUrl)
             }
             if (resolvedUrl != null) {
                 AsyncImage(
@@ -6065,11 +6061,7 @@ fun PostCard(
                 // Resolve Avatar URL using CdnManager to fix the missing avatar bug!
                 val rawAvatar = identityState?.avatarUrl ?: post.profile?.avatarUrl
                 val resolvedAvatar = remember(rawAvatar) {
-                    if (!rawAvatar.isNullOrBlank()) {
-                        com.example.data.repository.CdnManager.resolveMediaUrlSync(rawAvatar)
-                    } else {
-                        null
-                    }
+                    com.example.data.repository.CdnManager.resolveAvatarUrl(rawAvatar)
                 }
 
                 PanaAvatar(

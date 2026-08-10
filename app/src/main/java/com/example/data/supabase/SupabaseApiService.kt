@@ -457,7 +457,7 @@ interface SupabaseApiService {
     suspend fun getContactsWithProfiles(
         @Header("apikey") apiKey: String,
         @Header("Authorization") authorization: String,
-        @Query("select") select: String = "*,profiles!contact_user_id(id,display_name,avatar_url,is_profile_complete,created_at,profile_theme,profile_badges,last_profile_edit,device_fingerprint)",
+        @Query("select") select: String = "*,profiles!contact_user_id(*)",
         @Query("owner_user_id") ownerFilter: String
     ): Response<List<ContactWithProfileEntity>>
 

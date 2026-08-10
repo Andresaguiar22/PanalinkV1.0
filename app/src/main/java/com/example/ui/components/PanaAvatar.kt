@@ -73,7 +73,7 @@ fun PanaAvatar(
                     !it.contains("unsplash.com") 
                 }
                 if (!rawUrl.isNullOrBlank()) {
-                    val resolvedUrl = com.example.data.repository.CdnManager.resolveMediaUrlSync(rawUrl)
+                    val resolvedUrl = com.example.data.repository.CdnManager.resolveAvatarUrl(rawUrl)
                     if (resolvedUrl != null) {
                         scope.launch(Dispatchers.IO) {
                             val storageManager = com.example.identity.storage.AvatarStorageManager(context)
@@ -102,7 +102,7 @@ fun PanaAvatar(
                 !it.contains("unsplash.com") 
             }
             if (!raw.isNullOrBlank()) {
-                com.example.data.repository.CdnManager.resolveMediaUrlSync(raw)
+                com.example.data.repository.CdnManager.resolveAvatarUrl(raw)
             } else {
                 null
             }

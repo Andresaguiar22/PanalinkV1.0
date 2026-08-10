@@ -685,7 +685,7 @@ fun ChatScreen(
                                 .clickable { showContactDetail = true }
                         ) {
                             AsyncImage(
-                                model = otherUser?.avatarUrl ?: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80",
+                                model = com.example.data.repository.CdnManager.resolveAvatarUrl(otherUser?.avatarUrl) ?: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80",
                                 contentDescription = "Avatar",
                                 modifier = Modifier
                                     .size(40.dp)
@@ -2052,7 +2052,7 @@ fun ChatScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     AsyncImage(
-                                        model = contact.avatarUrl ?: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80",
+                                        model = com.example.data.repository.CdnManager.resolveAvatarUrl(contact.avatarUrl) ?: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80",
                                         contentDescription = "Avatar",
                                         modifier = Modifier
                                             .size(36.dp)

@@ -31,6 +31,7 @@ object SupabaseClient {
     val isConfigured: Boolean = true
 
     val moshi: Moshi = Moshi.Builder()
+        .add(com.example.data.model.EmbeddedProfileAdapter())
         .add(com.example.data.model.ProfileSurrogateAdapter())
         .addLast(KotlinJsonAdapterFactory())
         .build()
