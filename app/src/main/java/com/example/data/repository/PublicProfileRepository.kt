@@ -181,4 +181,62 @@ class PublicProfileRepository(
             }
         }
     }
+
+    /**
+     * Searches public profiles by [query] matching display_name, first_name, or last_name.
+     * Caches fetched entities in Room (PublicProfileDao) and returns a deduplicated list of PublicProfiles.
+     */
+    suspend fun searchPublicProfiles(
+        query: String,
+        limit: Int = 20
+    ): PublicProfileFetchResult<List<PublicProfile>> = withContext(Dispatchers.IO) {
+        val cleanQuery = query.trim()
+        if (cleanQuery.isBlank()) {
+            return@withContext PublicProfileFetchResult.Success(emptyList())
+        }
+
+        val sessionToken = SupabaseClient.currentToken
+        if (sessionToken.isNullOrBlank()) {
+            Log.e(TAG, "No valid session JWT available for searchPublicProfiles")
+            return@withContext PublicProfileFetchResult.AuthError("No valid session token")
+        }
+
+        val service = apiServiceSupplier()
+            ?: return@withContext PublicProfileFetchResult.NetworkError(message = "Supabase service uninitialized")
+
+        val apiKey = SupabaseClient.supabaseAnonKey
+        val bearerToken = "Bearer $sessionToken"
+        val orFilter = "(display_name.ilike.*$cleanQuery*,first_name.ilike.*$cleanQuery*,last_name.ilike.*$cleanQuery*)"
+
+        try {
+            val response = service.searchPublicProfiles(
+                apiKey = apiKey,
+                authorization = bearerToken,
+                orFilter = orFilter,
+                limit = limit
+            )
+            val statusCode = response.code()
+
+            if (response.isSuccessful) {
+                val dtos = response.body() ?: emptyList()
+                val entities = dtos.map { PublicProfileMapper.dtoToEntity(it) }
+
+                if (entities.isNotEmpty()) {
+                    publicProfileDao.upsertAll(entities)
+                }
+
+                val models = entities.map { PublicProfileMapper.entityToModel(it) }.distinctBy { it.id }
+                PublicProfileFetchResult.Success(models)
+            } else {
+                when (statusCode) {
+                    401, 403 -> PublicProfileFetchResult.AuthError("Authorization failed ($statusCode)", statusCode)
+                    404 -> PublicProfileFetchResult.NotFound
+                    else -> PublicProfileFetchResult.NetworkError(code = statusCode, message = response.errorBody()?.string())
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Exception searching public profiles", e)
+            PublicProfileFetchResult.NetworkError(exception = e, message = e.localizedMessage)
+        }
+    }
 }

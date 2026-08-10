@@ -53,13 +53,18 @@ class NotificationsViewModel(
             SupabaseClient.realtimeMessages.collect { msg ->
                 val uid = SupabaseClient.currentUser?.id ?: return@collect
                 if (msg.senderId != uid) {
+                    val publicProfileDao = com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance).publicProfileDao()
+                    val pubEntity = publicProfileDao.getById(msg.senderId)
+                    val senderProfile = pubEntity?.let { com.example.data.repository.PublicProfileResolver.toProfile(com.example.data.mapper.PublicProfileMapper.entityToModel(it)) }
+                        ?: Profile(id = msg.senderId, displayName = "", avatarUrl = null)
+
                     val sdf = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSSSS", Locale.getDefault())
                     sdf.timeZone = TimeZone.getTimeZone("UTC")
                     val newNotif = Notification(
                         id = "msg_${msg.id}",
                         type = NotificationType.MESSAGE,
                         sourceId = msg.chatId,
-                        profile = Profile(msg.senderId, "Usuario", null),
+                        profile = senderProfile,
                         timestamp = sdf.format(Date()),
                         isRead = false,
                         actionText = "te envió un mensaje.",

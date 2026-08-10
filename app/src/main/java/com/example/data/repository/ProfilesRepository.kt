@@ -48,6 +48,26 @@ class ProfilesRepository {
     }
 
     suspend fun getProfile(userId: String): Result<Profile> = withContext(Dispatchers.IO) {
+        val currentUid = SupabaseClient.currentUser?.id
+        if (userId != currentUid && userId.isNotBlank()) {
+            val publicProfileRepo = PublicProfileRepository.getInstance()
+            val fetchResult = publicProfileRepo.getPublicProfile(userId)
+            return@withContext when (fetchResult) {
+                is PublicProfileFetchResult.Success -> {
+                    Result.success(PublicProfileResolver.toProfile(fetchResult.data))
+                }
+                is PublicProfileFetchResult.NotFound -> {
+                    Result.failure(Exception("Perfil no encontrado en public_profiles"))
+                }
+                is PublicProfileFetchResult.AuthError -> {
+                    Result.failure(Exception(fetchResult.message ?: "Error de autorización"))
+                }
+                is PublicProfileFetchResult.NetworkError -> {
+                    Result.failure(fetchResult.exception ?: Exception(fetchResult.message ?: "Error de red"))
+                }
+            }
+        }
+
         if (!SupabaseClient.isConfigured) {
             val prof = SupabaseClient.demoProfiles[userId]
             return@withContext if (prof != null) {
@@ -441,28 +461,18 @@ class ProfilesRepository {
         }
 
         try {
-            val service = SupabaseClient.apiService ?: return@withContext Result.failure(Exception("Supabase not configured"))
-            val apiKey = SupabaseClient.supabaseAnonKey
-            
-            val contactsResponse = runCall { b -> service.getContacts(apiKey, b, ownerFilter = "eq.$currentUid") }
-            if (contactsResponse != null && contactsResponse.isSuccessful) {
-                val contacts = contactsResponse.body() ?: emptyList()
-                val contactIds = contacts.map { it.contactUserId }.toSet()
-
-                val publicProfileRepo = PublicProfileRepository.getInstance()
-                val fetchResult = publicProfileRepo.getPublicProfiles(contactIds.toList())
-                if (fetchResult is PublicProfileFetchResult.Success) {
-                    val publicProfilesMap = fetchResult.data
-                    val filtered = publicProfilesMap.values
+            val publicProfileRepo = PublicProfileRepository.getInstance()
+            val fetchResult = publicProfileRepo.searchPublicProfiles(query)
+            when (fetchResult) {
+                is PublicProfileFetchResult.Success -> {
+                    val filtered = fetchResult.data
                         .filter { it.id != currentUid }
                         .map { PublicProfileResolver.toProfile(it) }
-                        .filter { it.displayName.contains(query, ignoreCase = true) || (it.firstName?.contains(query, ignoreCase = true) == true) }
                     Result.success(filtered)
-                } else {
-                    Result.failure(Exception("Error al buscar perfiles públicos de contactos"))
                 }
-            } else {
-                Result.failure(Exception(contactsResponse?.errorBody()?.string() ?: "Error de contactos"))
+                is PublicProfileFetchResult.NotFound -> Result.success(emptyList())
+                is PublicProfileFetchResult.AuthError -> Result.failure(Exception("Error de autenticación: ${fetchResult.message}"))
+                is PublicProfileFetchResult.NetworkError -> Result.failure(fetchResult.exception ?: Exception(fetchResult.message ?: "Error de red"))
             }
         } catch (e: Exception) {
             Result.failure(e)

@@ -56,10 +56,22 @@ class ChatsRepository {
         val currentUid = SupabaseClient.currentUser?.id ?: return@withContext Result.failure(Exception("Not authenticated"))
 
         // Load from local DB first
+        val publicProfileDao = db.publicProfileDao()
         val cachedChats = chatDao.getAllChats()
         val localList = mutableListOf<ChatWithDetails>()
         for (chatEntity in cachedChats) {
-            val otherProfile = chatEntity.otherUserId?.let { profileDao.getProfileById(it)?.toProfile() }
+            val otherProfile = chatEntity.otherUserId?.let { otherId ->
+                val pubEntity = publicProfileDao.getById(otherId)
+                if (pubEntity != null) {
+                    PublicProfileResolver.toProfile(com.example.data.mapper.PublicProfileMapper.entityToModel(pubEntity))
+                } else {
+                    profileDao.getProfileById(otherId)?.toProfile()?.let { p ->
+                        val cleanName = PublicProfileResolver.resolveDisplayName(null, p.displayName, p.id)
+                        val cleanAvatar = CdnManager.resolveAvatarUrl(p.avatarUrl)
+                        p.copy(displayName = cleanName, avatarUrl = cleanAvatar)
+                    }
+                }
+            }
             val lastMsg = chatEntity.lastMessageId?.let { 
                 // We might not have the full message object easily, let's try to get it from messageDao
                 // For now, if it's missing from messageDao, we'll just have null last message in UI until sync

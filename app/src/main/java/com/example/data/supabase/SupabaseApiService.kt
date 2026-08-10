@@ -96,6 +96,15 @@ interface SupabaseApiService {
         @Query("select") select: String = "id,display_name,first_name,last_name,avatar_url,updated_at"
     ): Response<List<com.example.data.model.PublicProfileDto>>
 
+    @GET("rest/v1/public_profiles")
+    suspend fun searchPublicProfiles(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") authorization: String,
+        @Query("or") orFilter: String,
+        @Query("limit") limit: Int = 20,
+        @Query("select") select: String = "id,display_name,first_name,last_name,avatar_url,updated_at"
+    ): Response<List<com.example.data.model.PublicProfileDto>>
+
     @PATCH("rest/v1/profiles")
     suspend fun updateProfile(
         @Header("apikey") apiKey: String,

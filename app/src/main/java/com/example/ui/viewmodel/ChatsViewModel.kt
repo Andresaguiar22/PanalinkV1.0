@@ -143,11 +143,23 @@ class ChatsViewModel(
             val db = com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance)
             val chatDao = db.chatDao()
             val profileDao = db.profileDao()
+            val publicProfileDao = db.publicProfileDao()
             val messageDao = db.messageDao()
 
             chatDao.getAllChatsFlow().collect { entities ->
                 val detailsList = entities.map { chatEntity ->
-                    val otherProfile = chatEntity.otherUserId?.let { profileDao.getProfileById(it)?.toProfile() }
+                    val otherProfile = chatEntity.otherUserId?.let { otherId ->
+                        val pubEntity = publicProfileDao.getById(otherId)
+                        if (pubEntity != null) {
+                            com.example.data.repository.PublicProfileResolver.toProfile(com.example.data.mapper.PublicProfileMapper.entityToModel(pubEntity))
+                        } else {
+                            profileDao.getProfileById(otherId)?.toProfile()?.let { p ->
+                                val cleanName = com.example.data.repository.PublicProfileResolver.resolveDisplayName(null, p.displayName, p.id)
+                                val cleanAvatar = com.example.data.repository.CdnManager.resolveAvatarUrl(p.avatarUrl)
+                                p.copy(displayName = cleanName, avatarUrl = cleanAvatar)
+                            }
+                        }
+                    }
                     val lastMsg = messageDao.getMessagesForChat(chatEntity.id).maxByOrNull { it.createdAt }?.toMessage()
                     
                     ChatWithDetails(

@@ -64,7 +64,7 @@ object NotificationEventPublisher {
                 interruptiveness = getInterruptiveness(priorityV2, typeV2),
                 actor = EventActor(
                     id = finalActorId,
-                    name = actorName ?: "Usuario",
+                    name = actorName ?: "",
                     avatarUrl = actorAvatarUrl
                 ),
                 target = EventTarget(

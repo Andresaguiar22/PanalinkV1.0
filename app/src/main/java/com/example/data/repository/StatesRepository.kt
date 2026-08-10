@@ -265,11 +265,23 @@ class StatesRepository {
                     emptySet()
                 }
 
+                val authorUserIds = filteredStates.map { it.userId }.filter { it.isNotBlank() }.distinct()
+                val publicProfileRepo = PublicProfileRepository.getInstance()
+                val publicProfilesMap = when (val res = publicProfileRepo.getPublicProfiles(authorUserIds)) {
+                    is PublicProfileFetchResult.Success -> res.data
+                    else -> emptyMap()
+                }
+
                 val list = filteredStates.map { state ->
                     val profile = if (state.userId == currentUid && SupabaseClient.currentProfile != null) {
                         SupabaseClient.currentProfile!!
                     } else {
-                        Profile(state.userId, "Pana", null) ?: Profile(state.userId, "Pana", null)
+                        val pub = publicProfilesMap[state.userId]
+                        if (pub != null) {
+                            PublicProfileResolver.toProfile(pub)
+                        } else {
+                            Profile(id = state.userId, displayName = "", avatarUrl = null)
+                        }
                     }
                     val likedByMe = likedStateIds.contains(state.id)
                     val favoritedByMe = favoritedStateIds.contains(state.id)
@@ -957,20 +969,11 @@ class StatesRepository {
         if (userId == SupabaseClient.currentUser?.id && SupabaseClient.currentProfile != null) {
             return@withContext SupabaseClient.currentProfile!!
         }
-        try {
-            val service = SupabaseClient.apiService ?: return@withContext Profile(userId, "Pana", null)
-            val token = SupabaseClient.currentToken ?: return@withContext Profile(userId, "Pana", null)
-            val apiKey = SupabaseClient.supabaseAnonKey
-            val bearer = "Bearer $token"
-            
-            val response = service.getProfile(apiKey, bearer, "eq.$userId")
-            if (response.isSuccessful) {
-                response.body()?.firstOrNull() ?: Profile(userId, "Pana", null)
-            } else {
-                Profile(userId, "Pana", null)
-            }
-        } catch (e: Exception) {
-            Profile(userId, "Pana", null)
+        val publicResult = PublicProfileRepository.getInstance().getPublicProfile(userId)
+        if (publicResult is PublicProfileFetchResult.Success) {
+            PublicProfileResolver.toProfile(publicResult.data)
+        } else {
+            Profile(id = userId, displayName = "", avatarUrl = null)
         }
     }
 
@@ -989,13 +992,12 @@ class StatesRepository {
                 val reels = allStates.filter { it.isReel }
 
                 // Map to UserStateWithUser and resolve URLs
-                val profile = Profile(userId, "Pana", null)
+                val profile = getProfileForUser(userId)
                 val resolvedList = reels.map { state ->
                     val resolvedUrl = CdnManager.resolveMediaUrl(state.mediaUrl)
                     val resolvedState = state.copy(mediaUrl = if (resolvedUrl.isNotEmpty()) resolvedUrl else null)
                     UserStateWithUser(resolvedState, profile)
                 }.sortedByDescending { it.state.createdAt }
-                Result.success(resolvedList)
                 Result.success(resolvedList)
             } else {
                 Result.failure(Exception("Error loading reels: ${response?.errorBody()?.string()}"))

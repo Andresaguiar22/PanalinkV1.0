@@ -159,7 +159,7 @@ class FeedRepositoryImpl : FeedRepository {
                     com.example.notification.engine.producers.social.PostNotificationAdapter.publishPostCreated(
                         postId = createdPost.id ?: "",
                         authorId = createdPost.userId ?: "",
-                        authorName = createdPost.userId ?: "Usuario",
+                        authorName = SupabaseClient.currentProfile?.displayName ?: "",
                         caption = createdPost.content
                     )
                 } catch (e: Exception) {

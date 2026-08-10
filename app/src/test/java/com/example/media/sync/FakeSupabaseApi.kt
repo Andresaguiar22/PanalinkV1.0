@@ -24,6 +24,7 @@ class FakeSupabaseApi : SupabaseApiService {
     override suspend fun verifyOtp(apiKey: String, request: VerifyOtpRequest): Response<AuthResponse> = TODO()
     override suspend fun getProfiles(apiKey: String, authorization: String, select: String, displayNameFilter: String?, idFilter: String?): Response<List<Profile>> = TODO()
     override suspend fun getPublicProfiles(apiKey: String, authorization: String, idFilter: String?, select: String): Response<List<PublicProfileDto>> = TODO()
+    override suspend fun searchPublicProfiles(apiKey: String, authorization: String, orFilter: String, limit: Int, select: String): Response<List<PublicProfileDto>> = Response.success(emptyList())
     override suspend fun getProfile(apiKey: String, authorization: String, idFilter: String, select: String): Response<List<Profile>> = TODO()
     override suspend fun updateProfile(apiKey: String, authorization: String, idFilter: String, profile: UpdateProfileRequest, prefer: String): Response<List<Profile>> = TODO()
     override suspend fun updateProfileMap(apiKey: String, authorization: String, idFilter: String, profile: Map<String, @JvmSuppressWildcards Any>): Response<ResponseBody> = TODO()

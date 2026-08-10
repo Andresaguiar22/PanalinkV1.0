@@ -236,4 +236,77 @@ class PublicProfileArchitectureTest {
         val result = repository.getPublicProfiles(listOf("user_test"), forceRefresh = true)
         assertTrue(result is PublicProfileFetchResult.AuthError)
     }
+
+    @Test
+    fun testSearchPublicProfilesWithBlankQueryReturnsEmptyList() = runBlocking {
+        val fakeDao = object : PublicProfileDao {
+            override suspend fun getById(id: String): PublicProfileEntity? = null
+            override suspend fun getByIds(ids: List<String>): List<PublicProfileEntity> = emptyList()
+            override suspend fun upsert(entity: PublicProfileEntity) {}
+            override suspend fun upsertAll(entities: List<PublicProfileEntity>) {}
+            override suspend fun delete(id: String) {}
+            override suspend fun deleteAll() {}
+        }
+
+        val repository = PublicProfileRepository(
+            publicProfileDao = fakeDao,
+            apiServiceSupplier = { null }
+        )
+
+        val result = repository.searchPublicProfiles("   ")
+        assertTrue(result is PublicProfileFetchResult.Success)
+        assertEquals(emptyList<PublicProfile>(), (result as PublicProfileFetchResult.Success).data)
+    }
+
+    @Test
+    fun testCacheFirstRetrievalFromPublicProfileDao() = runBlocking {
+        val cachedEntity = PublicProfileEntity(
+            id = "cached_101",
+            displayName = "Elena Rostova",
+            firstName = "Elena",
+            lastName = "Rostova",
+            avatarUrl = "avatars/elena.jpg",
+            updatedAt = "2026-08-10T09:00:00Z"
+        )
+
+        val fakeDao = object : PublicProfileDao {
+            override suspend fun getById(id: String): PublicProfileEntity? = if (id == "cached_101") cachedEntity else null
+            override suspend fun getByIds(ids: List<String>): List<PublicProfileEntity> = if (ids.contains("cached_101")) listOf(cachedEntity) else emptyList()
+            override suspend fun upsert(entity: PublicProfileEntity) {}
+            override suspend fun upsertAll(entities: List<PublicProfileEntity>) {}
+            override suspend fun delete(id: String) {}
+            override suspend fun deleteAll() {}
+        }
+
+        val repository = PublicProfileRepository(
+            publicProfileDao = fakeDao,
+            apiServiceSupplier = { null }
+        )
+
+        val result = repository.getPublicProfile("cached_101", forceRefresh = false)
+        assertTrue(result is PublicProfileFetchResult.Success)
+        val profile = (result as PublicProfileFetchResult.Success).data
+        assertEquals("cached_101", profile.id)
+        assertEquals("Elena Rostova", profile.displayName)
+    }
+
+    @Test
+    fun testNotFoundForBlankUserId() = runBlocking {
+        val fakeDao = object : PublicProfileDao {
+            override suspend fun getById(id: String): PublicProfileEntity? = null
+            override suspend fun getByIds(ids: List<String>): List<PublicProfileEntity> = emptyList()
+            override suspend fun upsert(entity: PublicProfileEntity) {}
+            override suspend fun upsertAll(entities: List<PublicProfileEntity>) {}
+            override suspend fun delete(id: String) {}
+            override suspend fun deleteAll() {}
+        }
+
+        val repository = PublicProfileRepository(
+            publicProfileDao = fakeDao,
+            apiServiceSupplier = { null }
+        )
+
+        val result = repository.getPublicProfile("")
+        assertTrue(result is PublicProfileFetchResult.NotFound)
+    }
 }
