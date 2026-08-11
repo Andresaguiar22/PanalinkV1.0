@@ -864,13 +864,12 @@ class ProfilesRepository {
         try {
             val service = SupabaseClient.apiService ?: return@withContext Result.failure(Exception("Supabase not configured"))
             
-            val baseUrl = SupabaseClient.supabaseUrl
-            val projectRef = if (baseUrl.contains(".supabase.co")) {
-                baseUrl.substringAfter("https://").substringBefore(".supabase.co")
+            val baseUrl = SupabaseClient.supabaseUrl.trim().removeSuffix("/")
+            val edgeFunctionUrl = if (baseUrl.contains(".supabase.co")) {
+                baseUrl.replace(".supabase.co", ".functions.supabase.co") + "/save-token"
             } else {
-                "tivqjfgjdxgzicrridaz"
+                "$baseUrl/functions/v1/save-token"
             }
-            val edgeFunctionUrl = "https://$projectRef.functions.supabase.co/save-token"
             
             val body = mapOf(
                 "user_id" to userId,

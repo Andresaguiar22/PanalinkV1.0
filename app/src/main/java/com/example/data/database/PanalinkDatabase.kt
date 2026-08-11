@@ -407,9 +407,9 @@ abstract class PanalinkDatabase : RoomDatabase() {
                         `id` TEXT NOT NULL,
                         `playlistId` TEXT NOT NULL,
                         `trackId` TEXT NOT NULL,
-                        `orderIndex` INTEGER NOT NULL,
+                        `orderIndex` INTEGER NOT NULL DEFAULT 0,
                         `addedAt` INTEGER NOT NULL,
-                        `isDirty` INTEGER NOT NULL,
+                        `isDirty` INTEGER NOT NULL DEFAULT 0,
                         PRIMARY KEY(`id`),
                         FOREIGN KEY(`playlistId`) REFERENCES `playlists`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE,
                         FOREIGN KEY(`trackId`) REFERENCES `audio_tracks`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE

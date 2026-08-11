@@ -2185,13 +2185,12 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
             try {
                 val service = SupabaseClient.apiService ?: return@launch
                 
-                val baseUrl = SupabaseClient.supabaseUrl
-                val projectRef = if (baseUrl.contains(".supabase.co")) {
-                    baseUrl.substringAfter("https://").substringBefore(".supabase.co")
+                val baseUrl = SupabaseClient.supabaseUrl.trim().removeSuffix("/")
+                val edgeFunctionUrl = if (baseUrl.contains(".supabase.co")) {
+                    baseUrl.replace(".supabase.co", ".functions.supabase.co") + "/send-push"
                 } else {
-                    "tivqjfgjdxgzicrridaz"
+                    "$baseUrl/functions/v1/send-push"
                 }
-                val edgeFunctionUrl = "https://$projectRef.functions.supabase.co/send-push"
                 
                 val body = mapOf(
                     "user_id" to recipientUserId,
