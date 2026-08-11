@@ -1731,7 +1731,7 @@ fun ChatScreen(
                         onClick = {
                             isRecordingPaused = false
                             viewModel.onVoiceGestureEvent(
-                                event = VoiceGestureEvent.SendLockedRecording,
+                                event = VoiceGestureEvent.FinishRecording,
                                 context = context,
                                 replyToId = replyingToMessage?.id,
                                 fallbackDurationSeconds = recordDurationSeconds,
@@ -1910,7 +1910,7 @@ fun ChatScreen(
                 ) {
                     Icon(
                         imageVector = androidx.compose.material.icons.Icons.Default.Lock,
-                        contentDescription = "Fijar grabación",
+                        contentDescription = "Fijar grabaci�n",
                         tint = if (lockHighlight > 0.8f) Color(0xFF00A884) else Color(0xFF8596A0),
                         modifier = Modifier.size(20.dp).graphicsLayer {
                             scaleX = 1f + (lockHighlight * 0.2f)

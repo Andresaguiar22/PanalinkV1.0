@@ -503,6 +503,9 @@ private var chatJob: kotlinx.coroutines.Job? = null
                         previewDurationSeconds = result.durationSeconds
                         _previewWaveform.value = result.waveform
                         _recordState.value = RecordState.PREVIEWING
+                        viewModelScope.launch {
+                            _previewWaveform.value = com.example.ui.components.chat.voice.AudioWaveformAnalyzer.analyze(result.file)
+                        }
                     } else {
                         _recordState.value = RecordState.IDLE
                     }
@@ -514,6 +517,20 @@ private var chatJob: kotlinx.coroutines.Job? = null
             com.example.ui.components.chat.voice.VoiceGestureEvent.ResumeRecording -> {
                 voiceController.resume()
             }
+            com.example.ui.components.chat.voice.VoiceGestureEvent.SendLockedRecording -> {
+                if (_recordState.value == RecordState.LOCKED_RECORDING) {
+                    val result = voiceController.stopAndValidate(fallbackDurationSeconds = fallbackDurationSeconds)
+                    _voiceAmplitudes.value = emptyList()
+                    if (result is com.example.ui.components.chat.voice.VoiceRecordingResult.Success) {
+                        previewFile = result.file
+                        previewDurationSeconds = result.durationSeconds
+                        _previewWaveform.value = result.waveform
+                        sendPreviewRecording(context, replyToId, onProgress)
+                    } else {
+                        _recordState.value = RecordState.IDLE
+                    }
+                }
+            }
             com.example.ui.components.chat.voice.VoiceGestureEvent.StopAndPreviewRecording -> {
                 if (_recordState.value == RecordState.RECORDING || _recordState.value == RecordState.LOCKED_RECORDING) {
                     val result = voiceController.stopAndValidate(fallbackDurationSeconds = fallbackDurationSeconds)
@@ -523,6 +540,9 @@ private var chatJob: kotlinx.coroutines.Job? = null
                         previewDurationSeconds = result.durationSeconds
                         _previewWaveform.value = result.waveform
                         _recordState.value = RecordState.PREVIEWING
+                        viewModelScope.launch {
+                            _previewWaveform.value = com.example.ui.components.chat.voice.AudioWaveformAnalyzer.analyze(result.file)
+                        }
                     } else {
                         _recordState.value = RecordState.IDLE
                     }

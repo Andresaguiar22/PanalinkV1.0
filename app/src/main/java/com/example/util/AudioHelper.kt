@@ -23,24 +23,6 @@ class AudioRecorder(private val context: Context) {
     var currentFile: File? = null
         private set
 
-    private var noiseSuppressor: android.media.audiofx.NoiseSuppressor? = null
-    private var acousticEchoCanceler: android.media.audiofx.AcousticEchoCanceler? = null
-
-    private fun releaseEffects() {
-        try {
-            noiseSuppressor?.release()
-        } catch (e: Exception) {
-            // ignore
-        }
-        noiseSuppressor = null
-        try {
-            acousticEchoCanceler?.release()
-        } catch (e: Exception) {
-            // ignore
-        }
-        acousticEchoCanceler = null
-    }
-
     private fun cleanOldTempAudioFilesAsync() {
         Thread {
             try {
@@ -68,9 +50,7 @@ class AudioRecorder(private val context: Context) {
             Log.w(TAG, "AudioRecorder: Recording is already active. Ignoring second startRecording request.")
             return currentFile
         }
-
         cleanOldTempAudioFilesAsync()
-
         try {
             val outputDir = context.cacheDir
             val file = File.createTempFile("voice_note_", ".m4a", outputDir)
@@ -87,7 +67,7 @@ class AudioRecorder(private val context: Context) {
                 setAudioSource(MediaRecorder.AudioSource.MIC)
                 setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
                 setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-                setAudioEncodingBitRate(192000)
+                setAudioEncodingBitRate(64000) // 64kbps is plenty for voice
                 setAudioSamplingRate(44100)
                 setOutputFile(file.absolutePath)
                 prepare()
@@ -95,57 +75,10 @@ class AudioRecorder(private val context: Context) {
             }
 
             mediaRecorder = recorder
-            Log.d(TAG, "Audio recording started at: ${file.absolutePath}")
-
-            // Apply real-time high-fidelity noise and echo cancellation effects
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                try {
-                    val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
-                    val activeConfigs = audioManager.activeRecordingConfigurations
-                    var sessionId = 0
-                    for (config in activeConfigs) {
-                        if (config.clientAudioSource == MediaRecorder.AudioSource.MIC) {
-                            sessionId = config.clientAudioSessionId
-                            break
-                        }
-                    }
-
-                    if (sessionId != 0) {
-                        if (android.media.audiofx.NoiseSuppressor.isAvailable()) {
-                            try {
-                                noiseSuppressor = android.media.audiofx.NoiseSuppressor.create(sessionId)?.apply {
-                                    enabled = true
-                                }
-                                Log.d(TAG, "🟢 Realtime NoiseSuppressor successfully enabled on audioSessionId: $sessionId")
-                            } catch (e: Exception) {
-                                Log.e(TAG, "⚠️ Failed to initialize NoiseSuppressor on session $sessionId", e)
-                            }
-                        } else {
-                            Log.w(TAG, "⚠️ NoiseSuppressor is not supported on this device's hardware.")
-                        }
-
-                        if (android.media.audiofx.AcousticEchoCanceler.isAvailable()) {
-                            try {
-                                acousticEchoCanceler = android.media.audiofx.AcousticEchoCanceler.create(sessionId)?.apply {
-                                    enabled = true
-                                }
-                                Log.d(TAG, "🟢 Realtime AcousticEchoCanceler successfully enabled on audioSessionId: $sessionId")
-                            } catch (e: Exception) {
-                                Log.e(TAG, "⚠️ Failed to initialize AcousticEchoCanceler on session $sessionId", e)
-                            }
-                        } else {
-                            Log.w(TAG, "⚠️ AcousticEchoCanceler is not supported on this device's hardware.")
-                        }
-                    } else {
-                        Log.w(TAG, "⚠️ No active audio recording session found for AudioSource.MIC. Cannot apply effects.")
-                    }
-                } catch (ex: Exception) {
-                    Log.e(TAG, "⚠️ Failed to query activeRecordingConfigurations for effects", ex)
-                }
-            }
+            Log.d(TAG, "AUDIO_RECORD_START: ${file.absolutePath}")
             return file
         } catch (e: Exception) {
-            Log.e(TAG, "Error starting recording", e)
+            Log.e(TAG, "AUDIO_RECORD_ERROR: Error starting recording", e)
             currentFile = null
             mediaRecorder = null
             return null
@@ -154,13 +87,15 @@ class AudioRecorder(private val context: Context) {
 
     fun stopRecording(): File? {
         val recorder = mediaRecorder ?: return null
-        releaseEffects()
         return try {
             recorder.stop()
             recorder.release()
             mediaRecorder = null
             val file = currentFile
-            Log.d(TAG, "Audio recording stopped successfully. Path: ${file?.absolutePath}")
+            Log.d(TAG, "AUDIO_RECORD_STOP: Recording stopped successfully. Path: ${file?.absolutePath}")
+            if (file != null && file.exists()) {
+                 Log.d(TAG, "AUDIO_FILE_CREATED: size=${file.length()} bytes")
+            }
             file
         } catch (e: Exception) {
             Log.w(TAG, "Recording stopped too soon or failed: ${e.message}")
@@ -172,7 +107,6 @@ class AudioRecorder(private val context: Context) {
     }
 
     fun cancelRecording() {
-        releaseEffects()
         try {
             mediaRecorder?.stop()
         } catch (e: Exception) {

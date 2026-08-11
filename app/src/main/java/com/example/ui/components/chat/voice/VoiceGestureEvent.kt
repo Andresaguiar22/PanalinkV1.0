@@ -8,5 +8,6 @@ sealed interface VoiceGestureEvent {
     object PauseRecording : VoiceGestureEvent
     object ResumeRecording : VoiceGestureEvent
     object StopAndPreviewRecording : VoiceGestureEvent
+    object SendLockedRecording : VoiceGestureEvent
 }
 
