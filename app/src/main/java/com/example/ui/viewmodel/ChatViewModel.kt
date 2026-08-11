@@ -533,7 +533,8 @@ fun uploadAndSendMedia(
                 typeLabel = typeLabel,
                 content = "[$typeLabel]",
                 replyToId = replyToId,
-                isGhost = _isGhostMode.value
+                isGhost = _isGhostMode.value,
+                receiverId = currentOtherUserId
             )
             
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {

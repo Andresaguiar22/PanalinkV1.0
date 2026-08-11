@@ -295,6 +295,9 @@ interface MessageDao {
     @Query("UPDATE local_messages SET ghostOpenedAt = :openedAt WHERE id = :id")
     suspend fun updateGhostOpenedAt(id: String, openedAt: String)
 
+    @Query("UPDATE local_messages SET receiverId = :receiverId WHERE id = :id")
+    suspend fun updateMessageReceiverId(id: String, receiverId: String)
+
     @Query("SELECT * FROM local_messages WHERE chatId = :chatId ORDER BY createdAt DESC LIMIT 1")
     suspend fun getLastMessageForChat(chatId: String): MessageEntity?
 

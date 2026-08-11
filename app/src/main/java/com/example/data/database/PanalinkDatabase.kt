@@ -31,7 +31,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         PendingSocialActionEntity::class,
         LocalNotificationEntity::class
     ],
-    version = 39,
+    version = 40,
     exportSchema = true
 )
 abstract class PanalinkDatabase : RoomDatabase() {
@@ -535,6 +535,12 @@ abstract class PanalinkDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_39_40 = object : Migration(39, 40) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE local_messages ADD COLUMN receiverId TEXT")
+            }
+        }
+
         fun getDatabase(context: Context): PanalinkDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -547,7 +553,7 @@ abstract class PanalinkDatabase : RoomDatabase() {
                     MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29,
                     MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33,
                     MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36, MIGRATION_36_37,
-                    MIGRATION_37_38, MIGRATION_38_39
+                    MIGRATION_37_38, MIGRATION_38_39, MIGRATION_39_40
                 )
                 .build()
                 INSTANCE = instance

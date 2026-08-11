@@ -15,6 +15,7 @@ data class MessageEntity(
     @PrimaryKey val id: String,
     val chatId: String,
     val senderId: String,
+    val receiverId: String? = null,
     val content: String? = null,
     val createdAt: String,
     val status: String? = "sent", // "sending", "sent", "delivered", "seen", "failed"
@@ -49,6 +50,7 @@ data class MessageEntity(
             id = id,
             chatId = chatId,
             senderId = senderId,
+            receiverId = receiverId,
             content = content ?: "",
             createdAt = createdAt,
             status = status,
@@ -80,6 +82,7 @@ data class MessageEntity(
                 id = msg.id,
                 chatId = msg.chatId,
                 senderId = msg.senderId,
+                receiverId = msg.receiverId,
                 content = msg.content,
                 createdAt = msg.createdAt,
                 status = msg.status,

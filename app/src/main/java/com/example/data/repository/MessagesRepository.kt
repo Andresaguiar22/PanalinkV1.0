@@ -598,7 +598,8 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
         typeLabel: String,
         content: String = "",
         replyToId: String? = null,
-        isGhost: Boolean = false
+        isGhost: Boolean = false,
+        receiverId: String? = null
     ): Result<Message> = withContext(Dispatchers.IO) {
         val currentUid = SupabaseClient.currentUser?.id ?: "me_demo_id"
         val nowStr = SupabaseClient.getNowIsoString()
@@ -640,6 +641,7 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
                 id = tempId,
                 chatId = chatId,
                 senderId = currentUid,
+                receiverId = receiverId,
                 content = formattedContent,
                 createdAt = nowStr,
                 status = "sending",
@@ -775,30 +777,45 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
                 val currentUid = SupabaseClient.currentUser?.id ?: run { allSuccessful = false; return@withContext false }
 
                 // Resolve receiver
-                var receiverUid: String? = null
-                try {
-                    val threadResponse = runCall { auth ->
-                        service.getOneToOneThreads(
-                            apiKey = SupabaseClient.supabaseAnonKey,
-                            authorization = auth,
-                            orFilter = "(id.eq.${entity.chatId})"
-                        )
+                var receiverUid: String? = entity.receiverId
+                if (receiverUid.isNullOrEmpty()) {
+                    try {
+                        val threadResponse = runCall { auth ->
+                            service.getOneToOneThreads(
+                                apiKey = SupabaseClient.supabaseAnonKey,
+                                authorization = auth,
+                                orFilter = "(id.eq.${entity.chatId})"
+                            )
+                        }
+                        if (threadResponse != null && threadResponse.isSuccessful && !threadResponse.body().isNullOrEmpty()) {
+                            val thread = threadResponse.body()!![0]
+                            receiverUid = if (thread.userA == currentUid) thread.userB else thread.userA
+                            
+                            // Save resolved receiverId back to local DB to avoid re-fetching
+                            if (!receiverUid.isNullOrEmpty()) {
+                                messageDao.updateMessageReceiverId(entity.id, receiverUid!!)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error resolving receiver during sync for message ${entity.id}", e)
                     }
-                    if (threadResponse != null && threadResponse.isSuccessful && !threadResponse.body().isNullOrEmpty()) {
-                        val thread = threadResponse.body()!![0]
-                        receiverUid = if (thread.userA == currentUid) thread.userB else thread.userA
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error resolving receiver during sync", e)
+                }
+
+                // VALIDACIÓN OBLIGATORIA (Rule 4)
+                if (receiverUid.isNullOrEmpty() || !isValidUuid(receiverUid)) {
+                    Log.e(TAG, "SYNC_FAILED: receiver_id is missing or invalid for message ${entity.id}. Skipping to prevent RLS/Constraint violation.")
+                    allSuccessful = false
+                    continue
+                }
+                
+                if (receiverUid == currentUid) {
+                    Log.e(TAG, "SYNC_FAILED: receiver_id cannot be the same as sender_id for message ${entity.id}")
+                    allSuccessful = false
+                    continue
                 }
 
                 // Retrieve receiver's E2EE public key
-
-                val receiverPublicKey = if (!receiverUid.isNullOrEmpty()) {
-                    com.example.data.repository.UserKeysRepository.getPublicKeyForUser(receiverUid)
-                } else {
-                    null
-                }
+                val receiverPublicKey = com.example.data.repository.UserKeysRepository.getPublicKeyForUser(receiverUid!!)
 
                 val contentToUpload = if (!receiverPublicKey.isNullOrEmpty() && !entity.content.isNullOrEmpty()) {
                     Log.d(TAG, "Encrypting pending message content using E2EE during sync")
@@ -817,27 +834,25 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
                     else -> entity.messageType?.lowercase() ?: "text"
                 }
 
-                val isDmSync = receiverUid != null && isValidUuid(receiverUid)
                 val msgMap = mutableMapOf<String, Any?>(
-                        "id" to remoteId,
-                        "thread_id" to if (isDmSync) entity.chatId else null,
-                        "chat_id" to if (isDmSync) null else entity.chatId,
-                        "sender_id" to currentUid,
-                        "receiver_id" to receiverUid?.takeIf { isValidUuid(it) },
-                        "reply_to" to entity.replyToMessageId?.takeIf { isValidUuid(it) },
-                        "text_content" to contentToUpload,
-                        "client_message_uuid" to entity.clientMessageUuid,
-                        "created_at" to entity.createdAt,
-                        "media_url" to entity.mediaUrl,
-                        "thumbnail_url" to entity.thumbnailUrl,
-                        "media_mime" to entity.mediaMime,
-                        "message_type" to normalizedMessageType,
-                        "file_size" to entity.mediaSize,
-                        "duration" to entity.mediaDuration,
-                        "width" to entity.mediaWidth,
-                        "height" to entity.mediaHeight,
-                        "music_playlist_id" to entity.musicPlaylistId
-                    )
+                    "id" to remoteId,
+                    "thread_id" to entity.chatId,
+                    "sender_id" to currentUid,
+                    "receiver_id" to receiverUid,
+                    "reply_to" to entity.replyToMessageId?.takeIf { isValidUuid(it) },
+                    "text_content" to contentToUpload,
+                    "client_message_uuid" to entity.clientMessageUuid,
+                    "created_at" to entity.createdAt,
+                    "media_url" to entity.mediaUrl,
+                    "thumbnail_url" to entity.thumbnailUrl,
+                    "media_mime" to entity.mediaMime,
+                    "message_type" to normalizedMessageType,
+                    "file_size" to entity.mediaSize,
+                    "duration" to entity.mediaDuration,
+                    "width" to entity.mediaWidth,
+                    "height" to entity.mediaHeight,
+                    "music_playlist_id" to entity.musicPlaylistId
+                )
                 if (entity.isGhost || entity.content?.startsWith("[Ghost]") == true) {
                     msgMap["is_ghost"] = true
                 }
@@ -1016,9 +1031,9 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
                     
                     val legacyMsgMap = mutableMapOf<String, Any?>(
                         "id" to remoteId,
-                        "thread_id" to if (isDmSync) entity.chatId else null,
-                        "chat_id" to if (isDmSync) null else entity.chatId,
+                        "thread_id" to entity.chatId,
                         "sender_id" to currentUid,
+                        "receiver_id" to receiverUid,
                         "text_content" to contentToUpload,
                         "client_message_uuid" to entity.clientMessageUuid,
                         "created_at" to entity.createdAt,
