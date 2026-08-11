@@ -151,7 +151,6 @@ class ChatViewModel : ViewModel() {
     private var audioRecorder: com.example.util.AudioRecorder? = null
 
 private var chatJob: kotlinx.coroutines.Job? = null
-    private var realtimeJob: kotlinx.coroutines.Job? = null
     private var typingJob: kotlinx.coroutines.Job? = null
 
     fun loadChatHistory(chatId: String, otherUserId: String) {
@@ -274,20 +273,6 @@ private var chatJob: kotlinx.coroutines.Job? = null
             }
         }
         
-        realtimeJob?.cancel()
-        realtimeJob = viewModelScope.launch(Dispatchers.IO) {
-            try {
-                // Let MessagesRepository stream realtime updates into Room
-                messagesRepo.observeMessages(chatId).collect {
-                    // Observer updates DB, and DB updates the Flow
-                }
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                // Normal flow cancellation, ignore
-            } catch (e: Exception) {
-                Log.e("ChatViewModel", "Error in realtime message stream", e)
-            }
-        }
-
         // Fetch remote messages in background to update local DB on opening chat
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -370,8 +355,6 @@ private var chatJob: kotlinx.coroutines.Job? = null
         currentOtherUserId = null
         chatJob?.cancel()
         chatJob = null
-        realtimeJob?.cancel()
-        realtimeJob = null
         typingJob?.cancel()
         typingJob = null
         _typingUsers.value = emptyList()

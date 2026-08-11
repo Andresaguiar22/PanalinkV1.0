@@ -198,17 +198,14 @@ class SocialSyncWorker(
                     Log.d("SocialSyncWorker", "Action ${action.actionType} on ${action.targetId} synced successfully.")
                 } else {
                     anyFailed = true
-                    pendingDao.updateActionStatus(action.localActionId, "failed")
+                    pendingDao.updateActionStatus(action.localActionId, "pending")
                 }
 
-            } catch (e: IOException) {
-                // Network error, keep in pending and retry
-                Log.e("SocialSyncWorker", "Network failure syncing action ${action.localActionId}", e)
-                anyFailed = true
             } catch (e: Exception) {
-                // Non-recoverable error, log and remove to prevent queue blockage
-                Log.e("SocialSyncWorker", "Fatal error syncing action ${action.localActionId}", e)
-                pendingDao.deleteActionById(action.localActionId)
+                // If it's a completely unknown error, keep it as pending and retry.
+                Log.e("SocialSyncWorker", "Error syncing action ${action.localActionId}", e)
+                anyFailed = true
+                pendingDao.updateActionStatus(action.localActionId, "pending")
             }
         }
 

@@ -3,6 +3,7 @@ package com.example.ui.viewmodel
 import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
 import androidx.work.Constraints
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
@@ -31,7 +32,7 @@ class CreatePostViewModel(application: Application) : AndroidViewModel(applicati
     val uiState: StateFlow<CreatePostUiState> = _uiState.asStateFlow()
 
     fun fetchLinkPreview(url: String) {
-        kotlinx.coroutines.CoroutineScope(errorHandler + kotlinx.coroutines.Dispatchers.IO).launch {
+        viewModelScope.launch(errorHandler + kotlinx.coroutines.Dispatchers.IO) {
             val preview = youtubeRepo.fetchPreview(url)
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
                 _uiState.update { it.copy(preview = preview) }
@@ -118,7 +119,7 @@ class CreatePostViewModel(application: Application) : AndroidViewModel(applicati
         val db = com.example.data.database.PanalinkDatabase.getDatabase(getApplication())
         val pendingPostDao = db.pendingPostDao()
 
-        kotlinx.coroutines.CoroutineScope(errorHandler + kotlinx.coroutines.Dispatchers.IO).launch {
+        viewModelScope.launch(errorHandler + kotlinx.coroutines.Dispatchers.IO) {
             val pendingPostId = java.util.UUID.randomUUID().toString()
             val serverPostId = java.util.UUID.randomUUID().toString()
             val mediaUrisJson = org.json.JSONArray(state.selectedMediaUris.map { it.toString() }).toString()

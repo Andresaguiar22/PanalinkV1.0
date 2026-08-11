@@ -16,6 +16,7 @@ import java.util.UUID
 
 class SocialRepositoryImpl : SocialRepository {
     private val TAG = "SocialRepositoryImpl"
+    private val repoScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
     
     override suspend fun toggleLike(stateId: String, isReel: Boolean): Unit = withContext(Dispatchers.IO) {
         val currentUid = SupabaseClient.currentUser?.id ?: return@withContext
@@ -102,7 +103,7 @@ class SocialRepositoryImpl : SocialRepository {
         val commentDao = database.commentDao()
         
         // Trigger background sync
-        kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
+        repoScope.launch {
             syncComments(stateId, isReel)
         }
         

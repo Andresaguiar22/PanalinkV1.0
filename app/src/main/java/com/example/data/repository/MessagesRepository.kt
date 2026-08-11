@@ -1619,36 +1619,7 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
     }
 
     // Stream new messages from Supabase Realtime channel and insert into Room (ciphertext) and emit
-    fun observeMessages(chatId: String): Flow<Message> {
-        return SupabaseClient.realtimeMessages
-            .filter { it.chatId == chatId }
-            .filter { msg ->
-                val effectiveClearedAt = getEffectiveClearedAt(chatId, null)
-                com.example.util.MessageFilter.shouldKeepMessage(
-                    messageId = msg.id,
-                    messageClientUuid = msg.clientMessageUuid,
-                    messageCreatedAt = msg.createdAt,
-                    lastClearedAt = effectiveClearedAt,
-                    deletedMessageIds = getUserDeletedMessageIds()
-                )
-            }
-            .map { it: Message -> com.example.util.CryptoManager.decryptMessageIfNeeded(it) }
-            .onEach { decryptedMsg ->
-                if (userDeletedMessageIds.contains(decryptedMsg.id) || userDeletedMessageIds.contains(decryptedMsg.clientMessageUuid)) {
-                    return@onEach
-                }
-                try {
-                    val finalMsg = if (decryptedMsg.status == "deleted" && !com.example.data.repository.PrivacyManager.isPremiumFeatureActive("anti_message_delete")) {
-                        decryptedMsg.copy(content = "🚫 Este mensaje fue eliminado", mediaUrl = null, thumbnailUrl = null)
-                    } else {
-                        decryptedMsg
-                    }
-                    messageDao.mergeAndSaveMessage(MessageEntity.fromMessage(finalMsg))
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error inserting decrypted realtime message into Room", e)
-                }
-            }
-    }
+
 
     suspend fun markThreadDelivered(chatId: String): Result<Boolean> = withContext(Dispatchers.IO) {
         if (com.example.data.repository.PrivacyManager.isPremiumFeatureActive("hide_double_ticks_received")) {
@@ -2067,7 +2038,7 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
             }
         }
 
-        CoroutineScope(Dispatchers.Default).launch {
+        repositoryScope.launch {
             SupabaseClient.emitRealtimeTyping(SupabaseClient.TypingStatus(chatId, otherMemberId, true))
             delay(2000)
             SupabaseClient.emitRealtimeTyping(SupabaseClient.TypingStatus(chatId, otherMemberId, false))
@@ -2089,7 +2060,7 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
     }
 
     private fun triggerSendPushNotification(chatId: String, recipientUserId: String, title: String, bodyText: String) {
-        CoroutineScope(Dispatchers.IO).launch {
+        repositoryScope.launch {
             if (!SupabaseClient.isConfigured) {
                 Log.d(TAG, "[Demo Mode] triggerSendPushNotification to $recipientUserId, title=$title, body=$bodyText")
                 return@launch

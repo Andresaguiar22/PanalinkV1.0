@@ -47,7 +47,7 @@ data class UserPresenceInfo(
 )
 
 object PresenceRepository {
-    private val scope = CoroutineScope(Dispatchers.IO)
+    private val scope = CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
     private var heartbeatJob: Job? = null
 
     // Deduplication cache to prevent duplicate processing from Broadcast and postgres_changes

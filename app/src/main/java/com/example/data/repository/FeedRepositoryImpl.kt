@@ -31,6 +31,7 @@ interface FeedRepository {
 class FeedRepositoryImpl : FeedRepository {
 
     private val TAG = "FeedRepository"
+    private val repoScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO + kotlinx.coroutines.SupervisorJob())
 
     private suspend fun <R> runCall(call: suspend (String) -> Response<R>): Response<R>? {
         return com.example.util.Resilience.retry(
@@ -72,19 +73,21 @@ class FeedRepositoryImpl : FeedRepository {
     override fun getLocalPostsFlow(limit: Int): Flow<List<PostDto>> {
         val database = com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance)
         val postDao = database.postDao()
+        val publicProfileDao = database.publicProfileDao()
         val publicProfileRepo = PublicProfileRepository.getInstance()
         return postDao.getPostsFlow(limit).map { entities ->
             val userIds = entities.map { it.authorId }.distinct().filter { it.isNotBlank() }
-            val profilesMap = if (userIds.isNotEmpty()) {
-                val publicResult = publicProfileRepo.getPublicProfiles(userIds)
-                if (publicResult is PublicProfileFetchResult.Success) {
-                    publicResult.data
-                } else {
-                    emptyMap()
+            
+            val cachedEntities = if (userIds.isNotEmpty()) publicProfileDao.getByIds(userIds) else emptyList()
+            val profilesMap = cachedEntities.associate { it.id to com.example.data.mapper.PublicProfileMapper.entityToModel(it) }
+            
+            val missingIds = userIds.filter { !profilesMap.containsKey(it) }
+            if (missingIds.isNotEmpty()) {
+                repoScope.launch {
+                    publicProfileRepo.getPublicProfiles(missingIds)
                 }
-            } else {
-                emptyMap()
             }
+            
             entities.map { entity ->
                 val dto = entity.toPostDto()
                 val pub = profilesMap[entity.authorId]

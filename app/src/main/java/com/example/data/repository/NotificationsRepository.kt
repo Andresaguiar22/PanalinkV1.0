@@ -8,6 +8,8 @@ import com.example.data.supabase.SupabaseClient
 import com.example.data.supabase.SessionManager
 import com.example.data.database.LocalNotificationEntity
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
@@ -15,6 +17,7 @@ import kotlinx.coroutines.launch
 
 class NotificationsRepository {
     private val TAG = "NotificationsRepository"
+    private val repoScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val dao = PanalinkDatabase.getDatabase(PanaApplication.instance).localNotificationDao()
 
     val notifications: Flow<List<Notification>> = dao.getNotificationsFlow().map { list ->
@@ -151,7 +154,7 @@ class NotificationsRepository {
     }
 
     fun addLocalNotification(notification: Notification) {
-        kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
+        repoScope.launch {
             dao.insert(LocalNotificationEntity.fromDomain(notification))
         }
     }

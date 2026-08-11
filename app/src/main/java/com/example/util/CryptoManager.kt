@@ -329,20 +329,6 @@ object CryptoManager {
                 }
                 if (otherPubKey.isNullOrEmpty()) {
                     try {
-                        val db = com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance)
-                        val profile = db.profileDao().getProfileById(otherUserId)
-                        if (profile != null && !profile.publicKey.isNullOrBlank()) {
-                            val cleanKey = cleanPublicKey(profile.publicKey)
-                            if (cleanKey.isNotEmpty()) {
-                                publicKeyCache[otherUserId] = cleanKey
-                                otherPubKey = cleanKey
-                                break
-                            }
-                        }
-                    } catch (e: Throwable) { }
-                }
-                if (otherPubKey.isNullOrEmpty()) {
-                    try {
                         otherPubKey = com.example.data.repository.UserKeysRepository.getPublicKeyForUser(otherUserId)
                         if (!otherPubKey.isNullOrEmpty()) {
                             val cleanKey = cleanPublicKey(otherPubKey)
@@ -354,26 +340,7 @@ object CryptoManager {
                         }
                     } catch (e: Throwable) {}
                 }
-                if (otherPubKey.isNullOrEmpty()) {
-                    try {
-                        val profilesRepo = com.example.data.repository.ProfilesRepository()
-                        val result = profilesRepo.getProfile(otherUserId)
-                        val profile = result.getOrNull()
-                        if (profile != null) {
-                            val db = com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance)
-                            db.profileDao().insertProfile(com.example.data.database.ProfileEntity.fromProfile(profile))
-                            val key = profile.activePublicKey ?: profile.publicKey
-                            if (!key.isNullOrBlank()) {
-                                val cleanKey = cleanPublicKey(key)
-                                if (cleanKey.isNotEmpty()) {
-                                    publicKeyCache[otherUserId] = cleanKey
-                                    otherPubKey = cleanKey
-                                    break
-                                }
-                            }
-                        }
-                    } catch (e: Throwable) { }
-                }
+
                 retries--
             }
  
