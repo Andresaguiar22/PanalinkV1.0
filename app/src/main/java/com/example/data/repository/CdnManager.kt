@@ -181,21 +181,24 @@ object CdnManager {
             return trimmed
         }
 
-        val baseSupabaseStorage = "https://tivqjfgjdxgzicrridaz.supabase.co/storage/v1/object/public"
+        val baseSupabaseUrl = SupabaseClient.supabaseUrl.trim().removeSuffix("/")
+        val baseSupabaseStorage = "$baseSupabaseUrl/storage/v1/object/public"
+
+        val supabaseHost = try { URI(SupabaseClient.supabaseUrl).host ?: "supabase.co" } catch (e: Exception) { "supabase.co" }
 
         val absoluteUrl = when {
             trimmed.startsWith("http://") || trimmed.startsWith("https://") -> {
-                if (trimmed.contains("supabase.co") && trimmed.startsWith("http://")) {
+                if (trimmed.contains(supabaseHost) && trimmed.startsWith("http://")) {
                     trimmed.replace("http://", "https://")
                 } else {
                     trimmed
                 }
             }
             trimmed.startsWith("/storage/v1/object/public/") -> {
-                "https://tivqjfgjdxgzicrridaz.supabase.co$trimmed"
+                "$baseSupabaseUrl$trimmed"
             }
             trimmed.startsWith("storage/v1/object/public/") -> {
-                "https://tivqjfgjdxgzicrridaz.supabase.co/$trimmed"
+                "$baseSupabaseUrl/$trimmed"
             }
             trimmed.startsWith("avatars/") || trimmed.startsWith("/avatars/") -> {
                 val cleanPath = trimmed.removePrefix("/")
@@ -234,7 +237,7 @@ object CdnManager {
                            originalUrl.contains("/images/") ||
                            originalUrl.contains("/avatars/") ||
                            originalUrl.contains("/audios/")) &&
-                           !originalUrl.contains("supabase.co")
+                           !originalUrl.contains(try { URI(SupabaseClient.supabaseUrl).host ?: "supabase.co" } catch (e: Exception) { "supabase.co" })
 
         if (isCdnRelated) {
             val activeCdnBase = (cachedCdnUrl ?: "").trim().removeSuffix("/")
@@ -321,7 +324,7 @@ object CdnManager {
                            originalUrl.contains("/images/") ||
                            originalUrl.contains("/avatars/") ||
                            originalUrl.contains("/audios/")) &&
-                           !originalUrl.contains("supabase.co")
+                           !originalUrl.contains(try { URI(SupabaseClient.supabaseUrl).host ?: "supabase.co" } catch (e: Exception) { "supabase.co" })
 
         if (isCdnRelated) {
             val path = when {
