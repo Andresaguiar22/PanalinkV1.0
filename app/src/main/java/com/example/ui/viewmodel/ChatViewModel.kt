@@ -501,7 +501,6 @@ private var chatJob: kotlinx.coroutines.Job? = null
                     if (result is com.example.ui.components.chat.voice.VoiceRecordingResult.Success) {
                         previewFile = result.file
                         previewDurationSeconds = result.durationSeconds
-                        _previewWaveform.value = result.waveform
                         _recordState.value = RecordState.PREVIEWING
                         viewModelScope.launch {
                             _previewWaveform.value = com.example.ui.components.chat.voice.AudioWaveformAnalyzer.analyze(result.file)
@@ -524,7 +523,7 @@ private var chatJob: kotlinx.coroutines.Job? = null
                     if (result is com.example.ui.components.chat.voice.VoiceRecordingResult.Success) {
                         previewFile = result.file
                         previewDurationSeconds = result.durationSeconds
-                        _previewWaveform.value = result.waveform
+                        _previewWaveform.value = emptyList()
                         sendPreviewRecording(context, replyToId, onProgress)
                     } else {
                         _recordState.value = RecordState.IDLE
@@ -538,7 +537,6 @@ private var chatJob: kotlinx.coroutines.Job? = null
                     if (result is com.example.ui.components.chat.voice.VoiceRecordingResult.Success) {
                         previewFile = result.file
                         previewDurationSeconds = result.durationSeconds
-                        _previewWaveform.value = result.waveform
                         _recordState.value = RecordState.PREVIEWING
                         viewModelScope.launch {
                             _previewWaveform.value = com.example.ui.components.chat.voice.AudioWaveformAnalyzer.analyze(result.file)
