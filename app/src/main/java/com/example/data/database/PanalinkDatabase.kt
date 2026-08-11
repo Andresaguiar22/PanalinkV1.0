@@ -31,7 +31,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         PendingSocialActionEntity::class,
         LocalNotificationEntity::class
     ],
-    version = 40,
+    version = 41,
     exportSchema = true
 )
 abstract class PanalinkDatabase : RoomDatabase() {
@@ -541,6 +541,14 @@ abstract class PanalinkDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_40_41 = object : Migration(40, 41) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("UPDATE local_messages SET clientMessageUuid = NULL WHERE clientMessageUuid = ''")
+                db.execSQL("DROP INDEX IF EXISTS index_local_messages_clientMessageUuid")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_local_messages_clientMessageUuid ON local_messages (`clientMessageUuid`)")
+            }
+        }
+
         fun getDatabase(context: Context): PanalinkDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -553,7 +561,7 @@ abstract class PanalinkDatabase : RoomDatabase() {
                     MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29,
                     MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33,
                     MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36, MIGRATION_36_37,
-                    MIGRATION_37_38, MIGRATION_38_39, MIGRATION_39_40
+                    MIGRATION_37_38, MIGRATION_38_39, MIGRATION_39_40, MIGRATION_40_41
                 )
                 .build()
                 INSTANCE = instance

@@ -8,7 +8,7 @@ import com.example.data.model.Message
     tableName = "local_messages",
     indices = [
         androidx.room.Index(value = ["chatId", "createdAt"]),
-        androidx.room.Index(value = ["clientMessageUuid"])
+        androidx.room.Index(value = ["clientMessageUuid"], unique = true)
     ]
 )
 data class MessageEntity(
@@ -20,7 +20,7 @@ data class MessageEntity(
     val createdAt: String,
     val status: String? = "sent", // "sending", "sent", "delivered", "seen", "failed"
     val replyToMessageId: String? = null,
-    val clientMessageUuid: String = "",
+    val clientMessageUuid: String? = null,
     val reactionsJson: String = "{}", // JSON string mapping userId -> emoji reaction
     val deliveredAt: String? = null,
     val seenAt: String? = null,
@@ -55,7 +55,7 @@ data class MessageEntity(
             createdAt = createdAt,
             status = status,
             replyToMessageId = replyToMessageId,
-            clientMessageUuid = clientMessageUuid,
+            clientMessageUuid = clientMessageUuid ?: "",
             deliveredAt = deliveredAt,
             seenAt = seenAt,
             thumbnailUrl = thumbnailUrl ?: localThumbnailUri,
@@ -87,7 +87,7 @@ data class MessageEntity(
                 createdAt = msg.createdAt,
                 status = msg.status,
                 replyToMessageId = msg.replyToMessageId,
-                clientMessageUuid = msg.clientMessageUuid,
+                clientMessageUuid = msg.clientMessageUuid.takeIf { it.isNotBlank() },
                 reactionsJson = reactions,
                 deliveredAt = msg.deliveredAt,
                 seenAt = msg.seenAt,

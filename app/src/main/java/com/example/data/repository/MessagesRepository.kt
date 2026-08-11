@@ -94,89 +94,8 @@ class MessagesRepository private constructor() {
         val currentUid = try { SupabaseClient.currentUser?.id } catch (e: Throwable) { null }
         val db = PanalinkDatabase.getDatabase(PanaApplication.instance)
         val chatEntity = try { db.chatDao().getChatById(chatId) } catch (e: Exception) { null }
-        
-        var kind = when (chatEntity?.type?.lowercase()) {
-            "dm", "direct", "one_to_one" -> ChatKind.DM
-            "channel", "group" -> ChatKind.CHANNEL
-            "legacy" -> ChatKind.LEGACY
-            else -> ChatKind.UNKNOWN
-        }
-        
-        var receiverId = receiverHint?.takeIf { isValidUuid(it) } ?: chatEntity?.otherUserId?.takeIf { isValidUuid(it) }
-        
-        if (kind == ChatKind.DM && !receiverId.isNullOrEmpty() && receiverId != currentUid) {
-            return@withContext CanonicalChatIdentity(
-                kind = ChatKind.DM,
-                chatId = chatId,
-                threadId = chatId,
-                receiverId = receiverId
-            )
-        }
 
-        // Attempt remote resolution via one_to_one_threads
-        val service = SupabaseClient.apiService
-        if (service != null && !currentUid.isNullOrEmpty() && SupabaseClient.isConfigured) {
-            try {
-                val threadResponse = runCall { auth ->
-                    service.getOneToOneThreads(
-                        apiKey = SupabaseClient.supabaseAnonKey,
-                        authorization = auth,
-                        orFilter = "(id.eq.$chatId)"
-                    )
-                }
-                if (threadResponse != null && threadResponse.isSuccessful) {
-                    val threads = threadResponse.body()
-                    if (!threads.isNullOrEmpty()) {
-                        val thread = threads[0]
-                        val derivedReceiver = if (thread.userA == currentUid) thread.userB else thread.userA
-                        if (!derivedReceiver.isNullOrEmpty() && derivedReceiver != currentUid) {
-                            try {
-                                if (chatEntity != null) {
-                                    db.chatDao().insertChat(chatEntity.copy(type = "dm", otherUserId = derivedReceiver))
-                                } else {
-                                    db.chatDao().insertChat(
-                                        com.example.data.database.ChatEntity(
-                                            id = chatId,
-                                            createdAt = SupabaseClient.getNowIsoString(),
-                                            type = "dm",
-                                            name = "Chat",
-                                            otherUserId = derivedReceiver
-                                        )
-                                    )
-                                }
-                            } catch (_: Exception) {}
-                            
-                            return@withContext CanonicalChatIdentity(
-                                kind = ChatKind.DM,
-                                chatId = chatId,
-                                threadId = thread.id,
-                                receiverId = derivedReceiver
-                            )
-                        }
-                    } else {
-                        // Confirmed non-existent in one_to_one_threads
-                        if (chatEntity?.type == "channel" || chatEntity?.type == "group") {
-                            return@withContext CanonicalChatIdentity(kind = ChatKind.CHANNEL, chatId = chatId)
-                        }
-                        if (chatEntity?.type == "legacy") {
-                            return@withContext CanonicalChatIdentity(kind = ChatKind.LEGACY, chatId = chatId)
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error resolving canonical identity for $chatId", e)
-            }
-        }
-
-        if (!receiverId.isNullOrEmpty() && receiverId != currentUid) {
-            return@withContext CanonicalChatIdentity(
-                kind = ChatKind.DM,
-                chatId = chatId,
-                threadId = chatId,
-                receiverId = receiverId
-            )
-        }
-        
+        // Local check for Channel or Legacy
         if (chatEntity?.type == "channel" || chatEntity?.type == "group") {
             return@withContext CanonicalChatIdentity(kind = ChatKind.CHANNEL, chatId = chatId)
         }
@@ -184,6 +103,71 @@ class MessagesRepository private constructor() {
             return@withContext CanonicalChatIdentity(kind = ChatKind.LEGACY, chatId = chatId)
         }
 
+        val targetReceiverId = receiverHint?.takeIf { isValidUuid(it) }
+            ?: chatEntity?.otherUserId?.takeIf { isValidUuid(it) }
+            ?: if (isValidUuid(chatId) && chatId != currentUid) chatId else null
+
+        // Caso A: Room tiene DM + threadId canónico válido previamente verificado
+        if (chatEntity?.type == "dm" && !chatEntity.otherUserId.isNullOrEmpty() && chatEntity.id != chatEntity.otherUserId && isValidUuid(chatEntity.id)) {
+            val receiverId = targetReceiverId ?: chatEntity.otherUserId
+            return@withContext CanonicalChatIdentity(
+                kind = ChatKind.DM,
+                chatId = chatId,
+                threadId = chatEntity.id,
+                receiverId = receiverId
+            )
+        }
+
+        // Caso B y C: Consultar one_to_one_threads en Supabase para obtener el thread.id canónico
+        val service = SupabaseClient.apiService
+        if (service != null && !currentUid.isNullOrEmpty() && SupabaseClient.isConfigured) {
+            try {
+                val orFilter = if (!targetReceiverId.isNullOrEmpty()) {
+                    "(id.eq.$chatId,and(user_a.eq.$currentUid,user_b.eq.$targetReceiverId),and(user_a.eq.$targetReceiverId,user_b.eq.$currentUid))"
+                } else {
+                    "(id.eq.$chatId)"
+                }
+
+                val threadResponse = runCall { auth ->
+                    service.getOneToOneThreads(
+                        apiKey = SupabaseClient.supabaseAnonKey,
+                        authorization = auth,
+                        orFilter = orFilter
+                    )
+                }
+
+                if (threadResponse != null && threadResponse.isSuccessful) {
+                    val threads = threadResponse.body()
+                    if (!threads.isNullOrEmpty()) {
+                        val thread = threads[0]
+                        val derivedReceiver = if (thread.userA == currentUid) thread.userB else thread.userA
+
+                        try {
+                            val newChatEntity = com.example.data.database.ChatEntity(
+                                id = thread.id,
+                                createdAt = thread.createdAt ?: SupabaseClient.getNowIsoString(),
+                                type = "dm",
+                                name = chatEntity?.name ?: "Chat",
+                                otherUserId = derivedReceiver
+                            )
+                            db.chatDao().insertChat(newChatEntity)
+                        } catch (_: Exception) {}
+
+                        // Caso C: Supabase confirma el thread -> Usar thread.id
+                        return@withContext CanonicalChatIdentity(
+                            kind = ChatKind.DM,
+                            chatId = chatId,
+                            threadId = thread.id,
+                            receiverId = derivedReceiver
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error resolving canonical identity for $chatId", e)
+            }
+        }
+
+        // Caso D: No se puede resolver ni en Room ni en Supabase -> Devolver UNKNOWN y NUNCA inventar el threadId
         return@withContext CanonicalChatIdentity(kind = ChatKind.UNKNOWN, chatId = chatId)
     }
 
@@ -338,13 +322,13 @@ class MessagesRepository private constructor() {
             val identity = resolveChatIdentity(chatId)
             val isDm = identity.kind == ChatKind.DM
 
-            val response = if (isDm) {
+            val response = if (isDm && !identity.threadId.isNullOrEmpty()) {
                 runCall { authHeader ->
-                    Log.d(TAG, "getMessagesForChatPaged: Querying thread_messages for DM $chatId with createdAtFilter=$createdAtFilterStr")
+                    Log.d(TAG, "getMessagesForChatPaged: Querying thread_messages for DM $chatId (thread ${identity.threadId}) with createdAtFilter=$createdAtFilterStr")
                     service.getThreadMessages(
                         apiKey = SupabaseClient.supabaseAnonKey,
                         authorization = authHeader,
-                        threadIdFilter = "eq.${identity.threadId ?: chatId}",
+                        threadIdFilter = "eq.${identity.threadId}",
                         createdAtFilter = createdAtFilterStr,
                         order = "created_at.desc",
                         limit = limit
@@ -545,13 +529,13 @@ class MessagesRepository private constructor() {
             val identity = resolveChatIdentity(chatId)
             val isDm = identity.kind == ChatKind.DM
 
-            if (isDm) {
+            if (isDm && !identity.threadId.isNullOrEmpty()) {
                 val response = runCall { authHeader ->
-                    Log.d(TAG, "syncUpdatedMessages: Querying thread_messages for DM $chatId with updatedAtFilter=gt.$timestamp")
+                    Log.d(TAG, "syncUpdatedMessages: Querying thread_messages for DM $chatId (thread ${identity.threadId}) with updatedAtFilter=gt.$timestamp")
                     service.getIncrementalThreadMessages(
                         apiKey = SupabaseClient.supabaseAnonKey,
                         authorization = authHeader,
-                        threadIdFilter = "eq.${identity.threadId ?: chatId}",
+                        threadIdFilter = "eq.${identity.threadId}",
                         updatedAtFilter = "gt.$timestamp"
                     )
                 }
@@ -969,7 +953,12 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
                 )
 
                 if (isDmSync) {
-                    msgMap["thread_id"] = entity.chatId
+                    if (identity.threadId.isNullOrEmpty()) {
+                        Log.e(TAG, "SYNC_FAILED: Cannot sync DM message ${entity.id} because threadId is missing in identity. Staying pending.")
+                        allSuccessful = false
+                        continue
+                    }
+                    msgMap["thread_id"] = identity.threadId
                     msgMap["receiver_id"] = receiverUid
                 } else {
                     msgMap["chat_id"] = entity.chatId
@@ -998,7 +987,7 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
                             val mappedMsg = threadMsg.toMessage()
                             val finalMsg = com.example.util.CryptoManager.decryptMessageIfNeeded(mappedMsg).copy(
                                 status = "sent",
-                                clientMessageUuid = entity.clientMessageUuid
+                                clientMessageUuid = entity.clientMessageUuid ?: ""
                             )
                             val effectiveClearedAt = getEffectiveClearedAt(finalMsg.chatId, null)
                             val shouldKeep = com.example.util.MessageFilter.shouldKeepMessage(
@@ -1086,7 +1075,7 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
                             val mappedMsg = threadMsg.toMessage()
                             val finalMsg = com.example.util.CryptoManager.decryptMessageIfNeeded(mappedMsg).copy(
                                 status = "sent",
-                                clientMessageUuid = entity.clientMessageUuid
+                                clientMessageUuid = entity.clientMessageUuid ?: ""
                             )
                             val effectiveClearedAt = getEffectiveClearedAt(finalMsg.chatId, null)
                             val shouldKeep = com.example.util.MessageFilter.shouldKeepMessage(
@@ -1209,7 +1198,7 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
                         val finalMsgRaw = serverMsg
                         val finalMsg = com.example.util.CryptoManager.decryptMessageIfNeeded(finalMsgRaw).copy(
                             status = "sent",
-                            clientMessageUuid = entity.clientMessageUuid
+                            clientMessageUuid = entity.clientMessageUuid ?: ""
                         )
                         val effectiveClearedAt = getEffectiveClearedAt(finalMsg.chatId, null)
                         val shouldKeep = com.example.util.MessageFilter.shouldKeepMessage(
@@ -1592,8 +1581,8 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
             var finalReceiverUid = identity.receiverId ?: receiverUid
             val isDm = identity.kind == ChatKind.DM
 
-            if (identity.kind == ChatKind.UNKNOWN) {
-                Log.w(TAG, "sendMessage: Chat $chatId identity UNKNOWN. Keeping message local and scheduling sync.")
+            if (identity.kind == ChatKind.UNKNOWN || (isDm && identity.threadId.isNullOrEmpty())) {
+                Log.w(TAG, "sendMessage: Chat $chatId identity UNKNOWN or missing threadId. Keeping message local and scheduling sync.")
                 scheduleSync()
                 return@withContext Result.success(message)
             }
@@ -1660,7 +1649,7 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
 
             val msgMap = mutableMapOf<String, Any?>(
                 "id" to remoteId,
-                "thread_id" to if (isDm) (identity.threadId ?: chatId) else null,
+                "thread_id" to if (isDm) identity.threadId else null,
                 "chat_id" to if (isDm) null else chatId,
                 "sender_id" to currentUid,
                 "receiver_id" to if (isDm) finalReceiverUid?.takeIf { isValidUuid(it) } else null,
@@ -1902,11 +1891,13 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
         if (!SupabaseClient.isConfigured) return@withContext Result.success(true)
         try {
             val service = SupabaseClient.apiService ?: return@withContext Result.success(false)
+            val identity = resolveChatIdentity(chatId)
+            val targetThreadId = identity.threadId ?: chatId
             val response = runCall { auth ->
                 service.markThreadDelivered(
                     apiKey = SupabaseClient.supabaseAnonKey,
                     authorization = auth,
-                    params = mapOf("p_thread_id" to chatId)
+                    params = mapOf("p_thread_id" to targetThreadId)
                 )
             }
             if (response != null && response.isSuccessful) {
@@ -1937,11 +1928,13 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
         if (!SupabaseClient.isConfigured) return@withContext Result.success(true)
         try {
             val service = SupabaseClient.apiService ?: return@withContext Result.success(false)
+            val identity = resolveChatIdentity(chatId)
+            val targetThreadId = identity.threadId ?: chatId
             val response = runCall { auth ->
                 service.markThreadRead(
                     apiKey = SupabaseClient.supabaseAnonKey,
                     authorization = auth,
-                    params = mapOf("p_thread_id" to chatId)
+                    params = mapOf("p_thread_id" to targetThreadId)
                 )
             }
 
