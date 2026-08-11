@@ -16,6 +16,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.AccessTime
+import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -23,17 +24,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-
 import androidx.compose.material.icons.filled.Error
+import com.example.util.DeliveryState
 
-/**
- * MessageStatusIndicator
- * Premium indicator for message timestamp, edit status, star/pin badges, and status ticks with micro-animations.
- */
 @Composable
 fun MessageStatusIndicator(
     formattedTime: String,
-    status: String?,
+    deliveryState: DeliveryState,
     isMe: Boolean,
     isEdited: Boolean = false,
     isFavorited: Boolean = false,
@@ -70,17 +67,18 @@ fun MessageStatusIndicator(
             fontSize = 11.sp,
             fontWeight = FontWeight.Normal
         )
+
         if (isMe) {
             Spacer(modifier = Modifier.width(4.dp))
             AnimatedContent(
-                targetState = status,
+                targetState = deliveryState,
                 transitionSpec = {
                     (scaleIn(animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMediumLow)) + fadeIn()) togetherWith fadeOut()
                 },
                 label = "statusTickAnimation"
             ) { targetStatus ->
                 when (targetStatus) {
-                    "sending", "pending_media" -> {
+                    DeliveryState.SENDING -> {
                         androidx.compose.material3.Icon(
                             imageVector = Icons.Filled.AccessTime,
                             contentDescription = "Enviando",
@@ -88,7 +86,17 @@ fun MessageStatusIndicator(
                             modifier = Modifier.size(13.dp)
                         )
                     }
-                    "failed" -> {
+                    DeliveryState.OFFLINE_PENDING -> {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            androidx.compose.material3.Icon(
+                                imageVector = Icons.Filled.WarningAmber,
+                                contentDescription = "Pendiente (Sin conexión)",
+                                tint = Color(0xFFFBC02D),
+                                modifier = Modifier.size(13.dp)
+                            )
+                        }
+                    }
+                    DeliveryState.FAILED -> {
                         androidx.compose.material3.Icon(
                             imageVector = Icons.Filled.Error,
                             contentDescription = "Error",
@@ -96,7 +104,7 @@ fun MessageStatusIndicator(
                             modifier = Modifier.size(14.dp)
                         )
                     }
-                    "sent" -> {
+                    DeliveryState.SENT -> {
                         androidx.compose.material3.Icon(
                             imageVector = Icons.Filled.Done,
                             contentDescription = "Enviado",
@@ -104,7 +112,7 @@ fun MessageStatusIndicator(
                             modifier = Modifier.size(15.dp)
                         )
                     }
-                    "delivered" -> {
+                    DeliveryState.DELIVERED -> {
                         androidx.compose.material3.Icon(
                             imageVector = Icons.Filled.DoneAll,
                             contentDescription = "Entregado",
@@ -112,7 +120,7 @@ fun MessageStatusIndicator(
                             modifier = Modifier.size(15.dp)
                         )
                     }
-                    "seen", "read" -> {
+                    DeliveryState.READ -> {
                         androidx.compose.material3.Icon(
                             imageVector = Icons.Filled.DoneAll,
                             contentDescription = "Leído",
@@ -121,11 +129,10 @@ fun MessageStatusIndicator(
                         )
                     }
                     else -> {
-                        // For null, unknown, unexpected states: DO NOT show a false checkmark!
+                        // UNKNOWN -> Do not show tick
                     }
                 }
             }
         }
     }
 }
-

@@ -98,6 +98,7 @@ fun MessageBubbleEngine(
     message: Message,
     isMe: Boolean,
     groupPosition: MessageGroupPosition,
+    deliveryState: com.example.util.DeliveryState = com.example.util.DeliveryState.UNKNOWN,
     myAvatarUrl: String?,
     otherAvatarUrl: String?,
     textSizeSp: Float = 15f,
@@ -538,7 +539,7 @@ fun MessageBubbleEngine(
                                     ) {
                                         MessageStatusIndicator(
                                             formattedTime = formattedTime,
-                                            status = message.status,
+                                            deliveryState = deliveryState,
                                             isMe = isMe,
                                             isEdited = isEdited,
                                             isFavorited = isFavorited,
@@ -555,7 +556,7 @@ fun MessageBubbleEngine(
                             )
                             MessageStatusIndicator(
                                 formattedTime = formattedTime,
-                                status = message.status,
+                                deliveryState = deliveryState,
                                 isMe = isMe,
                                 isEdited = isEdited,
                                 isFavorited = isFavorited,
@@ -569,7 +570,7 @@ fun MessageBubbleEngine(
                             val statusIndicatorComposable: @Composable () -> Unit = {
                                 MessageStatusIndicator(
                                     formattedTime = formattedTime,
-                                    status = message.status,
+                                    deliveryState = deliveryState,
                                     isMe = isMe,
                                     isEdited = isEdited,
                                     isFavorited = isFavorited,
@@ -631,7 +632,7 @@ fun MessageBubbleEngine(
                         Spacer(modifier = Modifier.height(4.dp))
                         MessageStatusIndicator(
                             formattedTime = formattedTime,
-                            status = message.status,
+                            deliveryState = deliveryState,
                             isMe = isMe,
                             isEdited = isEdited,
                             isFavorited = isFavorited,

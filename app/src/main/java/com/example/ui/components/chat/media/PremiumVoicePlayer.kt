@@ -77,7 +77,7 @@ fun PremiumVoicePlayer(
         remember { mutableStateOf(1.0f) }
     }
 
-    val isSending = messageStatus == "sending"
+    val isSending = messageStatus == "sending" || messageStatus == "pending" || messageStatus == "pending_media"
     val isFailed = messageStatus == "failed"
     val bubbleBgColor = if (isSender) Color(0xFFE7FFDB) else Color(0xFFFFFFFF)
     val playedColor = if (isSender) Color(0xFF1EBE71) else Color(0xFF00A3DA)

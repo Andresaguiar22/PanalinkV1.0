@@ -25,6 +25,7 @@ fun MediaPreviewEngine(
     val mediaType = message.messageType?.lowercase() ?: "text"
 
     val caption = rememberCaptionText(message.textContent)
+    val isUploading = message.status == "sending" || message.status == "pending" || message.status == "pending_media"
 
     val isImage = mediaType == "image" || mediaType == "sticker" || mediaType == "gif" || mediaType.startsWith("image/")
     val isVideo = mediaType == "video" || mediaType.startsWith("video/")
@@ -40,6 +41,7 @@ fun MediaPreviewEngine(
                 thumbnailUrl = thumbUrl.ifEmpty { urls.firstOrNull() },
                 captionText = caption,
                 bubbleColor = bubbleColor,
+                isUploading = isUploading,
                 onMediaClick = { _, selectedUrl -> onImageClick(selectedUrl) },
                 modifier = modifier
             )
@@ -52,6 +54,7 @@ fun MediaPreviewEngine(
                 durationLabel = if (durationLabel != "0:00") durationLabel else formatVideoDuration(message.duration),
                 captionText = caption,
                 bubbleColor = bubbleColor,
+                isUploading = isUploading,
                 onMediaClick = { _, url -> onImageClick(url) },
                 modifier = modifier
             )

@@ -89,7 +89,8 @@ fun MediaMessageBubble(
             isVisible = isDownloading || isUploading || progress != null,
             progress = progress,
             isUploading = isUploading,
-            onCancelOrRetryClick = onCancelProgress
+            onCancelOrRetryClick = onCancelProgress,
+            statusText = if (isUploading) "Subiendo..." else null
         )
     }
 }

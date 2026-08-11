@@ -146,6 +146,7 @@ fun ChatScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val isOnline by com.example.util.NetworkMonitor.isOnline.collectAsStateWithLifecycle()
     val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
     val keyboardController = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     val currentUid = viewModel.currentUserId
@@ -1051,6 +1052,7 @@ fun ChatScreen(
                                         message = message,
                                         isMe = isMe,
                                         groupPosition = groupPosition,
+                                        deliveryState = com.example.util.MessageStatusResolver.resolveMessageDeliveryState(message, isOnline),
                                         myAvatarUrl = viewModel.currentAvatarUrl,
                                         otherAvatarUrl = state.otherUser?.avatarUrl,
                                         textSizeSp = chatTextSize,
@@ -2571,6 +2573,7 @@ fun MessageBubble(
         message = message,
         isMe = isMe,
         groupPosition = MessageGroupPosition.SINGLE,
+        deliveryState = com.example.util.MessageStatusResolver.resolveMessageDeliveryState(message, true),
         myAvatarUrl = myAvatarUrl,
         otherAvatarUrl = otherAvatarUrl,
         textSizeSp = textSizeSp,

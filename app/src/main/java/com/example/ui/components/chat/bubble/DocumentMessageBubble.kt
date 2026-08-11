@@ -52,7 +52,7 @@ fun DocumentMessageBubble(
     val contentColor = if (isBubbleLight) Color(0xFF111B21) else Color.White
     val secondaryColor = contentColor.copy(alpha = 0.6f)
 
-    val isSending = messageStatus == "sending"
+    val isSending = messageStatus == "sending" || messageStatus == "pending" || messageStatus == "pending_media"
     val isFailed = messageStatus == "failed"
 
     Surface(
@@ -127,7 +127,8 @@ fun DocumentMessageBubble(
                         text = buildString {
                             append(extension.uppercase())
                             if (formattedSize != null) append(" • $formattedSize")
-                            if (localFile != null) append(" • Descargado")
+                            if (isSending) append(" • Subiendo...")
+                            else if (localFile != null) append(" • Descargado")
                         },
                         color = secondaryColor,
                         fontSize = 11.sp,
