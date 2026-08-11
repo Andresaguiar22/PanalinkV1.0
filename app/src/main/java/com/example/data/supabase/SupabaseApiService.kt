@@ -650,7 +650,7 @@ interface SupabaseApiService {
     suspend fun setStoryLikeRpc(
         @Header("apikey") apiKey: String,
         @Header("Authorization") authorization: String,
-        @Body params: Map<String, Any>,
+        @Body params: Map<String, @JvmSuppressWildcards Any>,
         @Header("Accept-Profile") acceptProfile: String = "social",
         @Header("Content-Profile") contentProfile: String = "social"
     ): Response<Unit>
@@ -659,7 +659,7 @@ interface SupabaseApiService {
     suspend fun setStoryFavoriteRpc(
         @Header("apikey") apiKey: String,
         @Header("Authorization") authorization: String,
-        @Body params: Map<String, Any>,
+        @Body params: Map<String, @JvmSuppressWildcards Any>,
         @Header("Accept-Profile") acceptProfile: String = "social",
         @Header("Content-Profile") contentProfile: String = "social"
     ): Response<Unit>
@@ -668,7 +668,7 @@ interface SupabaseApiService {
     suspend fun setReelLikeRpc(
         @Header("apikey") apiKey: String,
         @Header("Authorization") authorization: String,
-        @Body params: Map<String, Any>,
+        @Body params: Map<String, @JvmSuppressWildcards Any>,
         @Header("Accept-Profile") acceptProfile: String = "social",
         @Header("Content-Profile") contentProfile: String = "social"
     ): Response<Unit>
@@ -677,7 +677,7 @@ interface SupabaseApiService {
     suspend fun setReelFavoriteRpc(
         @Header("apikey") apiKey: String,
         @Header("Authorization") authorization: String,
-        @Body params: Map<String, Any>,
+        @Body params: Map<String, @JvmSuppressWildcards Any>,
         @Header("Accept-Profile") acceptProfile: String = "social",
         @Header("Content-Profile") contentProfile: String = "social"
     ): Response<Unit>
@@ -829,7 +829,7 @@ interface SupabaseApiService {
         @Path("table") table: String,
         @Header("apikey") apiKey: String,
         @Header("Authorization") authorization: String,
-        @Body body: Map<String, String>,
+        @Body body: Map<String, @JvmSuppressWildcards Any>,
         @Header("Content-Profile") contentProfile: String = "social"
     ): Response<ResponseBody>
 

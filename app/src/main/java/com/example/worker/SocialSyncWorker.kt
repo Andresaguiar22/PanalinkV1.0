@@ -126,33 +126,64 @@ class SocialSyncWorker(
                         }
                     }
                     "COMMENT" -> {
-                        val commentText = action.payload ?: ""
+                        var parsedCommentText = action.payload ?: ""
+                        var parsedParentId: String? = null
+                        var parsedLocalCommentId = action.localActionId
+                        if (parsedCommentText.startsWith("{")) {
+                            try {
+                                val json = org.json.JSONObject(parsedCommentText)
+                                parsedCommentText = json.optString("text", "")
+                                val pId = json.optString("parentId", "")
+                                if (pId.isNotBlank() && pId != "null") parsedParentId = pId
+                                val lcId = json.optString("localCommentId", "")
+                                if (lcId.isNotBlank()) parsedLocalCommentId = lcId
+                            } catch (e: Exception) { }
+                        }
+
                         if (action.isReel) {
                             val tableName = "reel_comments"
-                            val body = mutableMapOf(
+                            val body = mutableMapOf<String, Any>(
                                 "reel_id" to action.targetId,
                                 "author_id" to action.userId,
-                                "body" to commentText,
+                                "body" to parsedCommentText,
                                 "created_at" to SupabaseClient.getNowIsoString()
                             )
+                            if (parsedParentId != null) body["parent_comment_id"] = parsedParentId
                             val response = service.commentState(tableName, apiKey, bearer, body)
                             if (response.isSuccessful) {
                                 success = true
                                 // We don't have a returned DTO here directly, but we can clear local temp comment
-                                commentDao.deleteById(action.localActionId)
+                                commentDao.deleteById(parsedLocalCommentId)
                             }
                         } else {
-                            val commentDto = PostCommentDto(postId = action.targetId, userId = action.userId, content = commentText)
-                            val response = service.addComment(apiKey, bearer, commentDto)
-                            if (response.isSuccessful && !response.body().isNullOrEmpty()) {
-                                val createdRemote = response.body()!!.first()
-                                success = true
-                                // Replace temporary comment with final remote comment in Room
-                                val localTemp = commentDao.getCommentById(action.localActionId)
-                                if (localTemp != null) {
-                                    commentDao.deleteById(action.localActionId)
-                                    val finalEntity = CommentEntity.fromPostCommentDto(createdRemote)
-                                    commentDao.upsert(finalEntity)
+                            val isStory = statesDao.getStateById(action.targetId) != null
+                            if (isStory) {
+                                val tableName = "story_comments"
+                                val body = mutableMapOf<String, Any>(
+                                    "story_id" to action.targetId,
+                                    "author_id" to action.userId,
+                                    "body" to parsedCommentText,
+                                    "created_at" to SupabaseClient.getNowIsoString()
+                                )
+                                if (parsedParentId != null) body["parent_comment_id"] = parsedParentId
+                                val response = service.commentState(tableName, apiKey, bearer, body)
+                                if (response.isSuccessful) {
+                                    success = true
+                                    commentDao.deleteById(parsedLocalCommentId)
+                                }
+                            } else {
+                                val commentDto = PostCommentDto(postId = action.targetId, userId = action.userId, content = parsedCommentText)
+                                val response = service.addComment(apiKey, bearer, commentDto)
+                                if (response.isSuccessful && !response.body().isNullOrEmpty()) {
+                                    val createdRemote = response.body()!!.first()
+                                    success = true
+                                    // Replace temporary comment with final remote comment in Room
+                                    val localTemp = commentDao.getCommentById(parsedLocalCommentId)
+                                    if (localTemp != null) {
+                                        commentDao.deleteById(parsedLocalCommentId)
+                                        val finalEntity = CommentEntity.fromPostCommentDto(createdRemote)
+                                        commentDao.upsert(finalEntity)
+                                    }
                                 }
                             }
                         }

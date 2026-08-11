@@ -290,12 +290,18 @@ class FeedRepositoryImpl : FeedRepository {
         commentDao.upsert(tempCommentEntity)
 
         // 3. Insert pending action
+        val payloadJson = org.json.JSONObject().apply {
+            put("text", content)
+            put("parentId", org.json.JSONObject.NULL)
+            put("localCommentId", tempCommentId)
+        }.toString()
+
         val action = com.example.data.database.PendingSocialActionEntity(
             localActionId = tempCommentId, // associate with temporary comment ID
             userId = userId,
             targetId = postId,
             actionType = "COMMENT",
-            payload = content,
+            payload = payloadJson,
             isReel = false
         )
         pendingDao.insertAction(action)

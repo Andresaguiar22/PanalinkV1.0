@@ -22,54 +22,46 @@ class SocialRepositoryImpl : SocialRepository {
         val currentUid = SupabaseClient.currentUser?.id ?: return@withContext
         
         try {
-            val service = SupabaseClient.apiService ?: return@withContext
-            val token = SupabaseClient.currentToken ?: return@withContext
-            val apiKey = SupabaseClient.supabaseAnonKey
-            val bearer = "Bearer $token"
-
-            if (isReel) {
-                val params = mapOf("p_reel_id" to stateId)
-                Log.d("AUDIT_REEL_LIKE", "Calling toggle_reel_like RPC: reelId=$stateId")
-                val response = service.toggleReelLikeRpc(
-                    apiKey = apiKey,
-                    authorization = bearer,
-                    params = params
-                )
-                if (response.isSuccessful) {
-                    val body = response.body()
-                    Log.d("AUDIT_REEL_LIKE", "toggle_reel_like RPC Success: liked=${body?.liked}, likesCount=${body?.likesCount}")
-                } else {
-                    Log.e("AUDIT_REEL_LIKE", "toggle_reel_like RPC Error: ${response.errorBody()?.string()}")
-                }
-            } else {
-                val params = mapOf("p_story_id" to stateId)
-                Log.d("AUDIT_REEL_LIKE", "Calling toggle_story_like RPC: storyId=$stateId")
-                val response = service.toggleStoryLikeRpc(
-                    apiKey = apiKey,
-                    authorization = bearer,
-                    params = params
-                )
-                if (response.isSuccessful) {
-                    val body = response.body()
-                    Log.d("AUDIT_REEL_LIKE", "toggle_story_like RPC Success: liked=${body?.liked}, likesCount=${body?.likesCount}")
-                } else {
-                    Log.e("AUDIT_REEL_LIKE", "toggle_story_like RPC Error: ${response.errorBody()?.string()}")
-                }
+            val database = com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance)
+            val statesDao = database.statesDao()
+            val pendingDao = database.pendingSocialActionDao()
+            
+            val existing = statesDao.getStateById(stateId)
+            val actualCurrentLike = existing?.likedByMe ?: false
+            val actualCount = existing?.likesCount ?: 0
+            
+            val newLiked = !actualCurrentLike
+            val newCount = if (actualCurrentLike) (actualCount - 1).coerceAtLeast(0) else actualCount + 1
+            
+            if (existing != null) {
+                statesDao.insertState(existing.copy(likedByMe = newLiked, likesCount = newCount))
             }
+            
+            pendingDao.deleteLikeActionsForTarget(currentUid, stateId)
+            val actionType = if (actualCurrentLike) "UNLIKE" else "LIKE"
+            val action = com.example.data.database.PendingSocialActionEntity(
+                localActionId = java.util.UUID.randomUUID().toString(),
+                userId = currentUid,
+                targetId = stateId,
+                actionType = actionType,
+                payload = null,
+                isReel = isReel
+            )
+            pendingDao.insertAction(action)
+            
+            com.example.worker.SocialSyncWorker.enqueue(com.example.PanaApplication.instance)
             refreshSignal.emit(stateId)
         } catch (e: Exception) {
             Log.e(TAG, "Error in toggleLike", e)
         }
     }
 
-    override suspend fun getLikes(stateId: String, isReel: Boolean): Flow<Int> = flow {
-        emit(fetchLikesCount(stateId, isReel))
-        refreshSignal.collect { refreshedStateId ->
-            if (refreshedStateId == stateId) {
-                emit(fetchLikesCount(stateId, isReel))
-            }
-        }
-    }.flowOn(Dispatchers.IO)
+    override suspend fun getLikes(stateId: String, isReel: Boolean): Flow<Int> {
+        val database = com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance)
+        return database.statesDao().getStateFlowById(stateId)
+            .map { it?.likesCount ?: 0 }
+            .flowOn(Dispatchers.IO)
+    }
 
     private suspend fun fetchLikesCount(stateId: String, isReel: Boolean): Int {
         return try {
@@ -177,37 +169,47 @@ class SocialRepositoryImpl : SocialRepository {
         if (text.isBlank()) return@withContext
         
         try {
-            val service = SupabaseClient.apiService ?: return@withContext
-            val token = SupabaseClient.currentToken ?: return@withContext
-            val apiKey = SupabaseClient.supabaseAnonKey
-            val bearer = "Bearer $token"
-
-            val tableName = if (isReel) "reel_comments" else "story_comments"
-            val idColumn = if (isReel) "reel_id" else "story_id"
+            val database = com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance)
+            val commentDao = database.commentDao()
+            val pendingDao = database.pendingSocialActionDao()
             
-            val body = mutableMapOf(
-                idColumn to stateId,
-                "author_id" to currentUid,
-                "body" to text,
-                "created_at" to SupabaseClient.getNowIsoString()
+            val localCommentId = "temp_${java.util.UUID.randomUUID()}"
+            val nowStr = SupabaseClient.getNowIsoString()
+            
+            val profile = SupabaseClient.currentProfile
+            
+            val comment = com.example.data.database.CommentEntity(
+                id = localCommentId,
+                targetId = stateId,
+                authorId = currentUid,
+                authorName = profile?.displayName ?: "Usuario",
+                authorAvatarUrl = profile?.avatarUrl,
+                content = text,
+                createdAt = nowStr,
+                parentCommentId = parentId,
+                isReel = isReel,
+                syncStatus = "pending_add"
             )
-            if (parentId != null) {
-                body["parent_comment_id"] = parentId
-            }
-
-            Log.d("AUDIT_REEL_COMMENT", "Proceeding to COMMENT. POST /rest/v1/$tableName with body: $body")
-            val response = service.commentState(
-                table = tableName,
-                apiKey = apiKey,
-                authorization = bearer,
-                body = body
+            commentDao.upsert(comment)
+            
+            val payloadJson = org.json.JSONObject().apply {
+                put("text", text)
+                put("parentId", parentId ?: org.json.JSONObject.NULL)
+                put("localCommentId", localCommentId)
+            }.toString()
+            
+            val action = com.example.data.database.PendingSocialActionEntity(
+                localActionId = java.util.UUID.randomUUID().toString(),
+                userId = currentUid,
+                targetId = stateId,
+                actionType = "COMMENT",
+                payload = payloadJson,
+                isReel = isReel
             )
-            Log.d("AUDIT_REEL_COMMENT", "COMMENT Response: HTTP ${response.code()} ${response.message()}")
-            if (response.isSuccessful) {
-                refreshSignal.emit(stateId)
-            } else {
-                Log.e("AUDIT_REEL_COMMENT", "Add comment failed: ${response.errorBody()?.string()}")
-            }
+            pendingDao.insertAction(action)
+            
+            com.example.worker.SocialSyncWorker.enqueue(com.example.PanaApplication.instance)
+            refreshSignal.emit(stateId)
         } catch (e: Exception) {
             Log.e(TAG, "Error adding comment", e)
         }

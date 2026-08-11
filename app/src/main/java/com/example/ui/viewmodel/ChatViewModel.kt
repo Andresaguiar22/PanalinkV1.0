@@ -528,104 +528,33 @@ fun uploadAndSendMedia(
         onProgress: (Boolean) -> Unit
     ) {
         val chatId = currentChatId ?: return
-        val otherUserId = currentOtherUserId
-        val userId = com.example.data.supabase.SupabaseClient.currentUser?.id ?: return
-        
-        val actualFile = file ?: uri?.let { getFileFromUri(context, it) } ?: return
-        val localUri = uri?.toString() ?: android.net.Uri.fromFile(actualFile).toString()
-        val tempId = "temp_${java.util.UUID.randomUUID()}"
         
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             onProgress(true)
             
-            // 1. Insert optimistic message
-            val nowStr = com.example.data.supabase.SupabaseClient.getNowIsoString()
-            
-            val normalizedType = when (typeLabel.lowercase()) {
-                "image", "photo", "img" -> "image"
-                "video", "vid" -> "video"
-                "audio", "audio_note", "voice", "voice_note" -> "audio"
-                "document", "file", "archive", "pdf" -> "document"
-                "sticker" -> "sticker"
-                "gif" -> "gif"
-                else -> if (mimeType.startsWith("image/")) "image"
-                        else if (mimeType.startsWith("video/")) "video"
-                        else if (mimeType.startsWith("audio/")) "audio"
-                        else "document"
-            }
-
-            val extractedDuration = if (mimeType.startsWith("audio/") || typeLabel.lowercase().contains("voice") || typeLabel.lowercase().contains("audio")) {
-                try {
-                    val retriever = android.media.MediaMetadataRetriever()
-                    retriever.setDataSource(actualFile.absolutePath)
-                    val time = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)
-                    retriever.release()
-                    val timeMs = time?.toLongOrNull() ?: 0L
-                    timeMs / 1000L
-                } catch (e: Exception) {
-                    0L
-                }
-            } else 0L
-
-            val optimisticMsg = com.example.data.model.Message(
-                id = tempId,
+            val result = messagesRepo.sendMultimediaMessage(
                 chatId = chatId,
-                senderId = userId,
-                content = "[$typeLabel]",
-                createdAt = nowStr,
-                status = "pending_media", // Use "pending_media" so sync worker skips it until upload completes
-                replyToMessageId = replyToId,
-                mediaUrl = localUri,
-                mediaMime = mimeType,
-                messageType = normalizedType,
-                duration = extractedDuration,
-                isGhost = _isGhostMode.value
-            )
-            messagesRepo.insertLocalMessage(optimisticMsg)
-            
-            val result = com.example.util.PanalinkMediaManager.uploadMediaAndThumbnail(
                 context = context,
-                mediaFile = actualFile,
+                sourceUri = uri,
+                sourceFile = file,
                 mimeType = mimeType,
                 typeLabel = typeLabel,
-                userId = userId,
-                caption = ""
+                content = "[$typeLabel]",
+                replyToId = replyToId,
+                isGhost = _isGhostMode.value
             )
             
-            if (result.isSuccess) {
-                val uploadResult = result.getOrNull()!!
-                val finalDuration = if ((uploadResult.duration ?: 0L) > 0L) uploadResult.duration else extractedDuration
-                // 2. Call sendMessage with normalized messageType and complete media metadata
-                messagesRepo.sendMessage(
-                    chatId = chatId,
-                    content = "[$typeLabel]",
-                    replyToId = replyToId,
-                    receiverUid = otherUserId,
-                    messageType = normalizedType,
-                    mediaUrl = uploadResult.url,
-                    thumbnailUrl = uploadResult.thumbnailUrl,
-                    mediaMime = uploadResult.mime ?: mimeType,
-                    mediaSize = uploadResult.size,
-                    duration = finalDuration,
-                    width = uploadResult.width,
-                    height = uploadResult.height,
-                    isGhost = _isGhostMode.value,
-                    messageId = tempId
-                )
-            } else {
-                messagesRepo.updateLocalMessageStatus(tempId, "failed")
-                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                onProgress(false)
+                if (result.isFailure) {
                     try {
                         android.widget.Toast.makeText(
                             context,
-                            "Error subiendo archivo",
+                            "Error procesando archivo",
                             android.widget.Toast.LENGTH_LONG
                         ).show()
                     } catch (t: Throwable) {}
                 }
-            }
-            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                onProgress(false)
             }
         }
     }

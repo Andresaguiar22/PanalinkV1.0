@@ -31,4 +31,7 @@ interface StatesDao {
 
     @Query("SELECT * FROM user_states WHERE id = :id")
     suspend fun getStateById(id: String): StateEntity?
+
+    @Query("SELECT * FROM user_states WHERE id = :id")
+    fun getStateFlowById(id: String): Flow<StateEntity?>
 }

@@ -43,36 +43,17 @@ class SocialViewModel(
         observationJob = viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             val currentUid = SupabaseClient.currentUser?.id ?: ""
             
+            val database = com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance)
+            val statesDao = database.statesDao()
+
             launch {
-                repository.getLikes(stateId).collect { count ->
-                    // Network check moved to IO and wrapped in try-catch
-                    val isLikedByMe = if (currentUid.isNotEmpty()) {
-                        try {
-                            val service = SupabaseClient.apiService
-                            val token = SupabaseClient.currentToken
-                            val apiKey = SupabaseClient.supabaseAnonKey
-                            val bearer = "Bearer $token"
-                            val tableName = "reel_likes" // Default for TikTok feed
-                            val checkRes = service?.getStateLikes(
-                                table = tableName,
-                                apiKey = apiKey,
-                                authorization = bearer,
-                                filters = mapOf(
-                                    "reel_id" to "eq.$stateId",
-                                    "user_id" to "eq.$currentUid"
-                                )
-                            )
-                            checkRes?.isSuccessful == true && checkRes.body()?.any { it.userId == currentUid } == true
-                        } catch (e: Exception) {
-                            false
-                        }
-                    } else {
-                        false
+                statesDao.getStateFlowById(stateId).collect { stateEntity ->
+                    if (stateEntity != null) {
+                        _uiState.value = _uiState.value.copy(
+                            likeCount = stateEntity.likesCount,
+                            isLiked = stateEntity.likedByMe
+                        )
                     }
-                    _uiState.value = _uiState.value.copy(
-                        likeCount = count,
-                        isLiked = isLikedByMe
-                    )
                 }
             }
 

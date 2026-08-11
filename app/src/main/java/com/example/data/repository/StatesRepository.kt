@@ -671,12 +671,18 @@ class StatesRepository {
         commentDao.upsert(tempCommentEntity)
 
         // 3. Queue action locally
+        val payloadJson = org.json.JSONObject().apply {
+            put("text", commentText)
+            put("parentId", parentId ?: org.json.JSONObject.NULL)
+            put("localCommentId", tempCommentId)
+        }.toString()
+
         val action = com.example.data.database.PendingSocialActionEntity(
             localActionId = tempCommentId,
             userId = currentUid,
             targetId = stateId,
             actionType = "COMMENT",
-            payload = commentText,
+            payload = payloadJson,
             isReel = isReel
         )
         pendingDao.insertAction(action)
