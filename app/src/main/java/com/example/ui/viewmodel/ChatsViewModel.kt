@@ -108,7 +108,6 @@ class ChatsViewModel(
         observeLocalChatsJob = viewModelScope.launch(exceptionHandler + kotlinx.coroutines.Dispatchers.IO) {
             val db = com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance)
             val chatDao = db.chatDao()
-            val profileDao = db.profileDao()
             val publicProfileDao = db.publicProfileDao()
             val messageDao = db.messageDao()
 

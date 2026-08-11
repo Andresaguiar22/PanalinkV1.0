@@ -186,8 +186,10 @@ class ChatsRepository {
                     val publicResult = publicProfileRepo.getPublicProfiles(otherMemberIds.toList())
                     val map = mutableMapOf<String, Profile>()
                     if (publicResult is PublicProfileFetchResult.Success) {
-                        for ((id, pub) in publicResult.data) {
-                            map[id] = PublicProfileResolver.toProfile(pub)
+                        for ((id, pubResult) in publicResult.data) {
+                            if (pubResult is PublicProfileFetchResult.Success) {
+                                map[id] = PublicProfileResolver.toProfile(pubResult.data)
+                            }
                         }
                     }
                     map

@@ -7,6 +7,7 @@ import com.example.data.model.PublicProfile
 import com.example.data.model.PublicProfileDto
 import com.example.data.repository.PublicProfileFetchResult
 import com.example.data.repository.PublicProfileRepository
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.async
 import kotlinx.coroutines.Dispatchers
@@ -196,7 +197,7 @@ class PublicProfileArchitectureTest {
         val resolvedName = com.example.data.repository.PublicProfileResolver.resolveDisplayName(pub, fallbackName = rawUuid, userId = rawUuid)
         assertEquals("", resolvedName)
 
-        val uiFormatted = com.example.data.repository.PublicProfileResolver.formatForUi(resolvedName)
+        val uiFormatted = com.example.data.repository.PublicProfileResolver.formatForUi(resolvedName, "Contacto")
         assertEquals("Contacto", uiFormatted)
     }
 
@@ -384,6 +385,232 @@ class PublicProfileArchitectureTest {
             }
         } finally {
             com.example.data.supabase.SupabaseClient.currentToken = null
+        }
+    }
+
+    @Test
+    fun testBatchRequestFiresExactlyOneRemoteCall() = runBlocking {
+        val httpCallCount = java.util.concurrent.atomic.AtomicInteger(0)
+        com.example.data.supabase.SupabaseClient.currentToken = "valid_test_token"
+        
+        val fakeDao = object : PublicProfileDao {
+            override suspend fun getById(id: String): PublicProfileEntity? = null
+            override suspend fun searchLocal(query: String): List<PublicProfileEntity> = emptyList()
+            override suspend fun getByIds(ids: List<String>): List<PublicProfileEntity> = emptyList()
+            override suspend fun upsert(entity: PublicProfileEntity) {}
+            override suspend fun upsertAll(entities: List<PublicProfileEntity>) {}
+            override suspend fun delete(id: String) {}
+            override suspend fun deleteAll() {}
+        }
+        
+        val fakeApiService = java.lang.reflect.Proxy.newProxyInstance(
+            com.example.data.supabase.SupabaseApiService::class.java.classLoader,
+            arrayOf(com.example.data.supabase.SupabaseApiService::class.java),
+            object : java.lang.reflect.InvocationHandler {
+                override fun invoke(proxy: Any, method: java.lang.reflect.Method, args: Array<out Any>?): Any {
+                    if (method.name == "getPublicProfiles") {
+                        httpCallCount.incrementAndGet()
+                        val dtos = (1..10).map { i ->
+                            PublicProfileDto("user_$i", "User $i", "User", "$i", null, null)
+                        }
+                        return retrofit2.Response.success(dtos)
+                    }
+                    throw UnsupportedOperationException()
+                }
+            }
+        ) as com.example.data.supabase.SupabaseApiService
+
+        val repository = PublicProfileRepository(fakeDao, { fakeApiService })
+        val ids = (1..10).map { "user_$it" }
+        val result = repository.getPublicProfiles(ids, forceRefresh = true)
+        
+        assertEquals(1, httpCallCount.get())
+        assertTrue(result is PublicProfileFetchResult.Success)
+        val dataMap = (result as PublicProfileFetchResult.Success).data
+        assertEquals(10, dataMap.size)
+        ids.forEach { id ->
+            val userResult = dataMap[id]
+            assertTrue(userResult is PublicProfileFetchResult.Success)
+            assertEquals(id, (userResult as PublicProfileFetchResult.Success).data.id)
+        }
+    }
+
+    @Test
+    fun testPartialBatchRequestSuccessAndNotFound() = runBlocking {
+        val httpCallCount = java.util.concurrent.atomic.AtomicInteger(0)
+        com.example.data.supabase.SupabaseClient.currentToken = "valid_test_token"
+        
+        val fakeDao = object : PublicProfileDao {
+            override suspend fun getById(id: String): PublicProfileEntity? = null
+            override suspend fun searchLocal(query: String): List<PublicProfileEntity> = emptyList()
+            override suspend fun getByIds(ids: List<String>): List<PublicProfileEntity> = emptyList()
+            override suspend fun upsert(entity: PublicProfileEntity) {}
+            override suspend fun upsertAll(entities: List<PublicProfileEntity>) {}
+            override suspend fun delete(id: String) {}
+            override suspend fun deleteAll() {}
+        }
+        
+        val fakeApiService = java.lang.reflect.Proxy.newProxyInstance(
+            com.example.data.supabase.SupabaseApiService::class.java.classLoader,
+            arrayOf(com.example.data.supabase.SupabaseApiService::class.java),
+            object : java.lang.reflect.InvocationHandler {
+                override fun invoke(proxy: Any, method: java.lang.reflect.Method, args: Array<out Any>?): Any {
+                    if (method.name == "getPublicProfiles") {
+                        httpCallCount.incrementAndGet()
+                        val dtos = (1..8).map { i ->
+                            PublicProfileDto("user_$i", "User $i", "User", "$i", null, null)
+                        }
+                        return retrofit2.Response.success(dtos)
+                    }
+                    throw UnsupportedOperationException()
+                }
+            }
+        ) as com.example.data.supabase.SupabaseApiService
+
+        val repository = PublicProfileRepository(fakeDao, { fakeApiService })
+        val ids = (1..10).map { "user_$it" }
+        val result = repository.getPublicProfiles(ids, forceRefresh = true)
+        
+        assertEquals(1, httpCallCount.get())
+        assertTrue(result is PublicProfileFetchResult.Success)
+        val dataMap = (result as PublicProfileFetchResult.Success).data
+        assertEquals(10, dataMap.size)
+        
+        (1..8).forEach { i ->
+            val userResult = dataMap["user_$i"]
+            assertTrue(userResult is PublicProfileFetchResult.Success)
+            assertEquals("user_$i", (userResult as PublicProfileFetchResult.Success).data.id)
+        }
+        
+        (9..10).forEach { i ->
+            val userResult = dataMap["user_$i"]
+            assertTrue(userResult is PublicProfileFetchResult.NotFound)
+        }
+    }
+
+    @Test
+    fun testNetworkErrorPropagatesOnTimeout() = runBlocking {
+        com.example.data.supabase.SupabaseClient.currentToken = "valid_test_token"
+        
+        val fakeDao = object : PublicProfileDao {
+            override suspend fun getById(id: String): PublicProfileEntity? = null
+            override suspend fun searchLocal(query: String): List<PublicProfileEntity> = emptyList()
+            override suspend fun getByIds(ids: List<String>): List<PublicProfileEntity> = emptyList()
+            override suspend fun upsert(entity: PublicProfileEntity) {}
+            override suspend fun upsertAll(entities: List<PublicProfileEntity>) {}
+            override suspend fun delete(id: String) {}
+            override suspend fun deleteAll() {}
+        }
+        
+        val fakeApiService = java.lang.reflect.Proxy.newProxyInstance(
+            com.example.data.supabase.SupabaseApiService::class.java.classLoader,
+            arrayOf(com.example.data.supabase.SupabaseApiService::class.java),
+            object : java.lang.reflect.InvocationHandler {
+                override fun invoke(proxy: Any, method: java.lang.reflect.Method, args: Array<out Any>?): Any {
+                    if (method.name == "getPublicProfiles") {
+                        throw java.io.IOException("Connection timeout")
+                    }
+                    throw UnsupportedOperationException()
+                }
+            }
+        ) as com.example.data.supabase.SupabaseApiService
+
+        val repository = PublicProfileRepository(fakeDao, { fakeApiService })
+        val result = repository.getPublicProfiles(listOf("user_1"), forceRefresh = true)
+        
+        assertTrue(result is PublicProfileFetchResult.NetworkError)
+        val error = result as PublicProfileFetchResult.NetworkError
+        val actualException = if (error.exception is java.lang.reflect.UndeclaredThrowableException) error.exception.cause else error.exception
+        assertTrue(actualException is java.io.IOException)
+        assertEquals("Connection timeout", actualException?.message)
+    }
+
+    @Test
+    fun testAuthErrorOnUnauthorizedStatusCode() = runBlocking {
+        com.example.data.supabase.SupabaseClient.currentToken = "valid_test_token"
+        
+        val fakeDao = object : PublicProfileDao {
+            override suspend fun getById(id: String): PublicProfileEntity? = null
+            override suspend fun searchLocal(query: String): List<PublicProfileEntity> = emptyList()
+            override suspend fun getByIds(ids: List<String>): List<PublicProfileEntity> = emptyList()
+            override suspend fun upsert(entity: PublicProfileEntity) {}
+            override suspend fun upsertAll(entities: List<PublicProfileEntity>) {}
+            override suspend fun delete(id: String) {}
+            override suspend fun deleteAll() {}
+        }
+        
+        val fakeApiService = java.lang.reflect.Proxy.newProxyInstance(
+            com.example.data.supabase.SupabaseApiService::class.java.classLoader,
+            arrayOf(com.example.data.supabase.SupabaseApiService::class.java),
+            object : java.lang.reflect.InvocationHandler {
+                override fun invoke(proxy: Any, method: java.lang.reflect.Method, args: Array<out Any>?): Any {
+                    if (method.name == "getPublicProfiles") {
+                        val responseBody = okhttp3.ResponseBody.create(
+                            "application/json".toMediaTypeOrNull(),
+                            "{\"message\":\"Invalid JWT\"}"
+                        )
+                        return retrofit2.Response.error<List<PublicProfileDto>>(401, responseBody)
+                    }
+                    throw UnsupportedOperationException()
+                }
+            }
+        ) as com.example.data.supabase.SupabaseApiService
+
+        val repository = PublicProfileRepository(fakeDao, { fakeApiService })
+        val result = repository.getPublicProfiles(listOf("user_1"), forceRefresh = true)
+        
+        assertTrue(result is PublicProfileFetchResult.AuthError)
+        val authError = result as PublicProfileFetchResult.AuthError
+        assertEquals(401, authError.code)
+    }
+
+    @Test
+    fun testCacheRetrievalWhenNoNetwork() = runBlocking {
+        val cachedEntity = PublicProfileEntity(
+            id = "cached_999",
+            displayName = "Offline Cache User",
+            firstName = "Offline",
+            lastName = "Cache",
+            avatarUrl = "avatars/cached.jpg",
+            updatedAt = "2026-08-10T09:00:00Z"
+        )
+        
+        val fakeDao = object : PublicProfileDao {
+            override suspend fun getById(id: String): PublicProfileEntity? = cachedEntity
+            override suspend fun searchLocal(query: String): List<PublicProfileEntity> = emptyList()
+            override suspend fun getByIds(ids: List<String>): List<PublicProfileEntity> = listOf(cachedEntity)
+            override suspend fun upsert(entity: PublicProfileEntity) {}
+            override suspend fun upsertAll(entities: List<PublicProfileEntity>) {}
+            override suspend fun delete(id: String) {}
+            override suspend fun deleteAll() {}
+        }
+        
+        val repository = PublicProfileRepository(fakeDao, { null })
+        val result = repository.getPublicProfiles(listOf("cached_999"), forceRefresh = false)
+        
+        assertTrue(result is PublicProfileFetchResult.Success)
+        val dataMap = (result as PublicProfileFetchResult.Success).data
+        val userResult = dataMap["cached_999"]
+        assertTrue(userResult is PublicProfileFetchResult.Success)
+        val profile = (userResult as PublicProfileFetchResult.Success).data
+        assertEquals("cached_999", profile.id)
+        assertEquals("Offline Cache User", profile.displayName)
+    }
+
+    @Test
+    fun testChatViewModelDoesNotUseProfileDaoOrProfilesRepository() {
+        val clazz = com.example.ui.viewmodel.ChatViewModel::class.java
+        val fields = clazz.declaredFields
+        for (field in fields) {
+            val type = field.type
+            assertTrue(
+                "ChatViewModel should not use ProfilesRepository: field name ${field.name}",
+                !type.name.contains("ProfilesRepository")
+            )
+            assertTrue(
+                "ChatViewModel should not use ProfileDao: field name ${field.name}",
+                !type.name.contains("ProfileDao")
+            )
         }
     }
 }

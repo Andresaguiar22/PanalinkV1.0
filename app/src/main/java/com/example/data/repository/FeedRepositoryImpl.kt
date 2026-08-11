@@ -331,7 +331,9 @@ class FeedRepositoryImpl : FeedRepository {
                                 if (userIds.isNotEmpty()) {
                                     val publicResult = PublicProfileRepository.getInstance().getPublicProfiles(userIds)
                                     if (publicResult is PublicProfileFetchResult.Success) {
-                                        val publicProfilesMap = publicResult.data
+                                        val publicProfilesMap = publicResult.data.mapNotNull { (id, pubResult) ->
+                                            if (pubResult is PublicProfileFetchResult.Success) id to pubResult.data else null
+                                        }.toMap()
                                         comments = comments.map { comment ->
                                             val pub = if (comment.userId != null) publicProfilesMap[comment.userId] else null
                                             if (pub != null) {

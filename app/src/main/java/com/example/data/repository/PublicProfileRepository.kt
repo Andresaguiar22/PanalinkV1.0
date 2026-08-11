@@ -33,7 +33,7 @@ class PublicProfileRepository(
     private val publicProfileDao: PublicProfileDao,
     private val apiServiceSupplier: () -> SupabaseApiService? = { SupabaseClient.apiService }
 ) {
-    private val inFlightRequests = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Deferred<PublicProfileFetchResult<Map<String, PublicProfile>>>>()
+    private val inFlightRequests = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Deferred<PublicProfileFetchResult<Map<String, PublicProfileFetchResult<PublicProfile>>>>>()
 
     companion object {
         private const val TAG = "PublicProfileRepo"
@@ -64,9 +64,9 @@ class PublicProfileRepository(
         val batchResult = getPublicProfiles(listOf(userId), forceRefresh = forceRefresh)
         when (batchResult) {
             is PublicProfileFetchResult.Success -> {
-                val profile = batchResult.data[userId]
-                if (profile != null) {
-                    PublicProfileFetchResult.Success(profile)
+                val profileResult = batchResult.data[userId]
+                if (profileResult != null) {
+                    profileResult
                 } else {
                     PublicProfileFetchResult.NotFound
                 }
@@ -84,20 +84,20 @@ class PublicProfileRepository(
     suspend fun getPublicProfiles(
         userIds: List<String>,
         forceRefresh: Boolean = false
-    ): PublicProfileFetchResult<Map<String, PublicProfile>> = withContext(Dispatchers.IO) {
+    ): PublicProfileFetchResult<Map<String, PublicProfileFetchResult<PublicProfile>>> = withContext(Dispatchers.IO) {
         // 1. Deduplicate & filter blank IDs
         val cleanIds = userIds.map { it.trim() }.filter { it.isNotBlank() }.distinct()
         if (cleanIds.isEmpty()) {
             return@withContext PublicProfileFetchResult.Success(emptyMap())
         }
 
-        val resultMap = mutableMapOf<String, PublicProfile>()
+        val resultMap = mutableMapOf<String, PublicProfileFetchResult<PublicProfile>>()
 
         // 2. Cache-First check in Room
         if (!forceRefresh) {
             val cachedEntities = publicProfileDao.getByIds(cleanIds)
             for (entity in cachedEntities) {
-                resultMap[entity.id] = PublicProfileMapper.entityToModel(entity)
+                resultMap[entity.id] = PublicProfileFetchResult.Success(PublicProfileMapper.entityToModel(entity))
             }
         }
 
@@ -109,9 +109,9 @@ class PublicProfileRepository(
 
         // 4. Single-flight deduplication check
         val scopeResult = coroutineScope {
-            var newDeferred: Deferred<PublicProfileFetchResult<Map<String, PublicProfile>>>? = null
+            var newDeferred: Deferred<PublicProfileFetchResult<Map<String, PublicProfileFetchResult<PublicProfile>>>>? = null
             var idsToFetch: List<String> = emptyList()
-            val existingDeferredsMap = mutableMapOf<String, Deferred<PublicProfileFetchResult<Map<String, PublicProfile>>>>()
+            val existingDeferredsMap = mutableMapOf<String, Deferred<PublicProfileFetchResult<Map<String, PublicProfileFetchResult<PublicProfile>>>>>()
 
             synchronized(inFlightRequests) {
                 val missing = mutableListOf<String>()
@@ -143,7 +143,7 @@ class PublicProfileRepository(
                         return@coroutineScope res
                     }
                     @Suppress("UNCHECKED_CAST")
-                    resultMap.putAll(res.data as Map<String, PublicProfile>)
+                    resultMap.putAll(res.data as Map<String, PublicProfileFetchResult<PublicProfile>>)
                 }
                 // Await existing in-flight deferreds
                 for ((_, def) in existingDeferredsMap) {
@@ -152,7 +152,7 @@ class PublicProfileRepository(
                         return@coroutineScope res
                     }
                     @Suppress("UNCHECKED_CAST")
-                    resultMap.putAll(res.data as Map<String, PublicProfile>)
+                    resultMap.putAll(res.data as Map<String, PublicProfileFetchResult<PublicProfile>>)
                 }
                 null
             } finally {
@@ -176,17 +176,13 @@ class PublicProfileRepository(
             return@withContext scopeResult
         }
 
-        if (resultMap.isNotEmpty()) {
-            PublicProfileFetchResult.Success(resultMap)
-        } else {
-            PublicProfileFetchResult.NotFound
-        }
+        PublicProfileFetchResult.Success(resultMap)
     }
 
     private suspend fun fetchRemoteProfilesBatch(
         missingIds: List<String>
-    ): PublicProfileFetchResult<Map<String, PublicProfile>> = withContext(Dispatchers.IO) {
-        val resultMap = mutableMapOf<String, PublicProfile>()
+    ): PublicProfileFetchResult<Map<String, PublicProfileFetchResult<PublicProfile>>> = withContext(Dispatchers.IO) {
+        val resultMap = mutableMapOf<String, PublicProfileFetchResult<PublicProfile>>()
         val sessionToken = SupabaseClient.currentToken
         if (sessionToken.isNullOrBlank()) {
             Log.e(TAG, "No valid session JWT available for PublicProfile request")
@@ -210,8 +206,16 @@ class PublicProfileRepository(
 
                 if (fetchedEntities.isNotEmpty()) {
                     publicProfileDao.upsertAll(fetchedEntities)
-                    for (entity in fetchedEntities) {
-                        resultMap[entity.id] = PublicProfileMapper.entityToModel(entity)
+                }
+
+                val fetchedMap = fetchedEntities.associate { it.id to PublicProfileMapper.entityToModel(it) }
+
+                for (id in missingIds) {
+                    val pub = fetchedMap[id]
+                    if (pub != null) {
+                        resultMap[id] = PublicProfileFetchResult.Success(pub)
+                    } else {
+                        resultMap[id] = PublicProfileFetchResult.NotFound
                     }
                 }
 
@@ -219,7 +223,12 @@ class PublicProfileRepository(
             } else {
                 when (statusCode) {
                     401, 403 -> PublicProfileFetchResult.AuthError("Authorization failed ($statusCode)", statusCode)
-                    404 -> PublicProfileFetchResult.NotFound
+                    404 -> {
+                        for (id in missingIds) {
+                            resultMap[id] = PublicProfileFetchResult.NotFound
+                        }
+                        PublicProfileFetchResult.Success(resultMap)
+                    }
                     else -> PublicProfileFetchResult.NetworkError(code = statusCode, message = response.errorBody()?.string())
                 }
             }

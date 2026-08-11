@@ -124,31 +124,6 @@ class ProfilesRepository {
         }
     }
 
-    suspend fun getCachedProfile(userId: String): Profile? = withContext(Dispatchers.IO) {
-        try {
-            val db = com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance)
-            db.profileDao().getProfileById(userId)?.toProfile()
-        } catch (e: Exception) {
-            Log.e(TAG, "Error getting cached profile", e)
-            null
-        }
-    }
-
-    suspend fun saveProfileToCache(profile: Profile) = withContext(Dispatchers.IO) {
-        try {
-            val db = com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance)
-            val existing = db.profileDao().getProfileById(profile.id)
-            val entity = com.example.data.database.ProfileEntity.fromProfile(profile).copy(
-                avatarLocalPath = existing?.avatarLocalPath,
-                coverLocalPath = existing?.coverLocalPath,
-                lastSyncedAt = existing?.lastSyncedAt ?: System.currentTimeMillis()
-            )
-            db.profileDao().insertProfile(entity)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error saving profile to cache", e)
-        }
-    }
-
     suspend fun completeUserProfile(
         userId: String,
         displayName: String,
@@ -610,22 +585,61 @@ class ProfilesRepository {
                 val publicProfileRepo = PublicProfileRepository.getInstance()
                 val fetchResult = publicProfileRepo.getPublicProfiles(targetUserIds, forceRefresh = forceRefresh)
 
-                val publicProfilesMap = when (fetchResult) {
-                    is PublicProfileFetchResult.Success -> fetchResult.data
-                    else -> emptyMap()
+                val publicProfileDao = com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance).publicProfileDao()
+                val localEntities = publicProfileDao.getByIds(targetUserIds).associateBy { it.id }
+
+                val contactProfiles = mutableListOf<Profile>()
+                var exceptionToThrow: Exception? = null
+
+                for (contact in contacts) {
+                    val userId = contact.contactUserId
+                    if (userId.isBlank()) continue
+
+                    val localEntity = localEntities[userId]
+                    val localPub = localEntity?.let { com.example.data.mapper.PublicProfileMapper.entityToModel(it) }
+
+                    val userFetchResult = when (fetchResult) {
+                        is PublicProfileFetchResult.Success -> {
+                            fetchResult.data[userId] ?: PublicProfileFetchResult.NotFound
+                        }
+                        is PublicProfileFetchResult.NotFound -> PublicProfileFetchResult.NotFound
+                        is PublicProfileFetchResult.NetworkError -> PublicProfileFetchResult.NetworkError(fetchResult.exception, fetchResult.code, fetchResult.message)
+                        is PublicProfileFetchResult.AuthError -> PublicProfileFetchResult.AuthError(fetchResult.message, fetchResult.code)
+                    }
+
+                    when (userFetchResult) {
+                        is PublicProfileFetchResult.Success -> {
+                            contactProfiles.add(PublicProfileResolver.toProfile(userFetchResult.data))
+                        }
+                        is PublicProfileFetchResult.NotFound -> {
+                            if (localPub != null) {
+                                contactProfiles.add(PublicProfileResolver.toProfile(localPub))
+                            } else {
+                                Log.e(TAG, "Contact public profile not found for $userId")
+                                exceptionToThrow = Exception("NotFound")
+                            }
+                        }
+                        is PublicProfileFetchResult.NetworkError -> {
+                            if (localPub != null) {
+                                contactProfiles.add(PublicProfileResolver.toProfile(localPub))
+                            } else {
+                                Log.e(TAG, "Network error fetching contact public profile for $userId")
+                                exceptionToThrow = Exception("NetworkError")
+                            }
+                        }
+                        is PublicProfileFetchResult.AuthError -> {
+                            if (localPub != null) {
+                                contactProfiles.add(PublicProfileResolver.toProfile(localPub))
+                            } else {
+                                Log.e(TAG, "Auth error fetching contact public profile for $userId")
+                                exceptionToThrow = Exception("AuthError")
+                            }
+                        }
+                    }
                 }
 
-                val contactProfiles = contacts.map { contact ->
-                    val pub = publicProfilesMap[contact.contactUserId]
-                    if (pub != null) {
-                        PublicProfileResolver.toProfile(pub)
-                    } else {
-                        Profile(
-                            id = contact.contactUserId,
-                            displayName = "",
-                            avatarUrl = null
-                        )
-                    }
+                if (exceptionToThrow != null) {
+                    return@withContext Result.failure(exceptionToThrow)
                 }
 
                 Log.d("CONTACTS_DEBUG", "cantidad final entregada al ViewModel: ${contactProfiles.size}")

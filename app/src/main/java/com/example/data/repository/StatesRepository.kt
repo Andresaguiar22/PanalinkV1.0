@@ -265,7 +265,11 @@ class StatesRepository {
                 val authorUserIds = filteredStates.map { it.userId }.filter { it.isNotBlank() }.distinct()
                 val publicProfileRepo = PublicProfileRepository.getInstance()
                 val publicProfilesMap = when (val res = publicProfileRepo.getPublicProfiles(authorUserIds)) {
-                    is PublicProfileFetchResult.Success -> res.data
+                    is PublicProfileFetchResult.Success -> {
+                        res.data.mapNotNull { (id, pubResult) ->
+                            if (pubResult is PublicProfileFetchResult.Success) id to pubResult.data else null
+                        }.toMap()
+                    }
                     else -> emptyMap()
                 }
 
@@ -785,7 +789,9 @@ class StatesRepository {
                 val viewerIds = viewsDto.map { it.viewerId }.filter { it.isNotBlank() }.distinct()
                 val publicResult = PublicProfileRepository.getInstance().getPublicProfiles(viewerIds)
                 val publicProfilesMap = if (publicResult is PublicProfileFetchResult.Success) {
-                    publicResult.data
+                    publicResult.data.mapNotNull { (id, pubResult) ->
+                        if (pubResult is PublicProfileFetchResult.Success) id to pubResult.data else null
+                    }.toMap()
                 } else emptyMap()
 
                 val views = viewsDto.map { dto ->

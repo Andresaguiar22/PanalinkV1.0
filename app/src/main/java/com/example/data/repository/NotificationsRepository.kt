@@ -48,7 +48,9 @@ class NotificationsRepository {
                 val userIds = dtos.mapNotNull { it.actorId }.filter { it.isNotBlank() }.distinct()
                 val publicResult = PublicProfileRepository.getInstance().getPublicProfiles(userIds)
                 val publicProfilesMap = if (publicResult is PublicProfileFetchResult.Success) {
-                    publicResult.data
+                    publicResult.data.mapNotNull { (id, pubResult) ->
+                        if (pubResult is PublicProfileFetchResult.Success) id to pubResult.data else null
+                    }.toMap()
                 } else emptyMap()
 
                 val resolvedNotifications = parsed.map { notif ->
