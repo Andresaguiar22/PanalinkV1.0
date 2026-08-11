@@ -80,6 +80,7 @@ jobs:
           ${{ secrets.KEYSTORE_BASE64 }}
           EOF
           base64 --decode --ignore-garbage base64_temp.txt > app/release-key.jks
+          cp app/release-key.jks release-key.jks
 
       - name: Test Keystore Integrity & Fingerprint
         run: |
@@ -97,4 +98,4 @@ jobs:
 
       - name: Clean up Keystore
         if: always()
-        run: rm -f app/release-key.jks base64_temp.txt
+        run: rm -f app/release-key.jks release-key.jks base64_temp.txt
