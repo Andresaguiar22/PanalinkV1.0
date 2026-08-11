@@ -5,10 +5,64 @@ const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
-const { spawn } = require("child_process");
+const { exec, spawn } = require("child_process");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Security Limits
+const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
+const MAX_FIELDS = 15;
+const MAX_FILES = 1;
+
+// --- MIDDLEWARE: SUPABASE JWT AUTHENTICATION ---
+function authUserMiddleware(req, res, next) {
+  const secret = process.env.SUPABASE_JWT_SECRET || process.env.SOCKET_JWT_SECRET;
+  if (!secret) {
+    console.error("❌ SUPABASE_JWT_SECRET/SOCKET_JWT_SECRET no configurado.");
+    return res.status(500).json({ error: "Error de configuración de seguridad en el servidor" });
+  }
+
+  let token = null;
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    token = authHeader.substring(7).trim();
+  }
+
+  if (!token) {
+    return res.status(401).json({ error: "Acceso denegado: Token de sesión ausente" });
+  }
+
+  try {
+    const decoded = jwt.verify(token, secret, {
+      algorithms: ["HS256", "HS384", "HS512"]
+    });
+
+    const userId = decoded.sub || decoded.userId || decoded.id || decoded.user_id;
+    if (!userId) {
+      return res.status(401).json({ error: "Token inválido: Identidad de usuario no encontrada" });
+    }
+
+    req.user = { id: userId, ...decoded };
+    next();
+  } catch (err) {
+    console.warn(`⚠️ Intento de upload con token inválido: ${err.message}`);
+    return res.status(401).json({ error: "Sesión inválida o expirada" });
+  }
+}
+
+// --- HELPER: MIME VALIDATION VIA MAGIC BYTES ---
+function validateMimeWithFileCommand(filePath) {
+  return new Promise((resolve, reject) => {
+    exec(`file --mime-type -b "${filePath}"`, (error, stdout, stderr) => {
+      if (error) {
+        console.error("Error ejecutando comando file:", error);
+        return resolve(null);
+      }
+      resolve(stdout.trim());
+    });
+  });
+}
 
 // Centralized single source of truth for dynamic CDN URL
 let currentUrl = (process.env.APP_URL || "http://10.0.2.2:3000").replace(/\/$/, "");
@@ -121,7 +175,14 @@ const storage = multer.diskStorage({
     }
   }
 });
-const upload = multer({ storage });
+const upload = multer({ 
+  storage,
+  limits: {
+    fileSize: MAX_FILE_SIZE,
+    fields: MAX_FIELDS,
+    files: MAX_FILES
+  }
+});
 
 // --- ENDPOINTS ---
 
@@ -167,55 +228,89 @@ app.get("/update-url", authCdnMiddleware, (req, res) => {
 });
 
 // 4. File Upload (Required by Android UploadRepository)
-app.post("/upload", upload.single("mediaFile"), (req, res) => {
+app.post("/upload", authUserMiddleware, upload.single("mediaFile"), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: "No se recibió ningún archivo" });
   }
 
   const tempPath = req.file.path;
-  const filename = req.file.filename;
-  const mimetype = req.file.mimetype || "";
-  const originalname = req.file.originalname || "";
+  const originalname = req.file.originalname || "unknown";
+  
+  // 1. Validate User Authorization
+  const bodyUserId = req.body.userId;
+  const authenticatedUserId = req.user.id;
 
-  let targetFolder = "documents";
-  const ext = path.extname(originalname).toLowerCase();
-
-  if (filename.startsWith("thumb_") || originalname.startsWith("thumb_")) {
-    targetFolder = "images";
-  } else if (req.body.type === "sticker" || req.query.type === "sticker" || mimetype.includes("sticker")) {
-    targetFolder = "stickers";
-  } else if (mimetype.startsWith("image/")) {
-    targetFolder = "images";
-  } else if (mimetype.startsWith("video/")) {
-    targetFolder = "videos";
-  } else if (mimetype.startsWith("audio/")) {
-    targetFolder = "audio";
-  } else if (
-    mimetype.startsWith("application/pdf") ||
-    mimetype.includes("word") ||
-    mimetype.includes("excel") ||
-    mimetype.includes("sheet") ||
-    mimetype.includes("zip") ||
-    [".pdf", ".doc", ".docx", ".xls", ".xlsx", ".zip", ".rar", ".txt"].includes(ext)
-  ) {
-    targetFolder = "documents";
-  } else {
-    targetFolder = "documents";
+  if (bodyUserId && bodyUserId !== authenticatedUserId) {
+    console.warn(`🚨 Intento de suplantación: Usuario ${authenticatedUserId} intentó subir para ${bodyUserId}`);
+    if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+    return res.status(403).json({ error: "No tienes permiso para subir archivos en nombre de otro usuario" });
   }
 
-  const finalDest = path.join(storageDir, targetFolder, filename);
+  // 2. Validate MIME type via magic bytes
+  const detectedMime = await validateMimeWithFileCommand(tempPath);
+  if (!detectedMime) {
+    console.error("❌ Falló la detección de MIME para:", tempPath);
+    if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+    return res.status(400).json({ error: "No se pudo validar el tipo de archivo" });
+  }
 
+  console.log(`🔍 Validación MIME: Enviado=${req.file.mimetype}, Detectado=${detectedMime}`);
+
+  // 3. Determine target folder and final extension
+  let targetFolder = "documents";
+  let finalExt = "";
+
+  if (detectedMime.startsWith("image/")) {
+    targetFolder = "images";
+    finalExt = detectedMime.split("/")[1].replace("jpeg", "jpg");
+  } else if (detectedMime.startsWith("video/")) {
+    targetFolder = "videos";
+    finalExt = detectedMime.split("/")[1];
+  } else if (detectedMime.startsWith("audio/")) {
+    targetFolder = "audio";
+    finalExt = detectedMime.split("/")[1].replace("mpeg", "mp3");
+  } else if (detectedMime.includes("sticker")) {
+    targetFolder = "stickers";
+    finalExt = "webp";
+  } else if (detectedMime === "application/pdf") {
+    targetFolder = "documents";
+    finalExt = "pdf";
+  } else if (detectedMime === "text/plain") {
+    targetFolder = "documents";
+    finalExt = "txt";
+  } else if (detectedMime === "application/zip") {
+    targetFolder = "documents";
+    finalExt = "zip";
+  } else {
+    targetFolder = "documents";
+    const originalExt = path.extname(originalname).toLowerCase().replace(".", "");
+    finalExt = originalExt || "bin";
+  }
+
+  // Sanitize final extension
+  finalExt = finalExt.replace(/[^a-z0-9]/g, "").substring(0, 5);
+  if (!finalExt) finalExt = "bin";
+
+  // 4. Secure File Naming (UUID)
+  const isThumb = path.basename(originalname).startsWith("thumb_");
+  const uniqueId = crypto.randomUUID();
+  const finalFilename = isThumb ? `thumb_${uniqueId}.${finalExt}` : `media-${uniqueId}.${finalExt}`;
+
+  const finalDest = path.join(storageDir, targetFolder, finalFilename);
+
+  // 5. Move to final destination
   try {
     fs.copyFileSync(tempPath, finalDest);
     fs.unlinkSync(tempPath);
   } catch (err) {
-    console.error("Error al mover archivo de temp a destino final:", err);
-    return res.status(500).json({ error: "Error al procesar el almacenamiento final del archivo" });
+    console.error("❌ Error al mover archivo a destino final:", err);
+    if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+    return res.status(500).json({ error: "Error interno al procesar el archivo" });
   }
 
-  const mediaUrl = `${currentUrl}/video/${encodeURIComponent(filename)}`;
+  const mediaUrl = `${currentUrl}/video/${encodeURIComponent(finalFilename)}`;
 
-  console.log(`📥 Archivo subido con éxito: ${filename} (guardado en ${targetFolder})`);
+  console.log(`✅ Upload Seguro: ${finalFilename} (${targetFolder}) por usuario ${authenticatedUserId}`);
 
   res.json({
     success: true,
@@ -223,9 +318,10 @@ app.post("/upload", upload.single("mediaFile"), (req, res) => {
     url: mediaUrl,
     data: {
       media_url: mediaUrl,
-      filename: filename,
+      filename: finalFilename,
       size: req.file.size,
-      folder: targetFolder
+      folder: targetFolder,
+      mime: detectedMime
     }
   });
 });

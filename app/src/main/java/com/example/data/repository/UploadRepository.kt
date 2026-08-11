@@ -12,6 +12,8 @@ import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import com.example.data.supabase.SessionManager
+import com.example.data.supabase.SupabaseClient
 import org.json.JSONObject
 import java.io.File
 import java.util.UUID
@@ -162,10 +164,19 @@ class UploadRepository {
 
             val multipartBody = multipartBuilder.build()
 
-            val request = Request.Builder()
+            // Get Supabase token for secure authentication
+            val token = SessionManager.getUserAuthToken()
+            if (token == null) {
+                Log.e(TAG, "❌ No se pudo obtener el token de sesión. El usuario debe estar autenticado.")
+                return@withContext Result.failure(Exception("Usuario no autenticado"))
+            }
+
+            val requestBuilder = Request.Builder()
                 .url(uploadEndpoint)
+                .addHeader("Authorization", "Bearer $token")
                 .post(multipartBody)
-                .build()
+
+            val request = requestBuilder.build()
 
             Log.d(TAG, "Enviando petición a través de OkHttp...")
 
