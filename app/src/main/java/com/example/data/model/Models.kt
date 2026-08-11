@@ -372,42 +372,6 @@ data class UpdateProfileRequest(
 )
 
 @JsonClass(generateAdapter = true)
-data class InsertProfileRequest(
-    @Json(name = "id")
-    val id: String,
-
-    @Json(name = "display_name")
-    val displayName: String,
-
-    @Json(name = "avatar_url")
-    val avatarUrl: String? = null,
-
-    @Json(name = "is_profile_complete")
-    val isProfileComplete: Boolean = false,
-
-    @Json(name = "first_name")
-    val firstName: String? = null,
-
-    @Json(name = "last_name")
-    val lastName: String? = null,
-
-    @Json(name = "status")
-    val status: String? = "active",
-
-    @Json(name = "birth_date")
-    val birthDate: String? = null,
-
-    @Json(name = "sex")
-    val sex: String? = null,
-
-    @Json(name = "interests")
-    val interests: List<String>? = emptyList(),
-
-    @Json(name = "cover_url")
-    val coverUrl: String? = null
-)
-
-@JsonClass(generateAdapter = true)
 data class SignUpOptions(
     @Json(name = "emailRedirectTo") val emailRedirectTo: String? = "panalink://verify"
 )

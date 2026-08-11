@@ -70,16 +70,6 @@ interface SupabaseApiService {
 
     // --- Database (PostgREST) Endpoints ---
     
-    // Profiles
-    @GET("rest/v1/profiles")
-    suspend fun getProfiles(
-        @Header("apikey") apiKey: String,
-        @Header("Authorization") authorization: String,
-        @Query("select") select: String = "*",
-        @Query("display_name") displayNameFilter: String? = null,
-        @Query("id") idFilter: String? = null
-    ): Response<List<Profile>>
-
     @GET("rest/v1/profiles")
     suspend fun getProfile(
         @Header("apikey") apiKey: String,
@@ -128,14 +118,6 @@ interface SupabaseApiService {
         @Header("Authorization") authorization: String,
         @Body profile: Map<String, @JvmSuppressWildcards Any>
     ): Response<ResponseBody>
-
-    @POST("rest/v1/profiles")
-    suspend fun insertProfileDto(
-        @Header("apikey") apiKey: String,
-        @Header("Authorization") authorization: String,
-        @Body profile: InsertProfileRequest,
-        @Header("Prefer") prefer: String = "return=representation"
-    ): Response<List<Profile>>
 
     @DELETE("rest/v1/profiles")
     suspend fun deleteProfile(
@@ -193,22 +175,6 @@ interface SupabaseApiService {
         @Query("chat_id") chatIdFilter: String,
         @Query("user_id") userIdFilter: String,
         @Body updates: Map<String, @JvmSuppressWildcards Any>
-    ): Response<ResponseBody>
-
-    @PATCH("rest/v1/thread_messages")
-    suspend fun softDeleteThreadMessagesByChat(
-        @Header("apikey") apiKey: String,
-        @Header("Authorization") authorization: String,
-        @Query("thread_id") threadIdFilter: String,
-        @Body update: Map<String, String> = mapOf("status" to "deleted")
-    ): Response<ResponseBody>
-
-    @PATCH("rest/v1/messages")
-    suspend fun softDeleteLegacyMessagesByChat(
-        @Header("apikey") apiKey: String,
-        @Header("Authorization") authorization: String,
-        @Query("chat_id") chatIdFilter: String,
-        @Body update: Map<String, String> = mapOf("status" to "deleted")
     ): Response<ResponseBody>
 
 
@@ -513,22 +479,6 @@ interface SupabaseApiService {
         @Header("Content-Profile") contentProfile: String = "social"
     ): Response<ResponseBody>
 
-    @POST("rest/v1/user_reels")
-    suspend fun createReel(
-        @Header("apikey") apiKey: String,
-        @Header("Authorization") authorization: String,
-        @Body state: Map<String, @JvmSuppressWildcards Any?>,
-        @Header("Content-Profile") contentProfile: String = "social"
-    ): Response<ResponseBody>
-
-    @POST("rest/v1/user_stories")
-    suspend fun createStory(
-        @Header("apikey") apiKey: String,
-        @Header("Authorization") authorization: String,
-        @Body state: Map<String, @JvmSuppressWildcards Any?>,
-        @Header("Content-Profile") contentProfile: String = "social"
-    ): Response<ResponseBody>
-
     @POST("rest/v1/rpc/clear_chat")
     suspend fun clearChatRpc(
         @Header("apikey") apiKey: String,
@@ -599,60 +549,6 @@ interface SupabaseApiService {
         @Header("Authorization") authorization: String,
         @Body params: Map<String, Int>
     ): Response<List<UserState>>
-
-    @POST("rest/v1/rpc/toggle_like")
-    suspend fun toggleLikeRpc(
-        @Header("apikey") apiKey: String,
-        @Header("Authorization") authorization: String,
-        @Body params: Map<String, @JvmSuppressWildcards Any>,
-        @Header("Accept-Profile") acceptProfile: String = "social",
-        @Header("Content-Profile") contentProfile: String = "social"
-    ): Response<ToggleLikeResponseDto>
-
-    @POST("rest/v1/rpc/toggle_favorite")
-    suspend fun toggleFavoriteRpc(
-        @Header("apikey") apiKey: String,
-        @Header("Authorization") authorization: String,
-        @Body params: Map<String, @JvmSuppressWildcards Any>,
-        @Header("Accept-Profile") acceptProfile: String = "social",
-        @Header("Content-Profile") contentProfile: String = "social"
-    ): Response<ToggleFavoriteResponseDto>
-
-    @POST("rest/v1/rpc/toggle_story_like")
-    suspend fun toggleStoryLikeRpc(
-        @Header("apikey") apiKey: String,
-        @Header("Authorization") authorization: String,
-        @Body params: Map<String, String>,
-        @Header("Accept-Profile") acceptProfile: String = "social",
-        @Header("Content-Profile") contentProfile: String = "social"
-    ): Response<ToggleLikeResponseDto>
-
-    @POST("rest/v1/rpc/toggle_story_favorite")
-    suspend fun toggleStoryFavoriteRpc(
-        @Header("apikey") apiKey: String,
-        @Header("Authorization") authorization: String,
-        @Body params: Map<String, String>,
-        @Header("Accept-Profile") acceptProfile: String = "social",
-        @Header("Content-Profile") contentProfile: String = "social"
-    ): Response<ToggleFavoriteResponseDto>
-
-    @POST("rest/v1/rpc/toggle_reel_like")
-    suspend fun toggleReelLikeRpc(
-        @Header("apikey") apiKey: String,
-        @Header("Authorization") authorization: String,
-        @Body params: Map<String, String>,
-        @Header("Accept-Profile") acceptProfile: String = "social",
-        @Header("Content-Profile") contentProfile: String = "social"
-    ): Response<ToggleLikeResponseDto>
-
-    @POST("rest/v1/rpc/toggle_reel_favorite")
-    suspend fun toggleReelFavoriteRpc(
-        @Header("apikey") apiKey: String,
-        @Header("Authorization") authorization: String,
-        @Body params: Map<String, String>,
-        @Header("Accept-Profile") acceptProfile: String = "social",
-        @Header("Content-Profile") contentProfile: String = "social"
-    ): Response<ToggleFavoriteResponseDto>
 
     @POST("rest/v1/rpc/set_story_like")
     suspend fun setStoryLikeRpc(

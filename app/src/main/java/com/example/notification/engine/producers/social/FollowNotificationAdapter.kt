@@ -72,6 +72,21 @@ object FollowNotificationAdapter {
             groupingKey = "followers"
         )
         getEngine().publish(event)
+
+        // Remote bridge to notification_events table
+        runCatching {
+            com.example.notification.engine.producers.NotificationEventPublisher.publishEvent(
+                eventType = "USER_FOLLOWED_YOU",
+                actorId = actorId,
+                targetUserId = targetUserId,
+                entityId = actorId,
+                title = "Nuevo seguidor",
+                body = "$actorName comenzó a seguirte",
+                domain = "SOCIAL",
+                actorName = actorName,
+                actorAvatarUrl = actorAvatarUrl
+            )
+        }
     }
 
     suspend fun publishAcceptedFollow(

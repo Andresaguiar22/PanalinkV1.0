@@ -7,11 +7,6 @@ import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
-import com.example.notification.engine.storage.converter.NotificationConverters
-import com.example.notification.engine.storage.dao.ActivityFeedDao
-import com.example.notification.engine.storage.dao.NotificationDaoV2
-import com.example.notification.engine.storage.entity.ActivityFeedEntityV2
-import com.example.notification.engine.storage.entity.NotificationEntityV2
 
 @Database(
     entities = [
@@ -24,8 +19,6 @@ import com.example.notification.engine.storage.entity.NotificationEntityV2
         PendingPostEntity::class,
         StateEntity::class,
         com.example.media.model.MediaAssetEntity::class,
-        NotificationEntityV2::class,
-        ActivityFeedEntityV2::class,
         com.example.creative.persistence.CreativeProjectEntity::class,
         com.example.media.audio.AudioTrackEntity::class,
         com.example.media.playlist.PlaylistEntity::class,
@@ -41,7 +34,6 @@ import com.example.notification.engine.storage.entity.NotificationEntityV2
     version = 39,
     exportSchema = true
 )
-@TypeConverters(NotificationConverters::class)
 abstract class PanalinkDatabase : RoomDatabase() {
     abstract fun localNotificationDao(): LocalNotificationDao
     abstract fun messageDao(): MessageDao
@@ -54,8 +46,6 @@ abstract class PanalinkDatabase : RoomDatabase() {
     abstract fun pendingPostDao(): PendingPostDao
     abstract fun statesDao(): StatesDao
     abstract fun mediaAssetDao(): MediaAssetDao
-    abstract fun notificationDaoV2(): NotificationDaoV2
-    abstract fun activityFeedDao(): ActivityFeedDao
     abstract fun creativeProjectDao(): com.example.creative.persistence.CreativeProjectDao
     abstract fun audioDao(): com.example.media.audio.AudioDao
     abstract fun playlistDao(): com.example.media.playlist.PlaylistDao

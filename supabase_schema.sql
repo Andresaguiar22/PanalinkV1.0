@@ -20,10 +20,10 @@ create table public.profiles (
 alter table public.profiles enable row level security;
 
 -- Profiles Policies
-create policy "Allow authenticated users to read all profiles"
+create policy "Profiles are viewable by users who created them."
 on public.profiles for select
 to authenticated
-using (true); -- Required to search users by name
+using (auth.uid() = id);
 
 create policy "Allow users to update their own profile"
 on public.profiles for update
@@ -51,7 +51,7 @@ to authenticated
 using (true);
 
 -- Revoke write permissions from client roles on public_profiles
-revoke insert, update, delete, truncate on public.public_profiles from authenticated, anon;
+revoke all on public.public_profiles from anon, authenticated, public;
 grant select on public.public_profiles to authenticated;
 
 -- Function to keep updated_at current
@@ -59,7 +59,7 @@ create or replace function public.set_updated_at()
 returns trigger
 language plpgsql
 security definer
-set search_path = public, pg_temp
+set search_path = pg_catalog, public
 as $$
 begin
   new.updated_at = now();
@@ -77,7 +77,7 @@ create or replace function public.sync_profile_to_public_profile()
 returns trigger
 language plpgsql
 security definer
-set search_path = public, pg_temp
+set search_path = pg_catalog, public
 as $$
 begin
     if (tg_op = 'DELETE') then
@@ -279,7 +279,7 @@ create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
 security definer
-set search_path = public, pg_temp
+set search_path = pg_catalog, public
 as $$
 begin
     insert into public.profiles (id, display_name, avatar_url)
@@ -424,7 +424,11 @@ create extension if not exists pgcrypto;
 
 -- 13. Ensure One to One Thread Function
 create or replace function public.ensure_one_to_one_thread(p_user_a uuid, p_user_b uuid)
-returns uuid as $$
+returns uuid
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
 declare
     v_thread_id uuid;
 begin
@@ -448,7 +452,11 @@ $$ language plpgsql security definer;
 
 -- 14. Add Contact by PIN Function (Legacy wrapper delegating to add_contact_by_identifier)
 create or replace function public.add_contact_by_pin(p_pin text)
-returns json as $$
+returns json
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
 begin
     return public.add_contact_by_identifier(p_pin);
 end;
@@ -481,7 +489,11 @@ using (user_id = auth.uid());
 
 -- RPC 1: Get or generate current authenticated user's contact identifier (PIN & QR Payload)
 create or replace function public.get_my_contact_identifier()
-returns json as $$
+returns json
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
 declare
     v_user_id uuid;
     v_row public.contact_identifiers%rowtype;
@@ -540,7 +552,11 @@ $$ language plpgsql security definer;
 
 -- RPC 2: Resolve identifier (PIN / QR payload) to target public profile safely
 create or replace function public.resolve_contact_identifier(p_identifier text)
-returns json as $$
+returns json
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
 declare
     v_clean text;
     v_target_id uuid;
@@ -619,7 +635,11 @@ $$ language plpgsql security definer;
 
 -- RPC 3: Add contact by identifier (supports both PIN and QR tokens, creates bidirectional contact)
 create or replace function public.add_contact_by_identifier(p_identifier text)
-returns json as $$
+returns json
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
 declare
     v_current_user uuid;
     v_resolved json;
@@ -842,6 +862,7 @@ create or replace function public.accept_friend_request(req_id uuid)
 returns void
 language plpgsql
 security definer
+set search_path = pg_catalog, public
 as $$
 declare
     v_sender_id uuid;
@@ -874,6 +895,7 @@ create or replace function public.decline_friend_request(req_id uuid)
 returns void
 language plpgsql
 security definer
+set search_path = pg_catalog, public
 as $$
 begin
     -- Validate that the request exists, is pending, and the user is the receiver
@@ -898,6 +920,7 @@ create or replace function public.send_friend_request(p_receiver_id uuid)
 returns void
 language plpgsql
 security definer
+set search_path = pg_catalog, public
 as $$
 declare
     v_privacy_level text;

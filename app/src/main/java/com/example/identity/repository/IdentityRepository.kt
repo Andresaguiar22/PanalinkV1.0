@@ -1,124 +1,67 @@
 package com.example.identity.repository
 
 import android.content.Context
+import androidx.annotation.Keep
 import com.example.data.database.PanalinkDatabase
-import com.example.data.database.ProfileEntity
-import com.example.data.model.Profile
-import com.example.identity.analytics.IdentityAnalytics
+import com.example.data.repository.PublicProfileRepository
 import com.example.identity.memory.IdentityMemoryCache
-import com.example.identity.model.CachedProfile
-import com.example.identity.model.ProfileUpdateResult
 import com.example.identity.model.IdentityUiState
-import com.example.identity.model.toIdentityUiState
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.withContext
 
-import kotlinx.coroutines.flow.distinctUntilChanged
-import java.util.concurrent.ConcurrentHashMap
+@Keep
+class IdentityRepository(context: Context) {
+    private val db = PanalinkDatabase.getDatabase(context)
+    private val profileDao = db.profileDao()
+    private val publicProfileRepository = PublicProfileRepository(db.publicProfileDao())
 
-class IdentityRepository(private val context: Context) {
-    
-    private val profileDao = PanalinkDatabase.getDatabase(context).profileDao()
-    
-    private val profileFlowCache = ConcurrentHashMap<String, Flow<CachedProfile?>>()
-    private val identityFlowCache = ConcurrentHashMap<String, Flow<IdentityUiState?>>()
-
-    fun observeProfile(userId: String): Flow<CachedProfile?> {
-        return profileFlowCache.getOrPut(userId) {
-            profileDao.observeProfile(userId).map { entity ->
-                entity?.let {
-                    val profile = it.toProfile()
-                    val cached = CachedProfile(
-                        profile = profile,
-                        avatarLocalPath = it.avatarLocalPath,
-                        coverLocalPath = it.coverLocalPath,
-                        isDirty = it.isDirty,
-                        syncVersion = it.syncVersion,
-                        lastSyncedAt = it.lastSyncedAt
-                    )
-                    IdentityMemoryCache.profiles.put(userId, cached)
-                    cached
-                }
-            }.distinctUntilChanged()
-        }
-    }
-    
     fun observeIdentity(userId: String): Flow<IdentityUiState?> {
-        return identityFlowCache.getOrPut(userId) {
-            observeProfile(userId).map { it?.toIdentityUiState() }.distinctUntilChanged()
-        }
-    }
-
-    fun observeProfiles(): Flow<List<CachedProfile>> {
-        return profileDao.observeAllProfiles().map { entities ->
-            entities.map { entity ->
-                val profile = entity.toProfile()
-                val cached = CachedProfile(
-                    profile = profile,
-                    avatarLocalPath = entity.avatarLocalPath,
-                    coverLocalPath = entity.coverLocalPath,
-                    isDirty = entity.isDirty,
-                    syncVersion = entity.syncVersion,
-                    lastSyncedAt = entity.lastSyncedAt
+        // First try to observe from local_profiles (Private profiles / friends)
+        return profileDao.observeProfile(userId).map { entity ->
+            if (entity != null) {
+                val state = IdentityUiState(
+                    userId = entity.id,
+                    displayName = entity.displayName,
+                    avatarUrl = entity.avatarUrl,
+                    avatarLocalPath = entity.avatarLocalPath
                 )
-                IdentityMemoryCache.profiles.put(entity.id, cached)
-                cached
+                IdentityMemoryCache.profiles[userId] = state
+                state
+            } else {
+                // If not in local_profiles, try public_profiles via PublicProfileRepository
+                // Note: PublicProfileRepository returns a StateFlow of List<PublicProfile> 
+                // but we can just use the memory cache of the repository if it's there.
+                // For simplicity in this bridge, we'll return null if not found locally, 
+                // but we should probably trigger a fetch in the background.
+                IdentityMemoryCache.profiles[userId]
             }
         }
     }
 
-    suspend fun getProfile(userId: String): CachedProfile? = withContext(Dispatchers.IO) {
-        val memoryHit = IdentityMemoryCache.profiles.get(userId)
-        if (memoryHit != null) {
-            IdentityAnalytics.trackRoomHit() // Memory cache implies Room hit originally
-            return@withContext memoryHit
-        }
-
-        val entity = profileDao.getProfile(userId)
-        if (entity != null) {
-            IdentityAnalytics.trackRoomHit()
-            val profile = entity.toProfile()
-            val cached = CachedProfile(
-                profile = profile,
-                avatarLocalPath = entity.avatarLocalPath,
-                coverLocalPath = entity.coverLocalPath,
-                isDirty = entity.isDirty,
-                syncVersion = entity.syncVersion,
-                lastSyncedAt = entity.lastSyncedAt
+    suspend fun getProfile(userId: String): IdentityUiState? {
+        val entity = profileDao.getProfileById(userId)
+        return if (entity != null) {
+            IdentityUiState(
+                userId = entity.id,
+                displayName = entity.displayName,
+                avatarUrl = entity.avatarUrl,
+                avatarLocalPath = entity.avatarLocalPath
             )
-            IdentityMemoryCache.profiles.put(userId, cached)
-            return@withContext cached
+        } else {
+            IdentityMemoryCache.profiles[userId]
         }
-        
-        null
     }
 
-    suspend fun saveProfile(cachedProfile: CachedProfile): ProfileUpdateResult = withContext(Dispatchers.IO) {
-        try {
-            val entity = ProfileEntity.fromProfile(cachedProfile.profile).copy(
-                avatarLocalPath = cachedProfile.avatarLocalPath,
-                coverLocalPath = cachedProfile.coverLocalPath,
-                isDirty = cachedProfile.isDirty,
-                syncVersion = cachedProfile.syncVersion,
-                lastSyncedAt = cachedProfile.lastSyncedAt
-            )
-            profileDao.insertOrUpdate(entity)
-            IdentityMemoryCache.profiles.put(cachedProfile.profile.id, cachedProfile)
-            ProfileUpdateResult.Success
-        } catch (e: Exception) {
-            ProfileUpdateResult.Error(e)
+    suspend fun saveProfile(state: IdentityUiState) {
+        // Bridge save back to Room if possible
+        val existing = profileDao.getProfileById(state.userId)
+        if (existing != null) {
+            profileDao.insertProfile(existing.copy(
+                displayName = state.displayName ?: existing.displayName,
+                avatarUrl = state.avatarUrl ?: existing.avatarUrl,
+                avatarLocalPath = state.avatarLocalPath ?: existing.avatarLocalPath
+            ))
         }
-    }
-    
-    suspend fun updateProfile(cachedProfile: CachedProfile): ProfileUpdateResult = saveProfile(cachedProfile)
-    
-    suspend fun syncProfile(userId: String) {
-        // Handled by IdentitySyncManager, this is a placeholder if needed for direct triggering
-    }
-    
-    suspend fun syncProfiles() {
-        // Handled by IdentitySyncManager
+        IdentityMemoryCache.profiles[state.userId] = state
     }
 }
