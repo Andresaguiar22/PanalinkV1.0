@@ -68,9 +68,9 @@ function getMimeTypeByMagic(filePath, clientMime = null) {
   try {
     if (!fs.existsSync(filePath)) return null;
     
-    const buffer = Buffer.alloc(24);
+    const buffer = Buffer.alloc(32);
     const fd = fs.openSync(filePath, "r");
-    const bytesRead = fs.readSync(fd, buffer, 0, 24, 0);
+    const bytesRead = fs.readSync(fd, buffer, 0, 32, 0);
     fs.closeSync(fd);
 
     if (bytesRead < 4) return null;
@@ -81,15 +81,14 @@ function getMimeTypeByMagic(filePath, clientMime = null) {
     // PNG: 89 50 4E 47
     if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) return "image/png";
     
-    // GIF: 47 49 46 38 (GIF87a or GIF89a)
+    // GIF: 47 49 46 38
     if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x38) return "image/gif";
     
-    // PDF: 25 50 44 46 (%PDF)
+    // PDF: 25 50 44 46
     if (buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46) return "application/pdf";
     
-    // ZIP: 50 4B 03 04 (PK\x03\x04)
+    // ZIP: 50 4B 03 04
     if (buffer[0] === 0x50 && buffer[1] === 0x4B && buffer[2] === 0x03 && buffer[3] === 0x04) {
-      // Office docs are ZIP-based. If client says it's a doc, we can trust it if it's a valid ZIP.
       if (clientMime && (clientMime.includes("word") || clientMime.includes("excel") || clientMime.includes("officedocument") || clientMime.includes("sheet"))) {
          return clientMime;
       }
@@ -106,39 +105,41 @@ function getMimeTypeByMagic(filePath, clientMime = null) {
     // OGG: OggS
     if (buffer[0] === 0x4F && buffer[1] === 0x67 && buffer[2] === 0x67 && buffer[3] === 0x53) return "audio/ogg";
 
-    // MP4 / M4A / MOV: ftyp at offset 4
+    // MP4 / M4A / MOV / 3GP: ftyp at offset 4
     if (buffer[4] === 0x66 && buffer[5] === 0x74 && buffer[6] === 0x79 && buffer[7] === 0x70) {
-      const brand = buffer.toString("ascii", 8, 12);
-      if (brand === "m4a " || brand === "M4A ") return "audio/mp4";
-      if (brand === "qt  ") return "video/quicktime";
+      const brand = buffer.toString("ascii", 8, 12).trim();
       
-      // Generic MP4 brands (isom, mp41, mp42, etc.)
-      if (brand.startsWith("mp4") || brand === "isom" || brand === "iso2") {
-        // If client specifically says it's audio/mp4 (e.g. voice note), we allow it.
+      // Audio brands
+      if (brand === "m4a" || brand === "M4A" || brand === "M4B" || brand === "M4P" || brand === "dash") return "audio/mp4";
+      
+      // 3GP brands
+      if (brand.startsWith("3gp")) return "audio/3gpp";
+
+      // Video brands
+      if (brand === "qt") return "video/quicktime";
+      if (brand.startsWith("mp4") || brand === "isom" || brand === "iso2" || brand === "iso5" || brand === "iso6" || brand === "avc1") {
         if (clientMime && clientMime.startsWith("audio/")) return "audio/mp4";
         return "video/mp4";
       }
-      // If it has ftyp but unknown brand, we can check client hint
+
+      // Trust client hint if ftyp is present
       if (clientMime && (clientMime.startsWith("video/") || clientMime.startsWith("audio/"))) return clientMime;
       return "video/mp4";
     }
 
-    // MP3: ID3 (49 44 33) or Frame Sync (FF FB / FF F3 / FF F2)
+    // MP3
     if (buffer[0] === 0x49 && buffer[1] === 0x44 && buffer[2] === 0x33) return "audio/mpeg";
     if (buffer[0] === 0xFF && (buffer[1] & 0xE0) === 0xE0) return "audio/mpeg";
 
-    // Legacy Office Docs: D0 CF 11 E0 A1 B1 1A E1
+    // Legacy Office
     if (buffer[0] === 0xD0 && buffer[1] === 0xCF && buffer[2] === 0x11 && buffer[3] === 0xE0) {
-      if (clientMime && (clientMime.includes("msword") || clientMime.includes("ms-excel") || clientMime.includes("ms-powerpoint"))) {
-        return clientMime;
-      }
-      return "application/msword";
+      return clientMime || "application/msword";
     }
 
-    return null;
+    return clientMime || null;
   } catch (e) {
-    console.error("❌ Error en validación MIME por bytes:", e);
-    return null;
+    console.error("❌ Error en validación MIME:", e);
+    return clientMime;
   }
 }
 

@@ -776,8 +776,10 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
                 val service = SupabaseClient.apiService ?: run { allSuccessful = false; return@withContext false }
                 val currentUid = SupabaseClient.currentUser?.id ?: run { allSuccessful = false; return@withContext false }
 
-                // Resolve receiver
+                // Resolve receiver and determine if it's a DM (thread_messages) or Channel (messages)
                 var receiverUid: String? = entity.receiverId
+                var isDmSync = !receiverUid.isNullOrEmpty()
+
                 if (receiverUid.isNullOrEmpty()) {
                     try {
                         val threadResponse = runCall { auth ->
@@ -790,34 +792,42 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
                         if (threadResponse != null && threadResponse.isSuccessful && !threadResponse.body().isNullOrEmpty()) {
                             val thread = threadResponse.body()!![0]
                             receiverUid = if (thread.userA == currentUid) thread.userB else thread.userA
+                            isDmSync = true
                             
                             // Save resolved receiverId back to local DB to avoid re-fetching
                             if (!receiverUid.isNullOrEmpty()) {
                                 messageDao.updateMessageReceiverId(entity.id, receiverUid!!)
                             }
+                        } else {
+                            isDmSync = false
                         }
                     } catch (e: Exception) {
                         Log.e(TAG, "Error resolving receiver during sync for message ${entity.id}", e)
+                        isDmSync = false
                     }
                 }
 
-                // VALIDACIÓN OBLIGATORIA (Rule 4)
-                if (receiverUid.isNullOrEmpty() || !isValidUuid(receiverUid)) {
-                    Log.e(TAG, "SYNC_FAILED: receiver_id is missing or invalid for message ${entity.id}. Skipping to prevent RLS/Constraint violation.")
-                    allSuccessful = false
-                    continue
-                }
-                
-                if (receiverUid == currentUid) {
-                    Log.e(TAG, "SYNC_FAILED: receiver_id cannot be the same as sender_id for message ${entity.id}")
-                    allSuccessful = false
-                    continue
+                // VALIDACIÓN PARA DMs
+                if (isDmSync) {
+                    if (receiverUid.isNullOrEmpty() || !isValidUuid(receiverUid)) {
+                        Log.e(TAG, "SYNC_FAILED: receiver_id is missing or invalid for DM ${entity.id}. Skipping to prevent RLS/Constraint violation.")
+                        allSuccessful = false
+                        continue
+                    }
+                    
+                    if (receiverUid == currentUid) {
+                        Log.e(TAG, "SYNC_FAILED: receiver_id cannot be the same as sender_id for DM ${entity.id}")
+                        allSuccessful = false
+                        continue
+                    }
                 }
 
-                // Retrieve receiver's E2EE public key
-                val receiverPublicKey = com.example.data.repository.UserKeysRepository.getPublicKeyForUser(receiverUid!!)
+                // Retrieve receiver's E2EE public key (Only for DMs)
+                val receiverPublicKey = if (isDmSync && !receiverUid.isNullOrEmpty()) {
+                    com.example.data.repository.UserKeysRepository.getPublicKeyForUser(receiverUid!!)
+                } else null
 
-                val contentToUpload = if (!receiverPublicKey.isNullOrEmpty() && !entity.content.isNullOrEmpty()) {
+                val contentToUpload = if (isDmSync && !receiverPublicKey.isNullOrEmpty() && !entity.content.isNullOrEmpty()) {
                     Log.d(TAG, "Encrypting pending message content using E2EE during sync")
                     com.example.util.CryptoManager.encrypt(entity.content!!, receiverPublicKey)
                 } else {
@@ -836,9 +846,7 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
 
                 val msgMap = mutableMapOf<String, Any?>(
                     "id" to remoteId,
-                    "thread_id" to entity.chatId,
                     "sender_id" to currentUid,
-                    "receiver_id" to receiverUid,
                     "reply_to" to entity.replyToMessageId?.takeIf { isValidUuid(it) },
                     "text_content" to contentToUpload,
                     "client_message_uuid" to entity.clientMessageUuid,
@@ -853,6 +861,13 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
                     "height" to entity.mediaHeight,
                     "music_playlist_id" to entity.musicPlaylistId
                 )
+
+                if (isDmSync) {
+                    msgMap["thread_id"] = entity.chatId
+                    msgMap["receiver_id"] = receiverUid
+                } else {
+                    msgMap["chat_id"] = entity.chatId
+                }
                 if (entity.isGhost || entity.content?.startsWith("[Ghost]") == true) {
                     msgMap["is_ghost"] = true
                 }
@@ -914,11 +929,19 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
                 
                 try {
                     threadResponse = runCall { auth ->
-                        service.createThreadMessage(
+                        if (isDmSync) {
+                            service.createThreadMessage(
                                 apiKey = SupabaseClient.supabaseAnonKey,
                                 authorization = auth,
                                 message = cleanMsgMap
                             )
+                        } else {
+                            service.createMessage(
+                                apiKey = SupabaseClient.supabaseAnonKey,
+                                authorization = auth,
+                                message = cleanMsgMap
+                            )
+                        }
                     }
                     if (threadResponse?.code() == 409 || threadResponse?.code() == 408 || (threadResponse?.code() ?: 0) >= 500) {
                         is409OrTimeout = true
