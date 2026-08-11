@@ -3,8 +3,8 @@ name: PanaLink V2.0 Unified Pipeline
 on:
   push:
     branches: [ "main", "master", "develop" ]
-  tags:
-    - 'v*'
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
       changelog:
