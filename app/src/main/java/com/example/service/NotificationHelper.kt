@@ -7,9 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.media.AudioFormat
 import android.media.AudioManager
-import android.media.AudioTrack
 import android.media.RingtoneManager
-import android.media.ToneGenerator
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -103,7 +101,7 @@ object NotificationHelper {
         }
     }
 
-    // Play selected custom notification sound (System default or synthetic tones)
+    // Play selected custom notification sound (System default)
     fun playNotificationSound(context: Context) {
         val prefs = context.getSharedPreferences("panalink_prefs", Context.MODE_PRIVATE)
         val soundEnabled = prefs.getBoolean("notifications_sound_enabled", true)
@@ -119,42 +117,12 @@ object NotificationHelper {
         }
 
         try {
-            when (toneType) {
-                "default" -> {
-                    val defaultUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-                    val ringtone = RingtoneManager.getRingtone(context, defaultUri)
-                    ringtone?.play()
-                    Log.d(TAG, "Played default system notification sound")
-                }
-                "pana_beep" -> playSyntheticTone(ToneGenerator.TONE_PROP_BEEP, 120)
-                "pana_double" -> playSyntheticTone(ToneGenerator.TONE_PROP_BEEP2, 250)
-                "pana_pip" -> playSyntheticTone(ToneGenerator.TONE_CDMA_PIP, 150)
-                "pana_high" -> playSyntheticTone(ToneGenerator.TONE_CDMA_HIGH_L, 200)
-                else -> {
-                    val defaultUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-                    val ringtone = RingtoneManager.getRingtone(context, defaultUri)
-                    ringtone?.play()
-                }
-            }
+            val defaultUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+            val ringtone = RingtoneManager.getRingtone(context, defaultUri)
+            ringtone?.play()
+            Log.d(TAG, "Played default system notification sound")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to play custom notification sound", e)
-        }
-    }
-
-    // Programmatically generates clean, high-quality audio beeps using ToneGenerator
-    private fun playSyntheticTone(toneType: Int, duration: Int) {
-        try {
-            val tg = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 100)
-            tg.startTone(toneType, duration)
-            Handler(Looper.getMainLooper()).postDelayed({
-                try {
-                    tg.release()
-                } catch (e: Exception) {
-                    // Ignore release errors
-                }
-            }, (duration + 100).toLong())
-        } catch (e: Exception) {
-            Log.e(TAG, "Error generating synthetic tone", e)
         }
     }
 
@@ -185,122 +153,6 @@ object NotificationHelper {
         if (!globalEnabled) return
 
         com.example.util.PanaLinkSoundManager.play(context, com.example.util.PanaSoundEvent.MESSAGE_READ)
-    }
-
-    private fun playWaterDrop() {
-        val sampleRate = 44100
-        val durationMs = 120
-        val numSamples = (durationMs * sampleRate) / 1000
-        val sample = ShortArray(numSamples)
-        
-        for (i in 0 until numSamples) {
-            val t = i.toDouble() / sampleRate
-            // Upward frequency sweep (chirp) from 950Hz to 1750Hz
-            val freq = 950.0 + (800.0 * (i.toDouble() / numSamples))
-            val angle = 2.0 * Math.PI * freq * t
-            
-            // Fast exponential decay envelope
-            val envelope = Math.exp(-5.0 * (i.toDouble() / numSamples))
-            sample[i] = (Math.sin(angle) * 30000.0 * envelope).toInt().toShort()
-        }
-        playBuffer(sample, sampleRate)
-    }
-
-    private fun playSoftPop() {
-        val sampleRate = 44100
-        val durationMs = 40
-        val numSamples = (durationMs * sampleRate) / 1000
-        val sample = ShortArray(numSamples)
-        
-        for (i in 0 until numSamples) {
-            val t = i.toDouble() / sampleRate
-            // Pleasant clear 550Hz frequency
-            val freq = 550.0
-            val angle = 2.0 * Math.PI * freq * t
-            
-            // Quadratic decay envelope for smoother sound
-            val progress = i.toDouble() / numSamples
-            val envelope = (1.0 - progress) * (1.0 - progress)
-            sample[i] = (Math.sin(angle) * 22000.0 * envelope).toInt().toShort()
-        }
-        playBuffer(sample, sampleRate)
-    }
-
-    private fun playSwoosh() {
-        val sampleRate = 44100
-        val durationMs = 140
-        val numSamples = (durationMs * sampleRate) / 1000
-        val sample = ShortArray(numSamples)
-        
-        for (i in 0 until numSamples) {
-            val t = i.toDouble() / sampleRate
-            // Downward sweep from 1400Hz to 400Hz (creates a nice swoosh)
-            val freq = 1400.0 - (1000.0 * (i.toDouble() / numSamples))
-            val angle = 2.0 * Math.PI * freq * t
-            
-            // Exponential decay envelope
-            val envelope = Math.exp(-4.2 * (i.toDouble() / numSamples))
-            sample[i] = (Math.sin(angle) * 18000.0 * envelope).toInt().toShort()
-        }
-        playBuffer(sample, sampleRate)
-    }
-
-    private fun playBuffer(sample: ShortArray, sampleRate: Int) {
-        Thread {
-            var audioTrack: AudioTrack? = null
-            try {
-                val minBufferSize = AudioTrack.getMinBufferSize(
-                    sampleRate,
-                    AudioFormat.CHANNEL_OUT_MONO,
-                    AudioFormat.ENCODING_PCM_16BIT
-                )
-                val bufferSize = Math.max(minBufferSize, sample.size * 2)
-                
-                audioTrack = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    AudioTrack.Builder()
-                        .setAudioAttributes(
-                            android.media.AudioAttributes.Builder()
-                                .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION_COMMUNICATION_INSTANT)
-                                .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                                .build()
-                        )
-                        .setAudioFormat(
-                            AudioFormat.Builder()
-                                .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                                .setSampleRate(sampleRate)
-                                .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                                .build()
-                        )
-                        .setBufferSizeInBytes(bufferSize)
-                        .setTransferMode(AudioTrack.MODE_STREAM)
-                        .build()
-                } else {
-                    @Suppress("DEPRECATION")
-                    AudioTrack(
-                        AudioManager.STREAM_NOTIFICATION,
-                        sampleRate,
-                        AudioFormat.CHANNEL_OUT_MONO,
-                        AudioFormat.ENCODING_PCM_16BIT,
-                        bufferSize,
-                        AudioTrack.MODE_STREAM
-                    )
-                }
-                
-                audioTrack.play()
-                audioTrack.write(sample, 0, sample.size)
-                
-                Thread.sleep(sample.size * 1000L / sampleRate + 50)
-                audioTrack.stop()
-            } catch (e: Exception) {
-                Log.e(TAG, "Error playing synthetic audio", e)
-            } finally {
-                try {
-                    audioTrack?.release()
-                } catch (e: Exception) {
-                    // Ignore
-                }
-            }
-        }.start()
     }
 
     // Vibrate device based on user preference patterns (short, long, double, triple)
@@ -491,17 +343,9 @@ object NotificationHelper {
             builder.setCategory(NotificationCompat.CATEGORY_MESSAGE)
         }
 
-        if (soundEnabled) {
-            if (toneType == "default") {
-                val defaultSoundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-                builder.setSound(defaultSoundUri)
-            } else if (toneType != "silent") {
-                // Play custom synthetic tone programmatically, keep system silent to prevent double play
-                playNotificationSound(context)
-                builder.setSound(null)
-            } else {
-                builder.setSound(null)
-            }
+        if (soundEnabled && toneType != "silent") {
+            val defaultSoundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+            builder.setSound(defaultSoundUri)
         } else {
             builder.setSound(null)
         }

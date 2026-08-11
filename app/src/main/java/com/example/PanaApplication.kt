@@ -44,9 +44,38 @@ class PanaApplication : Application(), ImageLoaderFactory, DefaultLifecycleObser
                     val data = request.data
                     if (data is String) {
                         val resolvedUrl = com.example.data.repository.CdnManager.resolveMediaUrlSync(data)
+                        var currentRequest = request
                         if (resolvedUrl != data) {
-                            val newRequest = request.newBuilder().data(resolvedUrl).build()
-                            return@Interceptor chain.proceed(newRequest)
+                            currentRequest = request.newBuilder().data(resolvedUrl).build()
+                        }
+                        
+                        try {
+                            return@Interceptor chain.proceed(currentRequest)
+                        } catch (e: Exception) {
+                            val isNetworkError = e is java.net.ConnectException || 
+                                                 e is java.net.SocketTimeoutException || 
+                                                 e is java.net.UnknownHostException ||
+                                                 e is java.io.IOException
+
+                            val hasRetried = request.headers["X-CDN-Retried"] == "true"
+                            
+                            if (isNetworkError && !hasRetried && com.example.data.repository.CdnManager.isCdnRelated(data)) {
+                                android.util.Log.w("CoilInterceptor", "Network error resolving media, forcing CDN refresh: ${e.message}")
+                                kotlinx.coroutines.runBlocking {
+                                    com.example.data.repository.CdnManager.getCDNUrl(forceRefresh = true)
+                                }
+                                
+                                val finalResolvedUrl = com.example.data.repository.CdnManager.resolveMediaUrlSync(data)
+                                if (finalResolvedUrl != resolvedUrl && finalResolvedUrl.isNotEmpty()) {
+                                    android.util.Log.i("CoilInterceptor", "CDN updated! Retrying with new URL: $finalResolvedUrl")
+                                    val retryRequest = request.newBuilder()
+                                        .data(finalResolvedUrl)
+                                        .addHeader("X-CDN-Retried", "true")
+                                        .build()
+                                    return@Interceptor chain.proceed(retryRequest)
+                                }
+                            }
+                            throw e
                         }
                     }
                     chain.proceed(request)

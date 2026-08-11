@@ -484,14 +484,44 @@ function startCloudflaredTunnel() {
     const match = text.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/);
     if (match) {
       const detectedUrl = match[0];
-      currentUrl = detectedUrl;
-      console.log("\n=======================================================");
-      console.log("🌐 ¡TÚNEL DE CLOUDFLARED INICIADO Y DETECTADO CON ÉXITO!");
-      console.log("🔗 URL Pública Activa:", currentUrl);
-      console.log(`👉 Consulta el estado en: http://localhost:${PORT}/cdn-status`);
-      console.log("=======================================================\n");
+      if (currentUrl !== detectedUrl) {
+        currentUrl = detectedUrl;
+        console.log("\n=======================================================");
+        console.log("🌐 ¡TÚNEL DE CLOUDFLARED INICIADO Y DETECTADO CON ÉXITO!");
+        console.log("🔗 URL Pública Activa:", currentUrl);
+        console.log(`👉 Consulta el estado en: http://localhost:${PORT}/cdn-status`);
+        console.log("=======================================================\n");
+        updateSupabaseConfig(currentUrl);
+      }
     }
   };
+
+  async function updateSupabaseConfig(cdnUrl) {
+    const supabaseUrl = process.env.SUPABASE_URL;
+    const supabaseKey = process.env.SUPABASE_ANON_KEY;
+    if (!supabaseUrl || !supabaseKey) {
+      console.warn("⚠️ SUPABASE_URL o SUPABASE_ANON_KEY no configurados. Saltando actualización automática del CDN.");
+      return;
+    }
+    try {
+      const res = await fetch(`${supabaseUrl}/rest/v1/global_server_config?id=eq.1`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': supabaseKey,
+          'Authorization': `Bearer ${supabaseKey}`
+        },
+        body: JSON.stringify({ cdn_url: cdnUrl, active: true, updated_at: new Date().toISOString() })
+      });
+      if (!res.ok) {
+        console.error("❌ Error actualizando global_server_config:", await res.text());
+      } else {
+        console.log("✅ Supabase actualizado con la nueva URL CDN.");
+      }
+    } catch (e) {
+      console.error("❌ Fallo de red actualizando global_server_config:", e.message);
+    }
+  }
 
   let spawnFailed = false;
   tunnel.stdout.on("data", handleOutput);

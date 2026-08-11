@@ -275,6 +275,21 @@ object CdnManager {
         return resolved.ifEmpty { null }
     }
 
+    fun isCdnRelated(originalUrl: String): Boolean {
+        return (originalUrl.contains("bore.pub") || 
+                originalUrl.contains("trycloudflare") || 
+                originalUrl.contains("10.0.2.2") || 
+                originalUrl.contains("localhost") || 
+                originalUrl.contains("/video/") || 
+                originalUrl.contains("/files/") ||
+                originalUrl.contains("/documents/") ||
+                originalUrl.contains("/uploads/") ||
+                originalUrl.contains("/images/") ||
+                originalUrl.contains("/avatars/") ||
+                originalUrl.contains("/audios/")) &&
+                !originalUrl.contains(try { URI(SupabaseClient.supabaseUrl).host ?: "supabase.co" } catch (e: Exception) { "supabase.co" })
+    }
+
     /**
      * Synchronous version of resolveMediaUrl utilizing the cached CDN URL.
      * Prevents blockages or having to launch coroutines in UI rendering components.
@@ -298,20 +313,7 @@ object CdnManager {
             } catch (_: Exception) {}
         }
 
-        val isCdnRelated = (originalUrl.contains("bore.pub") || 
-                           originalUrl.contains("trycloudflare") || 
-                           originalUrl.contains("10.0.2.2") || 
-                           originalUrl.contains("localhost") || 
-                           originalUrl.contains("/video/") || 
-                           originalUrl.contains("/files/") ||
-                           originalUrl.contains("/documents/") ||
-                           originalUrl.contains("/uploads/") ||
-                           originalUrl.contains("/images/") ||
-                           originalUrl.contains("/avatars/") ||
-                           originalUrl.contains("/audios/")) &&
-                           !originalUrl.contains(try { URI(SupabaseClient.supabaseUrl).host ?: "supabase.co" } catch (e: Exception) { "supabase.co" })
-
-        if (isCdnRelated) {
+        if (isCdnRelated(originalUrl)) {
             if (activeCdnBase.isEmpty()) {
                 Log.w(TAG, "Active CDN cache is empty, returning original URL: $originalUrl")
                 return originalUrl
@@ -384,20 +386,7 @@ object CdnManager {
             return originalUrl
         }
 
-        val isCdnRelated = (originalUrl.contains("bore.pub") || 
-                           originalUrl.contains("trycloudflare") || 
-                           originalUrl.contains("10.0.2.2") || 
-                           originalUrl.contains("localhost") || 
-                           originalUrl.contains("/video/") || 
-                           originalUrl.contains("/files/") ||
-                           originalUrl.contains("/documents/") ||
-                           originalUrl.contains("/uploads/") ||
-                           originalUrl.contains("/images/") ||
-                           originalUrl.contains("/avatars/") ||
-                           originalUrl.contains("/audios/")) &&
-                           !originalUrl.contains(try { URI(SupabaseClient.supabaseUrl).host ?: "supabase.co" } catch (e: Exception) { "supabase.co" })
-
-        if (isCdnRelated) {
+        if (isCdnRelated(originalUrl)) {
             val path = when {
                 originalUrl.contains("/video/") -> {
                     val index = originalUrl.indexOf("/video/")
