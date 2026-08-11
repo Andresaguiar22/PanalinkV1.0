@@ -25,8 +25,13 @@ android {
         applicationId = "com.panalink.app"
         minSdk = 24
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        
+        // Dynamic versioning: base value + GitHub Actions run number
+        val baseVersionCode = 1
+        val runNumber = (System.getenv("GITHUB_RUN_NUMBER") ?: "0").toInt()
+        versionCode = baseVersionCode + runNumber
+        versionName = "1.0.$runNumber"
+        
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         val appUrl = System.getenv("APP_URL") ?: "http://10.0.2.2:3000"
         buildConfigField("String", "BACKEND_URL", "\"$appUrl\"")
@@ -37,14 +42,18 @@ android {
             val keystoreFile = System.getenv("KEYSTORE_FILE")
             val keystorePassword = System.getenv("KEYSTORE_PASSWORD")
             val keyAliasStr = System.getenv("KEY_ALIAS")
+            
+            // Check if we are in a release build context
             val isReleaseRequested = gradle.startParameter.taskNames.any { it.contains("Release", ignoreCase = true) }
+            
             if (!keystoreFile.isNullOrEmpty() && !keystorePassword.isNullOrEmpty() && !keyAliasStr.isNullOrEmpty()) {
                 storeFile = file(keystoreFile)
                 storePassword = keystorePassword
                 keyAlias = keyAliasStr
                 keyPassword = keystorePassword
             } else if (isReleaseRequested) {
-                throw GradleException("RELEASE BUILD BLOCKED CORRECTLY — PRODUCTION SIGNING CREDENTIALS NOT PROVIDED")
+                // If it's a release build but secrets are missing, fail fast to avoid un-signed APKs in production
+                throw GradleException("RELEASE BUILD BLOCKED: SIGNING CREDENTIALS (KEYSTORE_FILE, KEYSTORE_PASSWORD, KEY_ALIAS) ARE MISSING")
             }
         }
     }

@@ -52,13 +52,16 @@ jobs:
           base64 --decode --ignore-garbage base64_temp.txt > app/release-key.jks
 
       # 3.1 LA PRUEBA DE FUEGO (Si esto pasa, coronamos)
-      - name: Test Keystore Integrity
+      - name: Test Keystore Integrity & Fingerprint
         env:
           KEY_PASS_RAW: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS_RAW: ${{ secrets.KEY_ALIAS }}
         run: |
           CLEAN_PASS=$(echo "$KEY_PASS_RAW" | xargs)
+          CLEAN_ALIAS=$(echo "$KEY_ALIAS_RAW" | xargs)
           echo "=== ABRIENDO LA BÓVEDA EN GITHUB ==="
-          keytool -list -keystore app/release-key.jks -storepass "$CLEAN_PASS" || { echo "❌ ERROR: O copiaste el Base64 incompleto, o la clave no cuadra."; exit 1; }
+          # List keystore content and show SHA256 (public info)
+          keytool -list -v -keystore app/release-key.jks -alias "$CLEAN_ALIAS" -storepass "$CLEAN_PASS" | grep -E "Alias name|Owner|Issuer|SHA256" || { echo "❌ ERROR: O copiaste el Base64 incompleto, o la clave no cuadra."; exit 1; }
           echo "✅ ¡BÓVEDA ABIERTA CON ÉXITO!"
 
       # 4. Compila el APK de Release (Variables purificadas)
@@ -72,6 +75,19 @@ jobs:
           export KEYSTORE_FILE="release-key.jks"
           
           gradle assembleRelease
+
+      # 4.1 Verificación de Identidad del APK Generado
+      - name: Verify APK Signature & Identity
+        run: |
+          APK_PATH=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          if [ -z "$APK_PATH" ]; then
+            echo "❌ ERROR: No se encontró ningún APK de Release."
+            exit 1
+          fi
+          echo "=== VERIFICANDO APK: $APK_PATH ==="
+          # Check signature and show SHA256 fingerprint of the APK certificate
+          apksigner verify --print-certs -v "$APK_PATH" | grep -E "Signer|SHA-256 digest"
+          echo "✅ APK VERIFICADO"
 
       # 5. Clean up Keystore
       - name: Clean up Keystore
