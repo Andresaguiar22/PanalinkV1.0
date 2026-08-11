@@ -43,14 +43,21 @@ class ChatsRepository {
     suspend fun getChatIdByOtherUserId(otherUserId: String): String? = withContext(Dispatchers.IO) {
         val currentUid = SupabaseClient.currentUser?.id ?: return@withContext null
         val chats = chatDao.getAllChats()
-        val existing = chats.firstOrNull { it.otherUserId == otherUserId }
-        if (existing != null) return@withContext existing.id
+        val existing = chats.firstOrNull { it.otherUserId == otherUserId && it.type == "dm" }
+        if (existing != null && !existing.threadId.isNullOrEmpty()) {
+            return@withContext existing.id
+        }
         
         if (!SupabaseClient.isConfigured) return@withContext null
         
-        // If not in cache, try finding via API
+        // If not in cache or missing threadId, resolve via createDirectChat
         val result = createDirectChat(otherUserId)
-        return@withContext result.getOrNull()?.id
+        val chat = result.getOrNull()
+        if (chat != null && !chat.threadId.isNullOrEmpty()) {
+            val updatedLocal = chatDao.getAllChats().firstOrNull { it.otherUserId == otherUserId && it.type == "dm" }
+            return@withContext updatedLocal?.id ?: chat.id
+        }
+        return@withContext null
     }
 
     suspend fun getChatsWithDetails(): Result<List<ChatWithDetails>> = withContext(Dispatchers.IO) {
@@ -417,7 +424,26 @@ class ChatsRepository {
                 }
                 if (existingThread != null) {
                     Log.d(TAG, "Found existing thread: ${existingThread.id}")
-                    return@withContext Result.success(existingThread.toChat())
+                    val chat = existingThread.toChat()
+                    val existingLocal = chatDao.getChatById(existingThread.id)
+                        ?: chatDao.getAllChats().firstOrNull { it.otherUserId == otherUserId && it.type == "dm" }
+                    val chatEntity = com.example.data.database.ChatEntity(
+                        id = existingThread.id,
+                        createdAt = existingThread.createdAt ?: existingLocal?.createdAt ?: nowStr,
+                        type = "dm",
+                        name = existingLocal?.name ?: "Chat",
+                        otherUserId = otherUserId,
+                        lastMessageId = existingLocal?.lastMessageId,
+                        unreadCount = existingLocal?.unreadCount ?: 0,
+                        isReadonly = existingLocal?.isReadonly ?: false,
+                        isArchived = existingLocal?.isArchived ?: false,
+                        isMuted = existingLocal?.isMuted ?: false,
+                        isPinned = existingLocal?.isPinned ?: false,
+                        pinnedAt = existingLocal?.pinnedAt,
+                        threadId = existingThread.id
+                    )
+                    chatDao.insertChat(chatEntity)
+                    return@withContext Result.success(chat)
                 }
             }
 
@@ -427,7 +453,26 @@ class ChatsRepository {
             if (createResponse.isSuccessful && !createResponse.body().isNullOrEmpty()) {
                 val newThread = createResponse.body()!![0]
                 Log.d(TAG, "Created new thread: ${newThread.id}")
-                return@withContext Result.success(newThread.toChat())
+                val chat = newThread.toChat()
+                val existingLocal = chatDao.getChatById(newThread.id)
+                    ?: chatDao.getAllChats().firstOrNull { it.otherUserId == otherUserId && it.type == "dm" }
+                val chatEntity = com.example.data.database.ChatEntity(
+                    id = newThread.id,
+                    createdAt = newThread.createdAt ?: existingLocal?.createdAt ?: nowStr,
+                    type = "dm",
+                    name = existingLocal?.name ?: "Chat",
+                    otherUserId = otherUserId,
+                    lastMessageId = existingLocal?.lastMessageId,
+                    unreadCount = existingLocal?.unreadCount ?: 0,
+                    isReadonly = existingLocal?.isReadonly ?: false,
+                    isArchived = existingLocal?.isArchived ?: false,
+                    isMuted = existingLocal?.isMuted ?: false,
+                    isPinned = existingLocal?.isPinned ?: false,
+                    pinnedAt = existingLocal?.pinnedAt,
+                    threadId = newThread.id
+                )
+                chatDao.insertChat(chatEntity)
+                return@withContext Result.success(chat)
             } else {
                 val errMsg = createResponse.errorBody()?.string() ?: "Failed to create thread"
                 Log.e(TAG, "Failed to create thread: $errMsg")
