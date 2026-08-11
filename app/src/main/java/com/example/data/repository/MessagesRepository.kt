@@ -107,13 +107,13 @@ class MessagesRepository private constructor() {
             ?: chatEntity?.otherUserId?.takeIf { isValidUuid(it) }
             ?: if (isValidUuid(chatId) && chatId != currentUid) chatId else null
 
-        // Caso A: Room tiene DM + threadId canónico válido previamente verificado
-        if (chatEntity?.type == "dm" && !chatEntity.otherUserId.isNullOrEmpty() && chatEntity.id != chatEntity.otherUserId && isValidUuid(chatEntity.id)) {
+        // Caso A: Room tiene DM + threadId explícito canónico y válido
+        if (chatEntity?.type == "dm" && !chatEntity.threadId.isNullOrEmpty() && isValidUuid(chatEntity.threadId)) {
             val receiverId = targetReceiverId ?: chatEntity.otherUserId
             return@withContext CanonicalChatIdentity(
                 kind = ChatKind.DM,
                 chatId = chatId,
-                threadId = chatEntity.id,
+                threadId = chatEntity.threadId,
                 receiverId = receiverId
             )
         }
@@ -143,12 +143,16 @@ class MessagesRepository private constructor() {
                         val derivedReceiver = if (thread.userA == currentUid) thread.userB else thread.userA
 
                         try {
-                            val newChatEntity = com.example.data.database.ChatEntity(
-                                id = thread.id,
+                            val existingChat = chatEntity ?: com.example.data.database.ChatEntity(
+                                id = chatId,
                                 createdAt = thread.createdAt ?: SupabaseClient.getNowIsoString(),
                                 type = "dm",
-                                name = chatEntity?.name ?: "Chat",
-                                otherUserId = derivedReceiver
+                                name = "Chat"
+                            )
+                            val newChatEntity = existingChat.copy(
+                                type = "dm",
+                                otherUserId = derivedReceiver,
+                                threadId = thread.id
                             )
                             db.chatDao().insertChat(newChatEntity)
                         } catch (_: Exception) {}

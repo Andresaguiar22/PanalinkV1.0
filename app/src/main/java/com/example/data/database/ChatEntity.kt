@@ -22,7 +22,8 @@ data class ChatEntity(
     val isArchived: Boolean = false,
     val isMuted: Boolean = false,
     @androidx.room.ColumnInfo(name = "is_pinned") val isPinned: Boolean = false,
-    @androidx.room.ColumnInfo(name = "pinned_at") val pinnedAt: String? = null
+    @androidx.room.ColumnInfo(name = "pinned_at") val pinnedAt: String? = null,
+    val threadId: String? = null
 ) {
     fun toChat(): Chat {
         otherUserId?.let {
@@ -42,7 +43,8 @@ data class ChatEntity(
             isArchived = isArchived,
             isMuted = isMuted,
             isPinned = isPinned,
-            pinnedAt = pinnedAt
+            pinnedAt = pinnedAt,
+            threadId = threadId
         )
     }
 
@@ -68,7 +70,8 @@ data class ChatEntity(
                 isArchived = chat.isArchived,
                 isMuted = chat.isMuted,
                 isPinned = chat.isPinned,
-                pinnedAt = chat.pinnedAt
+                pinnedAt = chat.pinnedAt,
+                threadId = chat.threadId
             )
         }
     }

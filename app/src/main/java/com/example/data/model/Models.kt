@@ -51,7 +51,8 @@ data class Chat(
     @Json(name = "is_archived") val isArchived: Boolean = false,
     @Json(name = "is_muted") val isMuted: Boolean = false,
     @Json(name = "is_pinned") val isPinned: Boolean = false,
-    @Json(name = "pinned_at") val pinnedAt: String? = null
+    @Json(name = "pinned_at") val pinnedAt: String? = null,
+    @Json(name = "thread_id") val threadId: String? = null
 )
 
 @JsonClass(generateAdapter = true)
@@ -62,7 +63,7 @@ data class OneToOneThread(
     @Json(name = "created_at") val createdAt: String? = null
 ) {
     fun toChat(isMuted: Boolean = false, isPinned: Boolean = false, pinnedAt: String? = null): Chat =
-        Chat(id = id, createdAt = createdAt, type = "dm", isMuted = isMuted, isPinned = isPinned, pinnedAt = pinnedAt)
+        Chat(id = id, createdAt = createdAt, type = "dm", isMuted = isMuted, isPinned = isPinned, pinnedAt = pinnedAt, threadId = id)
 }
 
 @JsonClass(generateAdapter = true)
