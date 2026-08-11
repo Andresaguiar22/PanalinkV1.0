@@ -50,24 +50,14 @@ class SocialSyncWorker(
                 when (action.actionType) {
                     "FAVORITE" -> {
                         if (action.isReel) {
-                            var response = service.toggleReelFavoriteRpc(apiKey, bearer, mapOf("p_reel_id" to action.targetId))
-                            if (!response.isSuccessful) {
-                                val alt = service.toggleReelFavoriteRpc(apiKey, bearer, mapOf("p_state_id" to action.targetId))
-                                if (alt.isSuccessful) response = alt
-                            }
+                            val params = mapOf<String, Any>("p_reel_id" to action.targetId, "p_favorited" to true)
+                            val response = service.setReelFavoriteRpc(apiKey, bearer, params)
                             if (response.isSuccessful || response.code() == 409) {
                                 success = true
                             }
                         } else {
-                            var response = service.toggleStoryFavoriteRpc(apiKey, bearer, mapOf("p_story_id" to action.targetId))
-                            if (!response.isSuccessful) {
-                                val alt1 = service.toggleStoryFavoriteRpc(apiKey, bearer, mapOf("p_state_id" to action.targetId))
-                                if (alt1.isSuccessful) response = alt1
-                                else {
-                                    val alt2 = service.toggleStoryFavoriteRpc(apiKey, bearer, mapOf("p_status_id" to action.targetId))
-                                    if (alt2.isSuccessful) response = alt2
-                                }
-                            }
+                            val params = mapOf<String, Any>("p_story_id" to action.targetId, "p_favorited" to true)
+                            val response = service.setStoryFavoriteRpc(apiKey, bearer, params)
                             if (response.isSuccessful || response.code() == 409) {
                                 success = true
                             }
@@ -75,59 +65,63 @@ class SocialSyncWorker(
                     }
                     "UNFAVORITE" -> {
                         if (action.isReel) {
-                            var response = service.toggleReelFavoriteRpc(apiKey, bearer, mapOf("p_reel_id" to action.targetId))
-                            if (!response.isSuccessful) {
-                                val alt = service.toggleReelFavoriteRpc(apiKey, bearer, mapOf("p_state_id" to action.targetId))
-                                if (alt.isSuccessful) response = alt
-                            }
-                            if (response.isSuccessful || response.code() == 404) {
+                            val params = mapOf<String, Any>("p_reel_id" to action.targetId, "p_favorited" to false)
+                            val response = service.setReelFavoriteRpc(apiKey, bearer, params)
+                            if (response.isSuccessful || response.code() == 404 || response.code() == 409) {
                                 success = true
                             }
                         } else {
-                            var response = service.toggleStoryFavoriteRpc(apiKey, bearer, mapOf("p_story_id" to action.targetId))
-                            if (!response.isSuccessful) {
-                                val alt1 = service.toggleStoryFavoriteRpc(apiKey, bearer, mapOf("p_state_id" to action.targetId))
-                                if (alt1.isSuccessful) response = alt1
-                                else {
-                                    val alt2 = service.toggleStoryFavoriteRpc(apiKey, bearer, mapOf("p_status_id" to action.targetId))
-                                    if (alt2.isSuccessful) response = alt2
-                                }
-                            }
-                            if (response.isSuccessful || response.code() == 404) {
+                            val params = mapOf<String, Any>("p_story_id" to action.targetId, "p_favorited" to false)
+                            val response = service.setStoryFavoriteRpc(apiKey, bearer, params)
+                            if (response.isSuccessful || response.code() == 404 || response.code() == 409) {
                                 success = true
                             }
                         }
                     }
                     "LIKE" -> {
                         if (action.isReel) {
-                            val params = mapOf("p_reel_id" to action.targetId)
-                            val response = service.toggleReelLikeRpc(apiKey, bearer, params)
-                            if (response.isSuccessful) {
-                                success = true
-                            } else if (response.code() == 409) {
-                                // Already liked, safe to assume success
+                            val params = mapOf<String, Any>("p_reel_id" to action.targetId, "p_liked" to true)
+                            val response = service.setReelLikeRpc(apiKey, bearer, params)
+                            if (response.isSuccessful || response.code() == 409) {
                                 success = true
                             }
                         } else {
-                            val likeDto = PostLikeDto(postId = action.targetId, userId = action.userId)
-                            val response = service.addLike(apiKey, bearer, likeDto)
-                            if (response.isSuccessful || response.code() == 409) {
-                                success = true
+                            val isStory = statesDao.getStateById(action.targetId) != null
+                            if (isStory) {
+                                val params = mapOf<String, Any>("p_story_id" to action.targetId, "p_liked" to true)
+                                val response = service.setStoryLikeRpc(apiKey, bearer, params)
+                                if (response.isSuccessful || response.code() == 409) {
+                                    success = true
+                                }
+                            } else {
+                                val likeDto = PostLikeDto(postId = action.targetId, userId = action.userId)
+                                val response = service.addLike(apiKey, bearer, likeDto)
+                                if (response.isSuccessful || response.code() == 409) {
+                                    success = true
+                                }
                             }
                         }
                     }
                     "UNLIKE" -> {
                         if (action.isReel) {
-                            // RPC handles toggle, so if we are UNLIKING and it's a toggle, we call RPC
-                            val params = mapOf("p_reel_id" to action.targetId)
-                            val response = service.toggleReelLikeRpc(apiKey, bearer, params)
-                            if (response.isSuccessful || response.code() == 404) {
+                            val params = mapOf<String, Any>("p_reel_id" to action.targetId, "p_liked" to false)
+                            val response = service.setReelLikeRpc(apiKey, bearer, params)
+                            if (response.isSuccessful || response.code() == 404 || response.code() == 409) {
                                 success = true
                             }
                         } else {
-                            val response = service.removeLike(apiKey, bearer, "eq.${action.targetId}", "eq.${action.userId}")
-                            if (response.isSuccessful || response.code() == 404) {
-                                success = true
+                            val isStory = statesDao.getStateById(action.targetId) != null
+                            if (isStory) {
+                                val params = mapOf<String, Any>("p_story_id" to action.targetId, "p_liked" to false)
+                                val response = service.setStoryLikeRpc(apiKey, bearer, params)
+                                if (response.isSuccessful || response.code() == 404 || response.code() == 409) {
+                                    success = true
+                                }
+                            } else {
+                                val response = service.removeLike(apiKey, bearer, "eq.${action.targetId}", "eq.${action.userId}")
+                                if (response.isSuccessful || response.code() == 404 || response.code() == 409) {
+                                    success = true
+                                }
                             }
                         }
                     }

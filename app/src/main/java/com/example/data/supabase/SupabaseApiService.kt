@@ -646,6 +646,42 @@ interface SupabaseApiService {
         @Header("Content-Profile") contentProfile: String = "social"
     ): Response<ToggleFavoriteResponseDto>
 
+    @POST("rest/v1/rpc/set_story_like")
+    suspend fun setStoryLikeRpc(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") authorization: String,
+        @Body params: Map<String, Any>,
+        @Header("Accept-Profile") acceptProfile: String = "social",
+        @Header("Content-Profile") contentProfile: String = "social"
+    ): Response<Unit>
+
+    @POST("rest/v1/rpc/set_story_favorite")
+    suspend fun setStoryFavoriteRpc(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") authorization: String,
+        @Body params: Map<String, Any>,
+        @Header("Accept-Profile") acceptProfile: String = "social",
+        @Header("Content-Profile") contentProfile: String = "social"
+    ): Response<Unit>
+
+    @POST("rest/v1/rpc/set_reel_like")
+    suspend fun setReelLikeRpc(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") authorization: String,
+        @Body params: Map<String, Any>,
+        @Header("Accept-Profile") acceptProfile: String = "social",
+        @Header("Content-Profile") contentProfile: String = "social"
+    ): Response<Unit>
+
+    @POST("rest/v1/rpc/set_reel_favorite")
+    suspend fun setReelFavoriteRpc(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") authorization: String,
+        @Body params: Map<String, Any>,
+        @Header("Accept-Profile") acceptProfile: String = "social",
+        @Header("Content-Profile") contentProfile: String = "social"
+    ): Response<Unit>
+
     // State interactions (likes, favorites, shares, comments)
     @GET("rest/v1/{table}")
     suspend fun getStateLikes(
