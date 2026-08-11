@@ -2,29 +2,13 @@ package com.example.util
 
 import android.util.Log
 
+import com.example.util.TimeUtils
+
 object MessageFilter {
     private const val TAG = "MessageFilter"
 
     fun parseToEpochMilli(ts: String?): Long {
-        if (ts.isNullOrEmpty()) return 0L
-        return try {
-            java.time.Instant.parse(ts).toEpochMilli()
-        } catch (e1: Exception) {
-            try {
-                java.time.OffsetDateTime.parse(ts).toInstant().toEpochMilli()
-            } catch (e2: Exception) {
-                try {
-                    val cleaned = ts.replace(" ", "T")
-                    if (!cleaned.contains("Z") && !cleaned.contains("+") && !cleaned.contains("-")) {
-                        java.time.LocalDateTime.parse(cleaned).toInstant(java.time.ZoneOffset.UTC).toEpochMilli()
-                    } else {
-                        java.time.OffsetDateTime.parse(cleaned).toInstant().toEpochMilli()
-                    }
-                } catch (e3: Exception) {
-                    0L
-                }
-            }
-        }
+        return TimeUtils.parseToEpochMilli(ts)
     }
 
     /**

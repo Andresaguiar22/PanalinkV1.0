@@ -27,10 +27,12 @@ android {
         targetSdk = 35
         
         // Dynamic versioning: base value + GitHub Actions run number
+        // Allow overrides via environment variables for Git Tag consistency
         val baseVersionCode = 1
         val runNumber = (System.getenv("GITHUB_RUN_NUMBER") ?: "0").toInt()
-        versionCode = baseVersionCode + runNumber
-        versionName = "1.0.$runNumber"
+        
+        versionCode = (System.getenv("VERSION_CODE") ?: (baseVersionCode + runNumber).toString()).toInt()
+        versionName = System.getenv("VERSION_NAME") ?: "1.0.$runNumber"
         
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         val appUrl = System.getenv("APP_URL") ?: "http://10.0.2.2:3000"
@@ -42,6 +44,7 @@ android {
             val keystoreFile = System.getenv("KEYSTORE_FILE")
             val keystorePassword = System.getenv("KEYSTORE_PASSWORD")
             val keyAliasStr = System.getenv("KEY_ALIAS")
+            val keyPasswordStr = System.getenv("KEY_PASSWORD") ?: keystorePassword
             
             // Check if we are in a release build context
             val isReleaseRequested = gradle.startParameter.taskNames.any { it.contains("Release", ignoreCase = true) }
@@ -50,7 +53,7 @@ android {
                 storeFile = file(keystoreFile)
                 storePassword = keystorePassword
                 keyAlias = keyAliasStr
-                keyPassword = keystorePassword
+                keyPassword = keyPasswordStr
             } else if (isReleaseRequested) {
                 // If it's a release build but secrets are missing, fail fast to avoid un-signed APKs in production
                 throw GradleException("RELEASE BUILD BLOCKED: SIGNING CREDENTIALS (KEYSTORE_FILE, KEYSTORE_PASSWORD, KEY_ALIAS) ARE MISSING")

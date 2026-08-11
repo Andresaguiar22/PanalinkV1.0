@@ -11,6 +11,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.util.UUID
 
+import com.example.util.TimeUtils
+
 class ChatsRepository {
     private val TAG = "ChatsRepository"
     private val db = com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance)
@@ -322,7 +324,7 @@ class ChatsRepository {
 
     suspend fun joinChannel(chatId: String): Result<Unit> = withContext(Dispatchers.IO) {
         val currentUid = SupabaseClient.currentUser?.id ?: return@withContext Result.failure(Exception("Not authenticated"))
-        val nowStr = SupabaseClient.getNowIsoString()
+        val nowStr = TimeUtils.getNowIsoString()
         try {
             val service = SupabaseClient.apiService ?: return@withContext Result.failure(Exception("Supabase not configured"))
             val apiKey = SupabaseClient.supabaseAnonKey
@@ -365,7 +367,7 @@ class ChatsRepository {
 
     suspend fun createDirectChat(otherUserId: String): Result<Chat> = withContext(Dispatchers.IO) {
         val currentUid = SupabaseClient.currentUser?.id ?: return@withContext Result.failure(Exception("Not authenticated"))
-        val nowStr = SupabaseClient.getNowIsoString()
+        val nowStr = TimeUtils.getNowIsoString()
 
         if (!SupabaseClient.isConfigured) {
             delay(1000)
@@ -465,9 +467,7 @@ class ChatsRepository {
     }
 
     suspend fun deleteChatLocallyAndRemotely(chatId: String): Result<Boolean> = withContext(Dispatchers.IO) {
-        val nowStr = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US).apply { 
-            timeZone = java.util.TimeZone.getTimeZone("UTC") 
-        }.format(java.util.Date())
+        val nowStr = TimeUtils.getNowIsoString()
         com.example.data.repository.MessagesRepository.getInstance().localClearedAtMap[chatId] = nowStr
 
         try {
@@ -599,7 +599,7 @@ class ChatsRepository {
     }
 
     suspend fun pinChat(chatId: String, isPinned: Boolean): Result<Boolean> = withContext(Dispatchers.IO) {
-        val currentTimestamp = if (isPinned) java.time.Instant.now().toString() else null
+        val currentTimestamp = if (isPinned) TimeUtils.getNowIsoString() else null
         try {
             val existing = chatDao.getChatById(chatId)
             if (existing != null) {
@@ -633,31 +633,13 @@ class ChatsRepository {
     }
 
     private fun parseToEpochMilli(ts: String?): Long {
-        if (ts.isNullOrEmpty()) return 0L
-        return try {
-            java.time.Instant.parse(ts).toEpochMilli()
-        } catch (e1: Exception) {
-            try {
-                java.time.OffsetDateTime.parse(ts).toInstant().toEpochMilli()
-            } catch (e2: Exception) {
-                try {
-                    val cleaned = ts.replace(" ", "T")
-                    if (!cleaned.contains("Z") && !cleaned.contains("+") && !cleaned.contains("-")) {
-                        java.time.LocalDateTime.parse(cleaned).toInstant(java.time.ZoneOffset.UTC).toEpochMilli()
-                    } else {
-                        java.time.OffsetDateTime.parse(cleaned).toInstant().toEpochMilli()
-                    }
-                } catch (e3: Exception) {
-                    0L
-                }
-            }
-        }
+        return TimeUtils.parseToEpochMilli(ts)
     }
 
     private fun isTimestampBeforeOrEqual(ts1: String?, ts2: String?): Boolean {
         if (ts1.isNullOrEmpty() || ts2.isNullOrEmpty()) return false
-        val t1 = parseToEpochMilli(ts1)
-        val t2 = parseToEpochMilli(ts2)
+        val t1 = TimeUtils.parseToEpochMilli(ts1)
+        val t2 = TimeUtils.parseToEpochMilli(ts2)
         if (t1 > 0L && t2 > 0L) {
             return t1 <= t2
         }

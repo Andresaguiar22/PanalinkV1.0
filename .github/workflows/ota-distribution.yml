@@ -31,17 +31,37 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up JDK 17
+      - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
-          java-version: '17'
-          distribution: 'zulu'
+          java-version: '21'
+          distribution: 'temurin'
           cache: 'gradle'
+
+      # 1. Descarga e instala Gradle 9.3.1 (Consistency with android.yml)
+      - name: Download and Install Gradle 9.3.1
+        run: |
+          wget -q https://services.gradle.org/distributions/gradle-9.3.1-bin.zip
+          unzip -q gradle-9.3.1-bin.zip
+          echo "$GITHUB_WORKSPACE/gradle-9.3.1/bin" >> $GITHUB_PATH
 
       - name: Prepare Secrets Configuration
         run: |
-          if [ ! -f secrets.properties ]; then
-            cp secrets.defaults.properties secrets.properties
+          touch secrets.properties
+          touch secrets.defaults.properties
+          touch app/secrets.properties
+          touch app/secrets.defaults.properties
+
+      - name: Inyectar Google Services JSON
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -n "$GOOGLE_SERVICES_JSON" ]; then
+            cat << 'EOF' > app/google-services.json
+            ${{ secrets.GOOGLE_SERVICES_JSON }}
+            EOF
+          else
+            echo "Warning: GOOGLE_SERVICES_JSON secret is missing."
           fi
 
       - name: Decode Keystore
@@ -50,22 +70,42 @@ jobs:
             echo "::error::KEYSTORE_BASE64 secret is missing! Release signing will fail."
             exit 1
           fi
-          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > release.keystore
+          cat << 'EOF' > base64_temp.txt
+          ${{ secrets.KEYSTORE_BASE64 }}
+          EOF
+          base64 --decode --ignore-garbage base64_temp.txt > app/release-key.jks
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
 
-      - name: Grant Execute Permission to Gradlew
-        run: chmod +x gradlew
+      - name: Test Keystore Integrity & Fingerprint
+        env:
+          KEY_PASS_RAW: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS_RAW: ${{ secrets.KEY_ALIAS }}
+        run: |
+          CLEAN_PASS=$(echo "$KEY_PASS_RAW" | xargs)
+          CLEAN_ALIAS=$(echo "$KEY_ALIAS_RAW" | xargs)
+          echo "=== VERIFICANDO KEYSTORE ==="
+          keytool -list -v -keystore app/release-key.jks -alias "$CLEAN_ALIAS" -storepass "$CLEAN_PASS" | grep -E "Alias name|Owner|Issuer|SHA256" || { echo "❌ ERROR: Keystore inválido o contraseña incorrecta."; exit 1; }
+          echo "✅ KEYSTORE VERIFICADO"
 
       - name: Run Unit Tests
-        run: ./gradlew testDebugUnitTest
+        run: gradle testDebugUnitTest
 
       - name: Build Release APK
-        run: ./gradlew assembleRelease
         env:
-          KEYSTORE_FILE: ${{ github.workspace }}/release.keystore
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_ALIAS_RAW: ${{ secrets.KEY_ALIAS }}
+          KEY_PASS_RAW: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASS_PRIVATE_RAW: ${{ secrets.KEY_PASSWORD || secrets.KEYSTORE_PASSWORD }}
+          # Use Git Tag as Version Name if available, fallback to run number
+          VERSION_NAME: ${{ github.ref_type == 'tag' && github.ref_name || format('1.0.{0}', github.run_number) }}
+          VERSION_CODE: ${{ github.run_number }}
+        run: |
+          export KEY_ALIAS=$(echo "$KEY_ALIAS_RAW" | xargs)
+          export KEYSTORE_PASSWORD=$(echo "$KEY_PASS_RAW" | xargs)
+          export KEY_PASSWORD=$(echo "$KEY_PASS_PRIVATE_RAW" | xargs)
+          export KEYSTORE_FILE="release-key.jks"
+          
+          gradle assembleRelease
 
       - name: Audit, Package and Generate OTA Manifest
         id: package_ota
@@ -91,9 +131,13 @@ jobs:
           apk_path = apk_candidates[0]
           print(f"Found compiled APK: {apk_path}")
 
-          # Verify signature and package using apksigner and aapt2 (preinstalled on runner)
+          # Verify signature and package using apksigner
           try:
-              subprocess.check_call(["apksigner", "verify", "--verbose", apk_path])
+              output = subprocess.check_output(["apksigner", "verify", "--print-certs", "-v", apk_path], text=True)
+              print("=== APK SIGNATURE VERIFICATION ===")
+              for line in output.split("\n"):
+                  if "SHA-256 digest" in line or "Signer" in line:
+                      print(line)
               print("APK Signature verification: SUCCESS")
           except Exception as e:
               print(f"::error::APK signature verification failed: {e}")
@@ -149,7 +193,7 @@ jobs:
           except ValueError:
               min_version = 1
 
-          changelog_input = "${{ github.event.inputs.changelog }}" or f"PanaLink V2.0 OTA Release v{version_name}"
+          changelog_input = """${{ github.event.inputs.changelog }}""" or f"PanaLink V2.0 OTA Release v{version_name}"
           changelog_list = [line.strip() for line in changelog_input.split("\n") if line.strip()]
 
           manifest_data = {
@@ -179,12 +223,19 @@ jobs:
           TAG_NAME="${{ steps.package_ota.outputs.version_name }}"
           APK_PATH="${{ steps.package_ota.outputs.apk_path }}"
           
+          if [ -z "${{ secrets.OTA_GITHUB_TOKEN }}" ]; then
+            echo "::error::OTA_GITHUB_TOKEN is missing! Cannot publish to panalink-ota."
+            exit 1
+          fi
+
+          echo "=== PUBLISHING TO OTA REPOSITORY ==="
+          
           # Check if tag already exists in panalink-ota
           if gh release view "$TAG_NAME" --repo "Andresaguiar22/panalink-ota" > /dev/null 2>&1; then
-            echo "Release $TAG_NAME already exists! Updating the release assets..."
+            echo "Release $TAG_NAME already exists! Updating assets..."
             gh release upload "$TAG_NAME" --repo "Andresaguiar22/panalink-ota" --clobber "$APK_PATH" manifest.json
           else
-            echo "Creating a new GitHub Release: $TAG_NAME"
+            echo "Creating new Release: $TAG_NAME"
             gh release create "$TAG_NAME" \
               --repo "Andresaguiar22/panalink-ota" \
               --title "PanaLink V2.0 OTA Release $TAG_NAME" \
@@ -193,4 +244,8 @@ jobs:
               "$APK_PATH" manifest.json
           fi
         env:
-          GH_TOKEN: ${{ secrets.OTA_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.OTA_GITHUB_TOKEN }}
+
+      - name: Clean up Keystore
+        if: always()
+        run: rm -f app/release-key.jks

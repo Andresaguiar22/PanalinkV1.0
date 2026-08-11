@@ -468,7 +468,7 @@ class ChatsViewModel(
     }
 
     fun pinChat(chatId: String, isPinned: Boolean = true) {
-        val currentTimestamp = if (isPinned) java.time.Instant.now().toString() else null
+        val currentTimestamp = if (isPinned) com.example.util.TimeUtils.getNowIsoString() else null
         val currentState = _chatsState.value
         if (currentState is ChatsUiState.Success) {
             val updatedList = currentState.chats.map { detail ->
