@@ -46,6 +46,7 @@ enum class RecordState {
     RECORDING,
     LOCKED_RECORDING,
     PREVIEWING,
+    SENDING,
     CANCELING
 }
 
@@ -466,36 +467,42 @@ private var chatJob: kotlinx.coroutines.Job? = null
     ) {
         when (event) {
             com.example.ui.components.chat.voice.VoiceGestureEvent.StartRecording -> {
+                if (_recordState.value != RecordState.IDLE) return
                 val file = voiceController.start()
                 if (file != null) {
                     _recordState.value = RecordState.RECORDING
-                    // Vibration feedback if needed could go here
+                    com.example.util.PanaLinkSoundManager.play(context, com.example.util.PanaSoundEvent.VOICE_START)
                 }
             }
             com.example.ui.components.chat.voice.VoiceGestureEvent.LockRecording -> {
-                _recordState.value = RecordState.LOCKED_RECORDING
+                if (_recordState.value == RecordState.RECORDING) {
+                    _recordState.value = RecordState.LOCKED_RECORDING
+                    com.example.util.PanaLinkSoundManager.play(context, com.example.util.PanaSoundEvent.VOICE_LOCK)
+                }
             }
             com.example.ui.components.chat.voice.VoiceGestureEvent.CancelRecording -> {
-                voiceController.cancel()
-                _recordState.value = RecordState.IDLE
-                _voiceAmplitudes.value = emptyList()
+                if (_recordState.value == RecordState.RECORDING || _recordState.value == RecordState.LOCKED_RECORDING) {
+                    voiceController.cancel()
+                    _recordState.value = RecordState.IDLE
+                    _voiceAmplitudes.value = emptyList()
+                    com.example.util.PanaLinkSoundManager.play(context, com.example.util.PanaSoundEvent.VOICE_CANCEL)
+                }
             }
             com.example.ui.components.chat.voice.VoiceGestureEvent.FinishRecording -> {
-                if (_recordState.value == RecordState.LOCKED_RECORDING) return // Don't finish if locked, user must click send or stop
+                if (_recordState.value == RecordState.LOCKED_RECORDING) return // User must click send or stop in locked mode
 
-                val result = voiceController.stopAndValidate(fallbackDurationSeconds = fallbackDurationSeconds)
-                _recordState.value = RecordState.IDLE
-                _voiceAmplitudes.value = emptyList()
+                if (_recordState.value == RecordState.RECORDING) {
+                    val result = voiceController.stopAndValidate(fallbackDurationSeconds = fallbackDurationSeconds)
+                    _voiceAmplitudes.value = emptyList()
 
-                if (result is com.example.ui.components.chat.voice.VoiceRecordingResult.Success) {
-                    uploadAndSendMedia(
-                        file = result.file,
-                        mimeType = "audio/mp4",
-                        typeLabel = "Voice",
-                        replyToId = replyToId,
-                        context = context,
-                        onProgress = onProgress
-                    )
+                    if (result is com.example.ui.components.chat.voice.VoiceRecordingResult.Success) {
+                        previewFile = result.file
+                        previewDurationSeconds = result.durationSeconds
+                        _previewWaveform.value = result.waveform
+                        _recordState.value = RecordState.PREVIEWING
+                    } else {
+                        _recordState.value = RecordState.IDLE
+                    }
                 }
             }
             com.example.ui.components.chat.voice.VoiceGestureEvent.PauseRecording -> {
@@ -505,21 +512,23 @@ private var chatJob: kotlinx.coroutines.Job? = null
                 voiceController.resume()
             }
             com.example.ui.components.chat.voice.VoiceGestureEvent.StopAndPreviewRecording -> {
-                val result = voiceController.stopAndValidate(fallbackDurationSeconds = fallbackDurationSeconds)
-                _voiceAmplitudes.value = emptyList()
-                if (result is com.example.ui.components.chat.voice.VoiceRecordingResult.Success) {
-                    previewFile = result.file
-                    previewDurationSeconds = result.durationSeconds
-                    _previewWaveform.value = result.waveform
-                    _recordState.value = RecordState.PREVIEWING
-                } else {
-                    _recordState.value = RecordState.IDLE
+                if (_recordState.value == RecordState.RECORDING || _recordState.value == RecordState.LOCKED_RECORDING) {
+                    val result = voiceController.stopAndValidate(fallbackDurationSeconds = fallbackDurationSeconds)
+                    _voiceAmplitudes.value = emptyList()
+                    if (result is com.example.ui.components.chat.voice.VoiceRecordingResult.Success) {
+                        previewFile = result.file
+                        previewDurationSeconds = result.durationSeconds
+                        _previewWaveform.value = result.waveform
+                        _recordState.value = RecordState.PREVIEWING
+                    } else {
+                        _recordState.value = RecordState.IDLE
+                    }
                 }
             }
         }
     }
 
-    fun cancelPreviewRecording() {
+    fun cancelPreviewRecording(context: android.content.Context? = null) {
         previewAudioPlayer.release()
         try {
             previewFile?.delete()
@@ -528,6 +537,9 @@ private var chatJob: kotlinx.coroutines.Job? = null
         _previewWaveform.value = emptyList()
         _recordState.value = RecordState.IDLE
         _isPreviewSending.value = false
+        if (context != null) {
+            com.example.util.PanaLinkSoundManager.play(context, com.example.util.PanaSoundEvent.VOICE_CANCEL)
+        }
     }
 
     fun getRecordingElapsedSeconds(): Int {
@@ -573,16 +585,20 @@ private var chatJob: kotlinx.coroutines.Job? = null
         onProgress: (Boolean) -> Unit = {}
     ) {
         val file = previewFile
-        if (_isPreviewSending.value || file == null || !file.exists()) {
+        if (_isPreviewSending.value || _recordState.value == RecordState.SENDING || file == null || !file.exists()) {
             Log.w("ChatViewModel", "sendPreviewRecording ignored: file null/missing or already sending.")
             return
         }
         _isPreviewSending.value = true
+        _recordState.value = RecordState.SENDING
+        com.example.util.PanaLinkSoundManager.play(context, com.example.util.PanaSoundEvent.VOICE_SEND)
         previewAudioPlayer.release()
-        _recordState.value = RecordState.IDLE
+        
+        val fileToSend = file
+        previewFile = null
         
         uploadAndSendMedia(
-            file = file,
+            file = fileToSend,
             mimeType = "audio/mp4",
             typeLabel = "Voice",
             replyToId = replyToId,
@@ -591,10 +607,10 @@ private var chatJob: kotlinx.coroutines.Job? = null
                 onProgress(isUploading)
                 if (!isUploading) {
                     _isPreviewSending.value = false
+                    _recordState.value = RecordState.IDLE
                 }
             }
         )
-        previewFile = null
     }
     
     private fun getFileFromUri(context: Context, uri: Uri): File? {
@@ -767,6 +783,10 @@ fun sendSticker(url: String, preview: String?, replyToId: String?) {
         } catch (_: Exception) {}
         try {
             previewAudioPlayer.release()
+        } catch (_: Exception) {}
+        try {
+            previewFile?.delete()
+            previewFile = null
         } catch (_: Exception) {}
     }
 }

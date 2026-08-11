@@ -67,7 +67,7 @@ class VoiceRecordingController(private val context: Context) {
         val durationMillis = getElapsedMillis()
         val file = audioRecorder.stopRecording()
         recordingState = RecordingState.STOPPED
-        val waveform = amplitudeMonitor.getSampledWaveform(40)
+        val waveform = amplitudeMonitor.getSampledWaveform(35)
         amplitudeMonitor.stop()
 
         if (file == null || !file.exists() || file.length() == 0L) {

@@ -294,6 +294,7 @@ fun ChatScreen(
     val voiceAmplitudes by viewModel.voiceAmplitudes.collectAsStateWithLifecycle()
     val previewPlayerState by viewModel.previewPlayerState.collectAsStateWithLifecycle()
     val previewWaveform by viewModel.previewWaveform.collectAsStateWithLifecycle()
+    val isPreviewSending by viewModel.isPreviewSending.collectAsStateWithLifecycle()
 
     var recordDurationSeconds by remember { mutableIntStateOf(0) }
     LaunchedEffect(recordState) {
@@ -1407,7 +1408,7 @@ fun ChatScreen(
                             }
                         }
                     }
-                } else if (recordState == RecordState.RECORDING || recordState == RecordState.LOCKED_RECORDING) {
+                } else if (recordState == RecordState.RECORDING) {
                     // Holding & Sliding mode recording panel on the left (Takes up the rest of the bar)
                     Row(
                         modifier = Modifier
@@ -1758,30 +1759,40 @@ fun ChatScreen(
                             modifier = Modifier.size(22.dp)
                         )
                     }
-                } else if (recordState == RecordState.PREVIEWING) {
+                } else if (recordState == RecordState.PREVIEWING || recordState == RecordState.SENDING) {
                     // Circular green send button for previewed audio
+                    val isSending = recordState == RecordState.SENDING || isPreviewSending
                     FloatingActionButton(
                         onClick = {
-                            playSendBeep()
-                            triggerLightVibration(context)
-                            viewModel.sendPreviewRecording(
-                                context = context,
-                                replyToId = replyingToMessage?.id,
-                                onProgress = { isUploading = it }
-                            )
+                            if (!isSending) {
+                                triggerLightVibration(context)
+                                viewModel.sendPreviewRecording(
+                                    context = context,
+                                    replyToId = replyingToMessage?.id,
+                                    onProgress = { isUploading = it }
+                                )
+                            }
                         },
                         modifier = Modifier.size(48.dp),
-                        containerColor = Color(0xFF00A884),
+                        containerColor = if (isSending) Color(0xFF00A884).copy(alpha = 0.6f) else Color(0xFF00A884),
                         contentColor = Color.White,
                         shape = CircleShape,
                         elevation = FloatingActionButtonDefaults.elevation(0.dp, 0.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.Send,
-                            contentDescription = "Enviar Nota",
-                            tint = Color.White,
-                            modifier = Modifier.size(22.dp)
-                        )
+                        if (isSending) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                color = Color.White,
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.Send,
+                                contentDescription = "Enviar Nota",
+                                tint = Color.White,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
                     }
                 } else if (recordState == RecordState.IDLE && !isInputEmpty) {
                     // Regular send or edit check button (Circular Green FAB)
@@ -1841,8 +1852,8 @@ fun ChatScreen(
                             .voiceGestureDetector(
                                 enabled = true,
                                 isLocked = recordState == RecordState.LOCKED_RECORDING,
-                                lockThresholdY = -350f,
-                                cancelThresholdX = -250f,
+                                lockThresholdY = -180f,
+                                cancelThresholdX = -200f,
                                 onPermissionRequired = if (!hasMicPermission) {
                                     { micPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO) }
                                 } else null,
@@ -1856,20 +1867,14 @@ fun ChatScreen(
                                     
                                     when (event) {
                                         is VoiceGestureEvent.StartRecording -> {
-                                            playShortBeep()
                                             triggerLightVibration(context)
                                         }
                                         is VoiceGestureEvent.LockRecording -> {
-                                            playShortBeep()
                                             triggerLightVibration(context)
                                         }
                                         is VoiceGestureEvent.CancelRecording -> {
-                                            playCancelBeep()
                                             triggerLightVibration(context)
                                             Toast.makeText(context, "Grabación cancelada", Toast.LENGTH_SHORT).show()
-                                        }
-                                        is VoiceGestureEvent.FinishRecording -> {
-                                            // Let the ViewModel handle the transition to PREVIEWING
                                         }
                                         else -> {}
                                     }

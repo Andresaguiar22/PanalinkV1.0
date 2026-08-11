@@ -1,14 +1,12 @@
 package com.example.ui.screen
 
 import android.content.Context
-import android.media.AudioManager
-import android.media.ToneGenerator
 import android.os.Build
-import android.os.Handler
-import android.os.Looper
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import com.example.util.PanaLinkSoundManager
+import com.example.util.PanaSoundEvent
 
 fun triggerLightVibration(context: Context) {
     try {
@@ -30,32 +28,25 @@ fun triggerLightVibration(context: Context) {
     } catch (e: Exception) {}
 }
 
-fun playShortBeep() {
-    try {
-        val toneG = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 50)
-        toneG.startTone(ToneGenerator.TONE_PROP_BEEP, 50)
-        Handler(Looper.getMainLooper()).postDelayed({
-            toneG.release()
-        }, 100)
-    } catch (e: Exception) {}
+fun playPanaSound(context: Context, event: PanaSoundEvent) {
+    PanaLinkSoundManager.play(context, event)
 }
 
-fun playCancelBeep() {
-    try {
-        val toneG = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 50)
-        toneG.startTone(ToneGenerator.TONE_PROP_NACK, 100)
-        Handler(Looper.getMainLooper()).postDelayed({
-            toneG.release()
-        }, 150)
-    } catch (e: Exception) {}
+fun playShortBeep(context: Context? = null) {
+    if (context != null) {
+        PanaLinkSoundManager.play(context, PanaSoundEvent.VOICE_START)
+    }
 }
 
-fun playSendBeep() {
-    try {
-        val toneG = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 50)
-        toneG.startTone(ToneGenerator.TONE_PROP_ACK, 70)
-        Handler(Looper.getMainLooper()).postDelayed({
-            toneG.release()
-        }, 120)
-    } catch (e: Exception) {}
+fun playCancelBeep(context: Context? = null) {
+    if (context != null) {
+        PanaLinkSoundManager.play(context, PanaSoundEvent.VOICE_CANCEL)
+    }
 }
+
+fun playSendBeep(context: Context? = null) {
+    if (context != null) {
+        PanaLinkSoundManager.play(context, PanaSoundEvent.VOICE_SEND)
+    }
+}
+

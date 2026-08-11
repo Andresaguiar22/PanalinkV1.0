@@ -9,7 +9,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-class VoiceAmplitudeMonitor(private val barCount: Int = 10) {
+class VoiceAmplitudeMonitor(private val barCount: Int = 35) {
 
     private val _amplitudes = MutableStateFlow(List(barCount) { 0.1f })
     val amplitudes: StateFlow<List<Float>> = _amplitudes.asStateFlow()
@@ -44,7 +44,7 @@ class VoiceAmplitudeMonitor(private val barCount: Int = 10) {
         }
     }
 
-    fun getSampledWaveform(targetBars: Int = 40): List<Float> {
+    fun getSampledWaveform(targetBars: Int = 35): List<Float> {
         val historySnapshot = synchronized(amplitudeHistory) { amplitudeHistory.toList() }
         if (historySnapshot.isEmpty()) {
             return List(targetBars) { 0.1f }
