@@ -88,7 +88,12 @@ jobs:
           echo "¡BOVEDA ABIERTA CON ÉXITO!"
 
       - name: Build Release APK
-        run: gradle assembleRelease --no-daemon
+        run: |
+          gradle assembleRelease --no-daemon \
+            -PKEYSTORE_FILE="release-key.jks" \
+            -PKEYSTORE_PASSWORD="${{ secrets.KEYSTORE_PASSWORD }}" \
+            -PKEY_ALIAS="${{ secrets.KEY_ALIAS }}" \
+            -PKEY_PASSWORD="${{ secrets.KEY_PASSWORD }}"
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
