@@ -224,8 +224,12 @@ class MessagesRepository private constructor() {
                 }
             }
 
-            val response = runCall { authHeader ->
-                Log.d(TAG, "getMessagesForChatPaged: Querying thread_messages with thread_idFilter=eq.$chatId and createdAtFilter=$createdAtFilterStr")
+            val chatEntity = db.chatDao().getChatById(chatId)
+            val isDm = chatEntity?.type == "dm" || !chatEntity?.otherUserId.isNullOrEmpty()
+
+            val response = if (isDm) {
+                runCall { authHeader ->
+                    Log.d(TAG, "getMessagesForChatPaged: Querying thread_messages for DM $chatId with createdAtFilter=$createdAtFilterStr")
                     service.getThreadMessages(
                         apiKey = SupabaseClient.supabaseAnonKey,
                         authorization = authHeader,
@@ -234,6 +238,9 @@ class MessagesRepository private constructor() {
                         order = "created_at.desc",
                         limit = limit
                     )
+                }
+            } else {
+                null // Skip thread_messages for non-DM/Channel chats
             }
 
             if (response != null) {
@@ -268,70 +275,7 @@ class MessagesRepository private constructor() {
                             Log.e(TAG, "Error purging stale local messages", e)
                         }
                     }
-                    // If no messages found in thread_messages, fall through to legacy table
-                    if (remoteList.isNotEmpty()) {
-                        val freshLocal = messageDao.getMessagesForChatPaged(chatId, limit, oldestTimestamp)
-                        val validLocal = freshLocal.filter { local ->
-                            com.example.util.MessageFilter.shouldKeepMessage(
-                                messageId = local.id,
-                                messageClientUuid = local.clientMessageUuid,
-                                messageCreatedAt = local.createdAt,
-                                lastClearedAt = lastClearedAt,
-                                deletedMessageIds = userDeletedIds
-                            )
-                        }
-                        return@withContext Result.success(decryptMessages(validLocal.map { it.toMessage() }.sortedBy { it.createdAt }))
-                    }
-                } else {
-                    val errBody = response.errorBody()?.string() ?: "No error body"
-                    Log.e(TAG, "🚨 getMessagesForChatPaged (thread_messages) FAILED: code=${response.code()}, error=$errBody, url=${response.raw().request.url}")
-                }
-            } else {
-                Log.e(TAG, "getMessagesForChatPaged (thread_messages) FAILED: Response is null (auth/JWT token missing or expired)")
-            }
-
-            // Fall through or retry legacy messages
-            val legacyResponse = runCall { authHeader ->
-                Log.d(TAG, "getMessagesForChatPaged: Querying legacy messages with chatIdFilter=eq.$chatId and createdAtFilter=$createdAtFilterStr")
-                service.getMessages(
-                    apiKey = SupabaseClient.supabaseAnonKey,
-                    authorization = authHeader,
-                    chatIdFilter = "eq.$chatId",
-                    createdAtFilter = createdAtFilterStr,
-                    order = "created_at.desc",
-                    limit = limit
-                )
-            }
-
-            if (legacyResponse != null) {
-                if (legacyResponse.isSuccessful) {
-                    lastSyncTimestamps[chatId] = System.currentTimeMillis()
-                    val remoteList = legacyResponse.body() ?: emptyList()
-                    Log.i(TAG, "getMessagesForChatPaged (legacy messages) SUCCESS: code=${legacyResponse.code()}, size=${remoteList.size} filas")
-                    if (remoteList.isNotEmpty()) {
-                        val decryptedList = remoteList.map { it: Message -> com.example.util.CryptoManager.decryptMessageIfNeeded(it) }.filter { msg ->
-                            com.example.util.MessageFilter.shouldKeepMessage(
-                                messageId = msg.id,
-                                messageClientUuid = msg.clientMessageUuid,
-                                messageCreatedAt = msg.createdAt,
-                                lastClearedAt = lastClearedAt,
-                                deletedMessageIds = userDeletedIds
-                            )
-                        }
-                        val entities = decryptedList.map { MessageEntity.fromMessage(it) }
-                        if (entities.isNotEmpty()) {
-                            messageDao.insertOrMergeMessages(entities)
-                        }
-                    }
-                    if (!lastClearedAt.isNullOrEmpty()) {
-                        try {
-                            val allLocal = messageDao.getMessagesForChat(chatId)
-                            val staleLocal = allLocal.filter { isTimestampBeforeOrEqual(it.createdAt, lastClearedAt) }
-                            staleLocal.forEach { messageDao.deleteMessageById(it.id) }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Error purging stale local messages", e)
-                        }
-                    }
+                    
                     val freshLocal = messageDao.getMessagesForChatPaged(chatId, limit, oldestTimestamp)
                     val validLocal = freshLocal.filter { local ->
                         com.example.util.MessageFilter.shouldKeepMessage(
@@ -344,11 +288,72 @@ class MessagesRepository private constructor() {
                     }
                     return@withContext Result.success(decryptMessages(validLocal.map { it.toMessage() }.sortedBy { it.createdAt }))
                 } else {
-                    val errBody = legacyResponse.errorBody()?.string() ?: "No error body"
-                    Log.e(TAG, "getMessagesForChatPaged (legacy messages) FAILED: code=${legacyResponse.code()}, error=$errBody")
+                    val errBody = response.errorBody()?.string() ?: "No error body"
+                    Log.e(TAG, "🚨 getMessagesForChatPaged (thread_messages) FAILED: code=${response.code()}, error=$errBody")
+                    // If it's a DM, we DO NOT fall through to legacy. We return what we have in cache.
+                    if (isDm) return@withContext Result.success(messagesList)
                 }
-            } else {
-                Log.e(TAG, "getMessagesForChatPaged (legacy messages) FAILED: Response is null (auth/JWT token missing or expired)")
+            }
+
+            // If it's NOT a DM (Channel/Legacy), try getMessages
+            if (!isDm) {
+                val legacyResponse = runCall { authHeader ->
+                    Log.d(TAG, "getMessagesForChatPaged: Querying legacy messages for Channel $chatId with createdAtFilter=$createdAtFilterStr")
+                    service.getMessages(
+                        apiKey = SupabaseClient.supabaseAnonKey,
+                        authorization = authHeader,
+                        chatIdFilter = "eq.$chatId",
+                        createdAtFilter = createdAtFilterStr,
+                        order = "created_at.desc",
+                        limit = limit
+                    )
+                }
+
+                if (legacyResponse != null) {
+                    if (legacyResponse.isSuccessful) {
+                        lastSyncTimestamps[chatId] = System.currentTimeMillis()
+                        val remoteList = legacyResponse.body() ?: emptyList()
+                        Log.i(TAG, "getMessagesForChatPaged (legacy messages) SUCCESS: code=${legacyResponse.code()}, size=${remoteList.size} filas")
+                        if (remoteList.isNotEmpty()) {
+                            val decryptedList = remoteList.map { it: Message -> com.example.util.CryptoManager.decryptMessageIfNeeded(it) }.filter { msg ->
+                                com.example.util.MessageFilter.shouldKeepMessage(
+                                    messageId = msg.id,
+                                    messageClientUuid = msg.clientMessageUuid,
+                                    messageCreatedAt = msg.createdAt,
+                                    lastClearedAt = lastClearedAt,
+                                    deletedMessageIds = userDeletedIds
+                                )
+                            }
+                            val entities = decryptedList.map { MessageEntity.fromMessage(it) }
+                            if (entities.isNotEmpty()) {
+                                messageDao.insertOrMergeMessages(entities)
+                            }
+                        }
+                        if (!lastClearedAt.isNullOrEmpty()) {
+                            try {
+                                val allLocal = messageDao.getMessagesForChat(chatId)
+                                val staleLocal = allLocal.filter { isTimestampBeforeOrEqual(it.createdAt, lastClearedAt) }
+                                staleLocal.forEach { messageDao.deleteMessageById(it.id) }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error purging stale local messages", e)
+                            }
+                        }
+                        val freshLocal = messageDao.getMessagesForChatPaged(chatId, limit, oldestTimestamp)
+                        val validLocal = freshLocal.filter { local ->
+                            com.example.util.MessageFilter.shouldKeepMessage(
+                                messageId = local.id,
+                                messageClientUuid = local.clientMessageUuid,
+                                messageCreatedAt = local.createdAt,
+                                lastClearedAt = lastClearedAt,
+                                deletedMessageIds = userDeletedIds
+                            )
+                        }
+                        return@withContext Result.success(decryptMessages(validLocal.map { it.toMessage() }.sortedBy { it.createdAt }))
+                    } else {
+                        val errBody = legacyResponse.errorBody()?.string() ?: "No error body"
+                        Log.e(TAG, "getMessagesForChatPaged (legacy messages) FAILED: code=${legacyResponse.code()}, error=$errBody")
+                    }
+                }
             }
 
             Result.success(messagesList)
@@ -427,33 +432,33 @@ class MessagesRepository private constructor() {
             }
 
             var remoteMessages = emptyList<Message>()
-            var isThreadMessagesSuccessful = false
+            
+            val chatEntity = db.chatDao().getChatById(chatId)
+            val isDm = chatEntity?.type == "dm" || !chatEntity?.otherUserId.isNullOrEmpty()
 
-            val response = runCall { authHeader ->
-                Log.d(TAG, "syncUpdatedMessages: Querying thread_messages with threadIdFilter=eq.$chatId and updatedAtFilter=gt.$timestamp")
-                service.getIncrementalThreadMessages(
-                    apiKey = SupabaseClient.supabaseAnonKey,
-                    authorization = authHeader,
-                    threadIdFilter = "eq.$chatId",
-                    updatedAtFilter = "gt.$timestamp"
-                )
-            }
+            if (isDm) {
+                val response = runCall { authHeader ->
+                    Log.d(TAG, "syncUpdatedMessages: Querying thread_messages for DM $chatId with updatedAtFilter=gt.$timestamp")
+                    service.getIncrementalThreadMessages(
+                        apiKey = SupabaseClient.supabaseAnonKey,
+                        authorization = authHeader,
+                        threadIdFilter = "eq.$chatId",
+                        updatedAtFilter = "gt.$timestamp"
+                    )
+                }
 
-            if (response != null && response.isSuccessful) {
-                isThreadMessagesSuccessful = true
-                val remoteList = response.body() ?: emptyList()
-                Log.i(TAG, "syncUpdatedMessages (thread_messages) SUCCESS: code=${response.code()}, size=${remoteList.size} filas")
-                remoteMessages = remoteList.mapNotNull { item ->
-                    item.toMessage()
+                if (response != null && response.isSuccessful) {
+                    val remoteList = response.body() ?: emptyList()
+                    Log.i(TAG, "syncUpdatedMessages (thread_messages) SUCCESS: code=${response.code()}, size=${remoteList.size} filas")
+                    remoteMessages = remoteList.mapNotNull { it.toMessage() }
+                } else {
+                    val errBody = response?.errorBody()?.string() ?: "No response or error body"
+                    Log.e(TAG, "🚨 syncUpdatedMessages (thread_messages) FAILED: error=$errBody")
+                    return@withContext Result.failure(Exception("DM sync failed: $errBody"))
                 }
             } else {
-                val errBody = response?.errorBody()?.string() ?: "No response or error body"
-                Log.e(TAG, "🚨 syncUpdatedMessages (thread_messages) FAILED: error=$errBody")
-            }
-
-            if (!isThreadMessagesSuccessful) {
                 val legacyResponse = runCall { authHeader ->
-                    Log.d(TAG, "syncUpdatedMessages: Querying legacy messages with chatIdFilter=eq.$chatId and updatedAtFilter=gt.$timestamp")
+                    Log.d(TAG, "syncUpdatedMessages: Querying legacy messages for Channel $chatId with updatedAtFilter=gt.$timestamp")
                     service.getIncrementalMessages(
                         apiKey = SupabaseClient.supabaseAnonKey,
                         authorization = authHeader,
@@ -1062,8 +1067,16 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
                 } else {
                     val code = threadResponse?.code()
                     val errorBody = threadResponse?.errorBody()?.string() ?: ""
-                    Log.w(TAG, "PANALINK_SYNC_RESULT: thread_messages failed (Code: $code, Error: $errorBody), trying legacy fallback.")
+                    Log.w(TAG, "PANALINK_SYNC_RESULT: thread_messages failed (Code: $code, Error: $errorBody).")
                     
+                    // IF IT IS A DM, WE DO NOT FALLBACK TO LEGACY MESSAGES
+                    if (isDmSync) {
+                        Log.e(TAG, "DM sync failed for message ${entity.id}. Staying pending.")
+                        allSuccessful = false
+                        continue
+                    }
+
+                    Log.i(TAG, "Channel/Legacy chat detected. Trying legacy fallback for message ${entity.id}.")
                     val legacyMsgMap = mutableMapOf<String, Any?>(
                         "id" to remoteId,
                         "thread_id" to entity.chatId,
@@ -1096,6 +1109,8 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
                     }
                     if (legacyResponse != null && legacyResponse.isSuccessful) {
                         successful = true
+                    } else {
+                        allSuccessful = false
                     }
                 }
 
@@ -1617,58 +1632,63 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
                 val errorCode = response?.code()
                 val errorBody = response?.errorBody()?.string() ?: "Response is null"
                 errorStr = "Code: $errorCode, Body: $errorBody"
-                Log.w(TAG, "createThreadMessage failed: $errorStr. Trying legacy createMessage fallback.")
+                Log.w(TAG, "createThreadMessage failed: $errorStr.")
                 
-                // Fallback to legacy messages table
-                val legacyMsgMap = mutableMapOf<String, Any?>(
-                    "id" to remoteId,
-                    "thread_id" to if (isDm) chatId else null,
-                    "chat_id" to if (isDm) null else chatId,
-                    "sender_id" to currentUid,
-                    "receiver_id" to finalReceiverUid?.takeIf { isValidUuid(it) },
-                    "text_content" to contentToUpload,
-                    "client_message_uuid" to clientUuid,
-                    "created_at" to nowStr,
-                    "media_url" to mediaUrl,
-                    "thumbnail_url" to thumbnailUrl,
-                    "media_mime" to mediaMime,
-                    "message_type" to normalizedMessageType,
-                    "file_size" to mediaSize,
-                    "duration" to duration,
-                    "width" to width,
-                    "height" to height
-                )
-                if (replyToId != null && isValidUuid(replyToId)) {
-                    legacyMsgMap["reply_to"] = replyToId
-                }
-                val cleanLegacyMsgMap = legacyMsgMap.filterValues { it != null }
-
-                val legacyResponse = runCall { auth ->
-                    service.createMessage(
-                        apiKey = SupabaseClient.supabaseAnonKey,
-                        authorization = auth,
-                        message = cleanLegacyMsgMap
+                // FALLBACK TO LEGACY MESSAGES TABLE (ONLY FOR NON-DM)
+                if (!isDm) {
+                    Log.i(TAG, "Non-DM chat detected. Trying legacy createMessage fallback.")
+                    val legacyMsgMap = mutableMapOf<String, Any?>(
+                        "id" to remoteId,
+                        "thread_id" to null,
+                        "chat_id" to chatId,
+                        "sender_id" to currentUid,
+                        "receiver_id" to null,
+                        "text_content" to contentToUpload,
+                        "client_message_uuid" to clientUuid,
+                        "created_at" to nowStr,
+                        "media_url" to mediaUrl,
+                        "thumbnail_url" to thumbnailUrl,
+                        "media_mime" to mediaMime,
+                        "message_type" to normalizedMessageType,
+                        "file_size" to mediaSize,
+                        "duration" to duration,
+                        "width" to width,
+                        "height" to height
                     )
-                }
+                    if (replyToId != null && isValidUuid(replyToId)) {
+                        legacyMsgMap["reply_to"] = replyToId
+                    }
+                    val cleanLegacyMsgMap = legacyMsgMap.filterValues { it != null }
 
-                if (legacyResponse != null && legacyResponse.isSuccessful) {
-                    successful = true
-                    try {
-                        val bodyStr = legacyResponse.body()?.string()
-                        if (!bodyStr.isNullOrBlank()) {
-                            val jsonArray = org.json.JSONArray(bodyStr)
-                            if (jsonArray.length() > 0) {
-                                returnedId = jsonArray.getJSONObject(0).optString("id", null)
+                    val legacyResponse = runCall { auth ->
+                        service.createMessage(
+                            apiKey = SupabaseClient.supabaseAnonKey,
+                            authorization = auth,
+                            message = cleanLegacyMsgMap
+                        )
+                    }
+
+                    if (legacyResponse != null && legacyResponse.isSuccessful) {
+                        successful = true
+                        try {
+                            val bodyStr = legacyResponse.body()?.string()
+                            if (!bodyStr.isNullOrBlank()) {
+                                val jsonArray = org.json.JSONArray(bodyStr)
+                                if (jsonArray.length() > 0) {
+                                    returnedId = jsonArray.getJSONObject(0).optString("id", null)
+                                }
                             }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error parsing legacy response body", e)
                         }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Error parsing legacy response body", e)
+                    } else {
+                        val legacyCode = legacyResponse?.code()
+                        val legacyError = legacyResponse?.errorBody()?.string() ?: "Legacy response is null"
+                        errorStr = "ThreadMsgErr: $errorStr | LegacyErr: (Code: $legacyCode, Body: $legacyError)"
+                        Log.e(TAG, "Legacy createMessage also failed: $errorStr")
                     }
                 } else {
-                    val legacyCode = legacyResponse?.code()
-                    val legacyError = legacyResponse?.errorBody()?.string() ?: "Legacy response is null"
-                    errorStr = "ThreadMsgErr: $errorStr | LegacyErr: (Code: $legacyCode, Body: $legacyError)"
-                    Log.e(TAG, "Legacy createMessage also failed: $errorStr")
+                    Log.e(TAG, "DM creation failed: $errorStr. No legacy fallback allowed.")
                 }
             }
 

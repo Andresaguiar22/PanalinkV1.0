@@ -247,7 +247,7 @@ fun MessageBubbleEngine(
     }
 
     val bubbleColor = if (isSticker || isBigEmoji) Color.Transparent 
-                      else if (isMe) Color(0xFFD9FDD3) 
+                      else if (isMe) Color(0xFFE7FFDB) 
                       else Color(0xFFFFFFFF)
     val contentTextColor = Color(0xFF111B21)
     val elevation = if (isSticker || isBigEmoji) 0f else 1f

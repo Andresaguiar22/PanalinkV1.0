@@ -124,17 +124,33 @@ class ChatViewModel : ViewModel() {
     private val _recordState = MutableStateFlow(RecordState.IDLE)
     val recordState: StateFlow<RecordState> = _recordState.asStateFlow()
 
+    private val voiceController by lazy { com.example.ui.components.chat.voice.VoiceRecordingController(com.example.PanaApplication.instance) }
+    private val previewAudioPlayer by lazy { com.example.util.AudioPlayer() }
+
     private val _voiceAmplitudes = MutableStateFlow<List<Float>>(emptyList())
     val voiceAmplitudes: StateFlow<List<Float>> = _voiceAmplitudes.asStateFlow()
 
-    private val _previewPlayerState = MutableStateFlow(AudioPlayerState())
-    val previewPlayerState: StateFlow<AudioPlayerState> = _previewPlayerState.asStateFlow()
+    private val _previewPlayerState = MutableStateFlow(com.example.util.AudioPlayerState())
+    val previewPlayerState: StateFlow<com.example.util.AudioPlayerState> = _previewPlayerState.asStateFlow()
 
     private val _previewWaveform = MutableStateFlow<List<Float>>(emptyList())
     val previewWaveform: StateFlow<List<Float>> = _previewWaveform.asStateFlow()
 
     var previewFile: java.io.File? = null
     var previewDurationSeconds: Int = 0
+
+    init {
+        viewModelScope.launch {
+            voiceController.amplitudes.collect {
+                _voiceAmplitudes.value = it
+            }
+        }
+        viewModelScope.launch {
+            previewAudioPlayer.playerState.collect {
+                _previewPlayerState.value = it
+            }
+        }
+    }
 
     private val _playNotificationSound = MutableSharedFlow<Unit>()
     val playNotificationSound: SharedFlow<Unit> = _playNotificationSound
@@ -440,33 +456,37 @@ private var chatJob: kotlinx.coroutines.Job? = null
 
     fun onVoiceGestureEvent(
         event: com.example.ui.components.chat.voice.VoiceGestureEvent,
-        context: Context,
+        context: android.content.Context,
         replyToId: String? = null,
         fallbackDurationSeconds: Int = 0,
         onProgress: (Boolean) -> Unit = {}
     ) {
-        if (audioRecorder == null) {
-            audioRecorder = com.example.util.AudioRecorder(context)
-        }
-        
         when (event) {
             com.example.ui.components.chat.voice.VoiceGestureEvent.StartRecording -> {
-                audioRecorder?.startRecording()
-                _recordState.value = RecordState.RECORDING
+                val file = voiceController.start()
+                if (file != null) {
+                    _recordState.value = RecordState.RECORDING
+                    // Vibration feedback if needed could go here
+                }
             }
             com.example.ui.components.chat.voice.VoiceGestureEvent.LockRecording -> {
                 _recordState.value = RecordState.LOCKED_RECORDING
             }
             com.example.ui.components.chat.voice.VoiceGestureEvent.CancelRecording -> {
-                audioRecorder?.cancelRecording()
+                voiceController.cancel()
                 _recordState.value = RecordState.IDLE
+                _voiceAmplitudes.value = emptyList()
             }
             com.example.ui.components.chat.voice.VoiceGestureEvent.FinishRecording -> {
-                val file = audioRecorder?.stopRecording()
+                if (_recordState.value == RecordState.LOCKED_RECORDING) return // Don't finish if locked, user must click send or stop
+
+                val result = voiceController.stopAndValidate(fallbackDurationSeconds = fallbackDurationSeconds)
                 _recordState.value = RecordState.IDLE
-                if (file != null) {
+                _voiceAmplitudes.value = emptyList()
+
+                if (result is com.example.ui.components.chat.voice.VoiceRecordingResult.Success) {
                     uploadAndSendMedia(
-                        file = file,
+                        file = result.file,
                         mimeType = "audio/mp4",
                         typeLabel = "Voice",
                         replyToId = replyToId,
@@ -475,24 +495,90 @@ private var chatJob: kotlinx.coroutines.Job? = null
                     )
                 }
             }
-            else -> {}
+            com.example.ui.components.chat.voice.VoiceGestureEvent.PauseRecording -> {
+                voiceController.pause()
+            }
+            com.example.ui.components.chat.voice.VoiceGestureEvent.ResumeRecording -> {
+                voiceController.resume()
+            }
+            com.example.ui.components.chat.voice.VoiceGestureEvent.StopAndPreviewRecording -> {
+                val result = voiceController.stopAndValidate(fallbackDurationSeconds = fallbackDurationSeconds)
+                _voiceAmplitudes.value = emptyList()
+                if (result is com.example.ui.components.chat.voice.VoiceRecordingResult.Success) {
+                    previewFile = result.file
+                    previewDurationSeconds = result.durationSeconds
+                    _previewWaveform.value = result.waveform
+                    _recordState.value = RecordState.PREVIEWING
+                } else {
+                    _recordState.value = RecordState.IDLE
+                }
+            }
         }
     }
 
-    fun cancelPreviewRecording() {}
-    fun getRecordingElapsedSeconds(): Int = 0
-    fun cleanOldCache(context: Context) {}
+    fun cancelPreviewRecording() {
+        previewAudioPlayer.release()
+        previewFile?.delete()
+        previewFile = null
+        _recordState.value = RecordState.IDLE
+    }
+
+    fun getRecordingElapsedSeconds(): Int {
+        return (voiceController.getElapsedMillis() / 1000).toInt()
+    }
+
+    fun cleanOldCache(context: android.content.Context) {
+        viewModelScope.launch {
+            com.example.util.VoiceNoteCacheCleaner.cleanOldVoiceNotes(context)
+        }
+    }
     
-    fun pausePreviewAudio() {}
-    fun playPreviewAudio() {}
-    fun togglePreviewSpeed() {}
-    fun seekPreviewAudio(posMs: Long) {}
+    fun pausePreviewAudio() {
+        previewAudioPlayer.pause()
+    }
+
+    fun playPreviewAudio() {
+        val file = previewFile ?: return
+        if (previewAudioPlayer.playerState.value.isPrepared) {
+            previewAudioPlayer.resume()
+        } else {
+            previewAudioPlayer.play(file.absolutePath)
+        }
+    }
+
+    fun togglePreviewSpeed() {
+        val currentSpeed = previewPlayerState.value.playbackSpeed
+        val nextSpeed = when (currentSpeed) {
+            1f -> 1.5f
+            1.5f -> 2f
+            else -> 1f
+        }
+        previewAudioPlayer.setSpeed(nextSpeed)
+    }
+
+    fun seekPreviewAudio(posMs: Long) {
+        previewAudioPlayer.seekTo(posMs.toInt())
+    }
 
     fun sendPreviewRecording(
-        context: Context,
+        context: android.content.Context,
         replyToId: String? = null,
         onProgress: (Boolean) -> Unit = {}
-    ) {}
+    ) {
+        val file = previewFile ?: return
+        previewAudioPlayer.release()
+        _recordState.value = RecordState.IDLE
+        
+        uploadAndSendMedia(
+            file = file,
+            mimeType = "audio/mp4",
+            typeLabel = "Voice",
+            replyToId = replyToId,
+            context = context,
+            onProgress = onProgress
+        )
+        previewFile = null
+    }
     
     private fun getFileFromUri(context: Context, uri: Uri): File? {
         return try {

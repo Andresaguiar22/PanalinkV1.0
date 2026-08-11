@@ -16,9 +16,9 @@ import androidx.compose.ui.unit.dp
 @Immutable
 object BubbleShapeFactory {
 
-    private const val DEFAULT_CORNER = 14f
-    private const val REDUCED_CORNER = 4f
-    private const val TAIL_CORNER = 2f
+    private const val DEFAULT_CORNER = 18f
+    private const val REDUCED_CORNER = 6f
+    private const val TAIL_CORNER = 4f
 
     /**
      * Returns a Compose Shape for the message bubble depending on whether it's
@@ -27,7 +27,7 @@ object BubbleShapeFactory {
     fun createShape(
         groupPosition: MessageGroupPosition,
         isMe: Boolean,
-        cornerDp: Dp = 14.dp
+        cornerDp: Dp = 18.dp
     ): Shape {
         val cornerPx = cornerDp.value
         return if (isMe) {

@@ -15,6 +15,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.DoneAll
+import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -65,11 +66,12 @@ fun MessageStatusIndicator(
         }
         Text(
             text = formattedTime,
-            color = textColor,
-            fontSize = 10.sp
+            color = textColor.copy(alpha = 0.8f),
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Normal
         )
         if (isMe) {
-            Spacer(modifier = Modifier.width(4.dp))
+            Spacer(modifier = Modifier.width(3.dp))
             AnimatedContent(
                 targetState = status,
                 transitionSpec = {
@@ -79,50 +81,51 @@ fun MessageStatusIndicator(
             ) { targetStatus ->
                 when (targetStatus) {
                     "sending", "pending_media" -> {
-                        Text(
-                            text = "🕒",
-                            color = textColor,
-                            fontSize = 10.sp
+                        androidx.compose.material3.Icon(
+                            imageVector = Icons.Filled.AccessTime,
+                            contentDescription = "Enviando",
+                            tint = textColor.copy(alpha = 0.7f),
+                            modifier = Modifier.size(12.dp)
                         )
                     }
                     "failed" -> {
                         androidx.compose.material3.Icon(
                             imageVector = Icons.Filled.Error,
                             contentDescription = "Error",
-                            tint = Color.Red,
-                            modifier = Modifier.size(11.dp)
+                            tint = Color(0xFFEF5350),
+                            modifier = Modifier.size(13.dp)
                         )
                     }
                     "sent" -> {
                         androidx.compose.material3.Icon(
                             imageVector = Icons.Filled.Done,
                             contentDescription = "Enviado",
-                            tint = textColor,
-                            modifier = Modifier.size(11.dp)
+                            tint = textColor.copy(alpha = 0.8f),
+                            modifier = Modifier.size(13.dp)
                         )
                     }
                     "delivered" -> {
                         androidx.compose.material3.Icon(
                             imageVector = Icons.Filled.DoneAll,
                             contentDescription = "Entregado",
-                            tint = textColor,
-                            modifier = Modifier.size(11.dp)
+                            tint = textColor.copy(alpha = 0.8f),
+                            modifier = Modifier.size(14.dp)
                         )
                     }
                     "seen", "read" -> {
                         androidx.compose.material3.Icon(
                             imageVector = Icons.Filled.DoneAll,
                             contentDescription = "Leído",
-                            tint = Color(0xFF53BDEB),
-                            modifier = Modifier.size(11.dp)
+                            tint = Color(0xFF34B7F1),
+                            modifier = Modifier.size(14.dp)
                         )
                     }
                     else -> {
                         androidx.compose.material3.Icon(
                             imageVector = Icons.Filled.Done,
                             contentDescription = "Enviado",
-                            tint = textColor,
-                            modifier = Modifier.size(11.dp)
+                            tint = textColor.copy(alpha = 0.8f),
+                            modifier = Modifier.size(13.dp)
                         )
                     }
                 }

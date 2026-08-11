@@ -90,6 +90,7 @@ import com.example.ui.theme.getAvatarGradient
 import com.example.ui.components.VoiceMessageBubble
 import com.example.ui.viewmodel.ChatUiState
 import com.example.ui.viewmodel.ChatViewModel
+import com.example.ui.viewmodel.RecordState
 import com.example.util.AudioPlayer
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -99,9 +100,6 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
 
-enum class RecordState {
-    IDLE, RECORDING, LOCKED, PREVIEWING
-}
 
 @Composable
 fun EncryptionBanner() {
@@ -292,12 +290,25 @@ fun ChatScreen(
     var showBackgroundDialog by remember { mutableStateOf(false) }
     var showPlaylistPicker by remember { mutableStateOf(false) }
 
-    // Audio recording states
-    var recordState by remember { mutableStateOf(RecordState.IDLE) }
-    var recordDurationSeconds by remember { mutableStateOf(0) }
+    val recordState by viewModel.recordState.collectAsStateWithLifecycle()
+    val voiceAmplitudes by viewModel.voiceAmplitudes.collectAsStateWithLifecycle()
+    val previewPlayerState by viewModel.previewPlayerState.collectAsStateWithLifecycle()
+    val previewWaveform by viewModel.previewWaveform.collectAsStateWithLifecycle()
+
+    var recordDurationSeconds by remember { mutableIntStateOf(0) }
+    LaunchedEffect(recordState) {
+        if (recordState == RecordState.RECORDING || recordState == RecordState.LOCKED_RECORDING) {
+            while (true) {
+                recordDurationSeconds = viewModel.getRecordingElapsedSeconds()
+                delay(500)
+            }
+        } else {
+            recordDurationSeconds = 0
+        }
+    }
+    
     var isRecordingPaused by remember { mutableStateOf(false) }
     var hasMicPermission by remember { mutableStateOf(false) }
-    var recordFile by remember { mutableStateOf<File?>(null) }
     var micDragOffsetX by remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
     var micDragOffsetY by remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
 
@@ -387,10 +398,10 @@ fun ChatScreen(
     }
 
     // Intercept back button when in PREVIEWING or LOCKED state
-    androidx.activity.compose.BackHandler(enabled = recordState == RecordState.PREVIEWING || recordState == RecordState.LOCKED) {
+    androidx.activity.compose.BackHandler(enabled = recordState == RecordState.PREVIEWING || recordState == RecordState.LOCKED_RECORDING) {
         if (recordState == RecordState.PREVIEWING) {
             viewModel.cancelPreviewRecording()
-        } else if (recordState == RecordState.LOCKED) {
+        } else if (recordState == RecordState.LOCKED_RECORDING) {
             viewModel.onVoiceGestureEvent(
                 event = VoiceGestureEvent.CancelRecording,
                 context = context
@@ -398,42 +409,8 @@ fun ChatScreen(
         }
     }
 
-    val vmRecordState by viewModel.recordState.collectAsStateWithLifecycle()
-    val voiceAmplitudes by viewModel.voiceAmplitudes.collectAsStateWithLifecycle()
-    val previewPlayerState by viewModel.previewPlayerState.collectAsStateWithLifecycle()
-    val previewWaveform by viewModel.previewWaveform.collectAsStateWithLifecycle()
-
     LaunchedEffect(Unit) {
         viewModel.cleanOldCache(context)
-    }
-
-    LaunchedEffect(vmRecordState) {
-        when (vmRecordState) {
-            com.example.ui.viewmodel.RecordState.IDLE, com.example.ui.viewmodel.RecordState.CANCELING -> {
-                recordState = RecordState.IDLE
-            }
-            com.example.ui.viewmodel.RecordState.RECORDING -> {
-                recordState = RecordState.RECORDING
-            }
-            com.example.ui.viewmodel.RecordState.LOCKED_RECORDING -> {
-                recordState = RecordState.LOCKED
-            }
-            com.example.ui.viewmodel.RecordState.PREVIEWING -> {
-                recordState = RecordState.PREVIEWING
-            }
-        }
-    }
-
-    // Voice recording timer
-    LaunchedEffect(recordState) {
-        if (recordState != RecordState.IDLE) {
-            recordDurationSeconds = 0
-            isRecordingPaused = false
-            while (recordState != RecordState.IDLE) {
-                delay(200)
-                recordDurationSeconds = viewModel.getRecordingElapsedSeconds()
-            }
-        }
     }
 
     // Call timer
@@ -1430,7 +1407,7 @@ fun ChatScreen(
                             }
                         }
                     }
-                } else if (recordState == RecordState.RECORDING) {
+                } else if (recordState == RecordState.RECORDING || recordState == RecordState.LOCKED_RECORDING) {
                     // Holding & Sliding mode recording panel on the left (Takes up the rest of the bar)
                     Row(
                         modifier = Modifier
@@ -1478,7 +1455,7 @@ fun ChatScreen(
                             }
                         )
                     }
-                } else if (recordState == RecordState.LOCKED) {
+                } else if (recordState == RecordState.LOCKED_RECORDING) {
                     // LOCKED state panel (Flujo de grabación fija WhatsApp style)
                     Row(
                         modifier = Modifier
@@ -1496,7 +1473,6 @@ fun ChatScreen(
                                 .clickable {
                                     playCancelBeep()
                                     triggerLightVibration(context)
-                                    recordState = RecordState.IDLE
                                     isRecordingPaused = false
                                     Toast.makeText(context, "Grabación descartada", Toast.LENGTH_SHORT).show()
                                     viewModel.onVoiceGestureEvent(
@@ -1756,11 +1732,10 @@ fun ChatScreen(
 
                 val isInputEmpty = inputMessage.trim().isEmpty()
                 
-                if (recordState == RecordState.LOCKED) {
+                if (recordState == RecordState.LOCKED_RECORDING) {
                     // Circular green send button for audio (Direct Send)
                     FloatingActionButton(
                         onClick = {
-                            recordState = RecordState.IDLE
                             isRecordingPaused = false
                             viewModel.onVoiceGestureEvent(
                                 event = VoiceGestureEvent.FinishRecording,
@@ -1865,7 +1840,7 @@ fun ChatScreen(
                             .background(Color(0xFF00A884))
                             .voiceGestureDetector(
                                 enabled = true,
-                                isLocked = recordState == RecordState.LOCKED,
+                                isLocked = recordState == RecordState.LOCKED_RECORDING,
                                 lockThresholdY = -350f,
                                 cancelThresholdX = -250f,
                                 onPermissionRequired = if (!hasMicPermission) {
@@ -1883,12 +1858,10 @@ fun ChatScreen(
                                         is VoiceGestureEvent.StartRecording -> {
                                             playShortBeep()
                                             triggerLightVibration(context)
-                                            recordState = RecordState.RECORDING
                                         }
                                         is VoiceGestureEvent.LockRecording -> {
                                             playShortBeep()
                                             triggerLightVibration(context)
-                                            recordState = RecordState.LOCKED
                                         }
                                         is VoiceGestureEvent.CancelRecording -> {
                                             playCancelBeep()
