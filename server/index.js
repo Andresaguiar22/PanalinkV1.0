@@ -498,28 +498,77 @@ function startCloudflaredTunnel() {
 
   async function updateSupabaseConfig(cdnUrl) {
     const supabaseUrl = process.env.SUPABASE_URL;
-    const supabaseKey = process.env.SUPABASE_ANON_KEY;
-    if (!supabaseUrl || !supabaseKey) {
-      console.warn("⚠️ SUPABASE_URL o SUPABASE_ANON_KEY no configurados. Saltando actualización automática del CDN.");
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+    if (!supabaseUrl || !serviceRoleKey) {
+      console.warn("⚠️ SUPABASE_URL o SUPABASE_SERVICE_ROLE_KEY no configurados. Saltando actualización automática del CDN.");
       return;
     }
-    try {
-      const res = await fetch(`${supabaseUrl}/rest/v1/global_server_config?id=eq.1`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': supabaseKey,
-          'Authorization': `Bearer ${supabaseKey}`
-        },
-        body: JSON.stringify({ cdn_url: cdnUrl, active: true, updated_at: new Date().toISOString() })
-      });
-      if (!res.ok) {
-        console.error("❌ Error actualizando global_server_config:", await res.text());
-      } else {
-        console.log("✅ Supabase actualizado con la nueva URL CDN.");
+
+    const retryDelays = [5000, 15000, 30000, 60000];
+    let attempt = 0;
+
+    while (attempt <= retryDelays.length) {
+      try {
+        // 1. PATCH request
+        const res = await fetch(`${supabaseUrl}/rest/v1/global_server_config?id=eq.1`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': serviceRoleKey,
+            'Authorization': `Bearer ${serviceRoleKey}`
+          },
+          body: JSON.stringify({ cdn_url: cdnUrl, active: true, updated_at: new Date().toISOString() })
+        });
+
+        const status = res.status;
+        if (!res.ok && status !== 204) {
+          console.error(`❌ CDN_SUPABASE_UPDATE_FAILED: HTTP ${status} para URL ${cdnUrl}. Respuesta:`, await res.text());
+          throw new Error(`HTTP ${status}`);
+        }
+
+        // 2. GET request to verify
+        const verifyRes = await fetch(`${supabaseUrl}/rest/v1/global_server_config?id=eq.1&select=cdn_url`, {
+          method: 'GET',
+          headers: {
+            'apikey': serviceRoleKey,
+            'Authorization': `Bearer ${serviceRoleKey}`
+          }
+        });
+
+        const verifyStatus = verifyRes.status;
+        if (!verifyRes.ok) {
+          console.error(`❌ Falló la verificación GET: HTTP ${verifyStatus}`);
+          throw new Error(`GET HTTP ${verifyStatus}`);
+        }
+
+        const data = await verifyRes.json();
+        const remoteUrl = data && data[0] && data[0].cdn_url;
+
+        if (remoteUrl === cdnUrl) {
+          console.log("✅ CDN URL CONFIRMADA EN SUPABASE");
+          console.log(`Cloudflared URL detected: YES`);
+          console.log(`Current URL: ${cdnUrl}`);
+          console.log(`PATCH global_server_config: HTTP ${status}`);
+          console.log(`GET verification: HTTP ${verifyStatus}`);
+          console.log(`Supabase cdn_url matches currentUrl: YES`);
+          return; // Success, exit retry loop
+        } else {
+          console.error(`❌ Discrepancia en verificación. Local: ${cdnUrl}, Remoto: ${remoteUrl}`);
+          throw new Error("Verification mismatch");
+        }
+
+      } catch (e) {
+        if (attempt < retryDelays.length) {
+          const delay = retryDelays[attempt];
+          console.log(`⏳ Reintentando en ${delay / 1000}s... (Intento ${attempt + 1}/${retryDelays.length})`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          attempt++;
+        } else {
+          console.error("❌ Fallaron todos los intentos de actualizar Supabase con la nueva URL.");
+          break;
+        }
       }
-    } catch (e) {
-      console.error("❌ Fallo de red actualizando global_server_config:", e.message);
     }
   }
 
