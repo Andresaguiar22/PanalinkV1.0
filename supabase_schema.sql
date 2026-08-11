@@ -7,8 +7,12 @@ create extension if not exists "uuid-ossp";
 create table public.profiles (
     id uuid references auth.users on delete cascade primary key,
     display_name text not null,
+    first_name text,
+    last_name text,
     avatar_url text null,
     privacy_level text default 'public' check (privacy_level in ('public', 'friends_only', 'private')) not null,
+    pin_hash text null,
+    updated_at timestamp with time zone default now() not null,
     created_at timestamp with time zone default now() not null
 );
 
@@ -26,6 +30,94 @@ on public.profiles for update
 to authenticated
 using (auth.uid() = id)
 with check (auth.uid() = id);
+
+-- Public Profiles Table (Public Identity)
+create table public.public_profiles (
+    id uuid primary key references public.profiles(id) on delete cascade,
+    display_name text,
+    first_name text,
+    last_name text,
+    avatar_url text,
+    updated_at timestamp with time zone default now()
+);
+
+-- Enable RLS on Public Profiles
+alter table public.public_profiles enable row level security;
+
+-- Public Profiles Policies
+create policy "Public profiles read policy"
+on public.public_profiles for select
+to authenticated
+using (true);
+
+-- Revoke write permissions from client roles on public_profiles
+revoke insert, update, delete, truncate on public.public_profiles from authenticated, anon;
+grant select on public.public_profiles to authenticated;
+
+-- Function to keep updated_at current
+create or replace function public.set_updated_at()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+-- Trigger to update updated_at on profiles
+create trigger trg_profiles_updated_at
+    before update on public.profiles
+    for each row execute function public.set_updated_at();
+
+-- Function to sync profiles to public_profiles
+create or replace function public.sync_profile_to_public_profile()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+    if (tg_op = 'DELETE') then
+        delete from public.public_profiles where id = old.id;
+        return old;
+    elsif (tg_op = 'INSERT' or tg_op = 'UPDATE') then
+        insert into public.public_profiles (
+            id,
+            display_name,
+            first_name,
+            last_name,
+            avatar_url,
+            updated_at
+        ) values (
+            new.id,
+            new.display_name,
+            new.first_name,
+            new.last_name,
+            new.avatar_url,
+            new.updated_at
+        )
+        on conflict (id) do update set
+            display_name = excluded.display_name,
+            first_name = excluded.first_name,
+            last_name = excluded.last_name,
+            avatar_url = excluded.avatar_url,
+            updated_at = excluded.updated_at;
+        return new;
+    end if;
+    return null;
+end;
+$$;
+
+-- Revoke direct execution of sync function
+revoke execute on function public.sync_profile_to_public_profile() from public, anon, authenticated;
+
+-- Trigger to sync profiles to public_profiles
+create trigger trg_sync_public_profile
+    after insert or update or delete on public.profiles
+    for each row execute function public.sync_profile_to_public_profile();
 
 -- 3. Create Chats Table
 create table public.chats (
@@ -184,7 +276,11 @@ create index if not exists idx_user_statuses_author_created_at_desc
 
 -- 7. Automated Profile Trigger (upon auth.users creation)
 create or replace function public.handle_new_user()
-returns trigger as $$
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
 begin
     insert into public.profiles (id, display_name, avatar_url)
     values (
@@ -194,7 +290,7 @@ begin
     );
     return new;
 end;
-$$ language plpgsql security definer;
+$$;
 
 create trigger on_auth_user_created
     after insert on auth.users
@@ -322,9 +418,7 @@ on public.contacts for insert
 to authenticated
 with check (owner_user_id = auth.uid());
 
--- 12. Add pin_hash to profiles
-alter table public.profiles add column if not exists pin_hash text null;
-
+-- 12. Pgcrypto
 -- Enable pgcrypto extension for secure SHA-256 digest hashing
 create extension if not exists pgcrypto;
 

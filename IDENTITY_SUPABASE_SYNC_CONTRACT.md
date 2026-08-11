@@ -4,16 +4,28 @@
 Este documento establece las reglas de arquitectura y sincronización entre el backend remoto (Supabase) y el caché local (Identity Management and Caching Engine - IMCE), asegurando el funcionamiento Offline First y rendimiento óptimo en producción.
 
 ## 🗃️ Campos Sincronizados
-La entidad remota `profiles` debe mapear los siguientes campos mínimos hacia el caché local `local_profiles`:
+La arquitectura de identidad se divide en dos fuentes dependiendo del contexto:
+
+### 1. Identidad Propia (Módulo IMCE - Private)
+El usuario autenticado sincroniza su propio perfil desde `public.profiles` hacia el caché local `local_profiles`.
 
 | Remoto (Supabase `profiles`) | Local (Room `local_profiles`) | Descripción |
 |-----------------------------|------------------------------|-------------|
 | `id` (UUID)                 | `id` (String, PK)            | Identificador único del usuario. |
 | `display_name` (Text)       | `displayName` (String)       | Nombre para mostrar. |
-| `avatar_url` (Text)         | `avatarUrl` (String?)        | URL remota original del avatar (Supabase Storage/CDN). |
-| *No existe (calculado)*     | `avatarLocalPath` (String?)  | Ruta absoluta al archivo físico local (`filesDir/media/avatars/`). |
-| `cover_url` (Text)*         | `coverLocalPath` (String?)   | (Futuro) URL remota y ruta local de imagen de portada. |
-| `updated_at` (Timestamp)    | `lastSyncedAt` (Long?)       | Marca de tiempo para control de versiones y caché. |
+| `avatar_url` (Text)         | `avatarUrl` (String?)        | URL remota original del avatar. |
+
+### 2. Identidad de Terceros (Public Identity)
+Para resolver la identidad de contactos, miembros de grupos y otros usuarios, se utiliza la tabla `public.public_profiles` (Fuente de Verdad Única) sincronizada hacia Room `public_profiles`.
+
+| Remoto (Supabase `public_profiles`) | Local (Room `public_profiles`) |
+|-------------------------------------|-------------------------------|
+| `id` (UUID)                         | `id` (String, PK)             |
+| `display_name` (Text)               | `displayName` (String)        |
+| `first_name` (Text)                 | `firstName` (String)          |
+| `last_name` (Text)                  | `lastName` (String)           |
+| `avatar_url` (Text)                 | `avatarUrl` (String)          |
+| `updated_at` (Timestamp)            | `updatedAt` (String)          |
 
 *Nota: Actualmente `coverUrl` no está en la base de datos principal, pero la arquitectura local lo soporta.*
 
