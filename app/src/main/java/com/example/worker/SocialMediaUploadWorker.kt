@@ -216,7 +216,7 @@ class SocialMediaUploadWorker(
                     // Get displayName from user profile first, then update profile photo url
                     val currentUid = entity.userId.ifEmpty { SupabaseClient.currentUser?.id ?: "anonymous" }
                     val profileResult = profilesRepository.getProfile(currentUid)
-                    val displayName = profileResult.getOrNull()?.displayName ?: SupabaseClient.currentProfile?.displayName ?: "Usuario"
+                    val displayName = profileResult.getOrNull()?.displayName ?: SupabaseClient.currentProfile?.displayName ?: ""
                     val updateResult = profilesRepository.updateProfile(currentUid, displayName, uploadedUrl)
                     updateResult.isSuccess
                 }
@@ -234,7 +234,7 @@ class SocialMediaUploadWorker(
                     val currentUid = entity.userId.ifEmpty { SupabaseClient.currentUser?.id ?: "anonymous" }
                     val myProfile = profilesRepository.getProfile(currentUid).getOrNull() 
                         ?: SupabaseClient.currentProfile 
-                        ?: com.example.data.model.Profile(currentUid, "Yo", null)
+                        ?: com.example.data.model.Profile(currentUid, "", null)
                     
                     val newState = createdState ?: com.example.data.model.UserState(
                         id = java.util.UUID.randomUUID().toString(),

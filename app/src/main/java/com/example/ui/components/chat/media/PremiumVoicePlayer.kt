@@ -120,8 +120,7 @@ fun PremiumVoicePlayer(
                     modifier = Modifier.size(38.dp),
                     size = 38.dp,
                     borderWidth = 1.5.dp,
-                    borderColor = playedColor.copy(alpha = 0.3f),
-                    placeholderName = if (isSender) "Yo" else "Pana"
+                    borderColor = playedColor.copy(alpha = 0.3f)
                 )
                 
                 // Mic icon to distinguish Voice Note from regular Audio

@@ -104,7 +104,7 @@ class NotificationRealtimeSubscriber private constructor(
                 val rawDomain = json.optString("domain", "SOCIAL")
                 val rawType = json.optString("event_type", "POST_LIKE")
                 val actorId = json.optString("actor_id", "unknown")
-                val actorName = json.optString("actor_name", "Usuario")
+                val actorName = json.optString("actor_name", "")
                 val entityId = json.optString("entity_id", "")
                 val title = json.optString("title", "PanaLink")
                 val body = json.optString("body", "Nueva interacción")

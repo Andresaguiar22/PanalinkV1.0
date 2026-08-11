@@ -1160,7 +1160,8 @@ fun ChatScreen(
             if (replyingToMessage != null) {
                 val replyingMsg = replyingToMessage!!
                 val isRepliedByMe = replyingMsg.senderId == currentUid
-                val senderName = if (isRepliedByMe) "Tú" else "Pana"
+                val otherUserDisplayName = (uiState as? ChatUiState.Success)?.otherUser?.displayName ?: ""
+                val senderName = if (isRepliedByMe) "Tú" else otherUserDisplayName
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()

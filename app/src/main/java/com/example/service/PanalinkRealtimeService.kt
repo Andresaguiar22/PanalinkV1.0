@@ -118,7 +118,7 @@ class PanalinkRealtimeService : Service() {
                         } else if (newState.userId == currentUid && SupabaseClient.currentProfile != null) {
                             SupabaseClient.currentProfile!!
                         } else {
-                            com.example.data.model.Profile(newState.userId, "Usuario", null)
+                            com.example.data.model.Profile(newState.userId, "", null)
                         }
                         
                         val entity = com.example.data.database.StateEntity.fromUserStateWithUser(

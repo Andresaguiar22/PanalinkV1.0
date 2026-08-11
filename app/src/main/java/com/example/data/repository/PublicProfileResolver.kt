@@ -68,7 +68,7 @@ object PublicProfileResolver {
      * If the resolved name is blank, provides a clean UI fallback (e.g. "Contacto" or "Pana")
      * without persisting this fallback into Room or Supabase.
      */
-    fun formatForUi(displayName: String?, defaultPlaceholder: String = "Contacto"): String {
+    fun formatForUi(displayName: String?, defaultPlaceholder: String = ""): String {
         return if (!isGenericOrUuid(displayName)) {
             displayName!!.trim()
         } else {

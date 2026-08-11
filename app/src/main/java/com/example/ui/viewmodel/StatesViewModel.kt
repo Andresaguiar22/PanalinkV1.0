@@ -603,7 +603,7 @@ class StatesViewModel(private val statesRepository: StatesRepository = StatesRep
                         localVideoPath = tempLocalPath
                     )
                     val myProfile = com.example.data.supabase.SupabaseClient.currentProfile 
-                        ?: com.example.data.model.Profile(currentUser.id, "Yo", null)
+                        ?: com.example.data.model.Profile(currentUser.id, "", null)
                     
                     statesRepository.saveStateLocally(com.example.data.model.UserStateWithUser(fakeState, myProfile))
                     Log.d("StatesViewModel", "Optimistic state saved to Room: $fakeId")

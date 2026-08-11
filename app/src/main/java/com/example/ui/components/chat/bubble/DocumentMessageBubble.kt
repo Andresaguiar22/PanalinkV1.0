@@ -86,8 +86,7 @@ fun DocumentMessageBubble(
                     PanaAvatar(
                         avatarUrl = senderAvatarUrl,
                         modifier = Modifier.size(34.dp).padding(end = 8.dp),
-                        size = 34.dp,
-                        placeholderName = "Pana"
+                        size = 34.dp
                     )
                 }
 

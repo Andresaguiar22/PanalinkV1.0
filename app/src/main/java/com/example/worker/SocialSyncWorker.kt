@@ -52,13 +52,13 @@ class SocialSyncWorker(
                         if (action.isReel) {
                             val params = mapOf<String, Any>("p_reel_id" to action.targetId, "p_favorited" to true)
                             val response = service.setReelFavoriteRpc(apiKey, bearer, params)
-                            if (response.isSuccessful || response.code() == 409 || response.code() == 400) {
+                            if (response.isSuccessful || response.code() == 409) {
                                 success = true
                             }
                         } else {
                             val params = mapOf<String, Any>("p_story_id" to action.targetId, "p_favorited" to true)
                             val response = service.setStoryFavoriteRpc(apiKey, bearer, params)
-                            if (response.isSuccessful || response.code() == 409 || response.code() == 400) {
+                            if (response.isSuccessful || response.code() == 409) {
                                 success = true
                             }
                         }
@@ -82,7 +82,7 @@ class SocialSyncWorker(
                         if (action.isReel) {
                             val params = mapOf<String, Any>("p_reel_id" to action.targetId, "p_liked" to true)
                             val response = service.setReelLikeRpc(apiKey, bearer, params)
-                            if (response.isSuccessful || response.code() == 409 || response.code() == 400) {
+                            if (response.isSuccessful || response.code() == 409) {
                                 success = true
                             }
                         } else {
@@ -90,13 +90,13 @@ class SocialSyncWorker(
                             if (isStory) {
                                 val params = mapOf<String, Any>("p_story_id" to action.targetId, "p_liked" to true)
                                 val response = service.setStoryLikeRpc(apiKey, bearer, params)
-                                if (response.isSuccessful || response.code() == 409 || response.code() == 400) {
+                                if (response.isSuccessful || response.code() == 409) {
                                     success = true
                                 }
                             } else {
                                 val likeDto = PostLikeDto(postId = action.targetId, userId = action.userId)
                                 val response = service.addLike(apiKey, bearer, likeDto)
-                                if (response.isSuccessful || response.code() == 409 || response.code() == 400) {
+                                if (response.isSuccessful || response.code() == 409) {
                                     success = true
                                 }
                             }
@@ -152,7 +152,7 @@ class SocialSyncWorker(
                             if (parsedParentId != null) body["parent_comment_id"] = parsedParentId
                             try {
                                 val response = service.commentState(tableName, apiKey, bearer, body)
-                                if (response.isSuccessful || response.code() == 409 || response.code() == 400) {
+                                if (response.isSuccessful || response.code() == 409) {
                                     success = true
                                     val finalEntity = commentDao.getCommentById(parsedLocalCommentId)?.copy(syncStatus = "synced")
                                     if (finalEntity != null) commentDao.upsert(finalEntity)
@@ -178,7 +178,7 @@ class SocialSyncWorker(
                                 if (parsedParentId != null) body["parent_comment_id"] = parsedParentId
                                 try {
                                     val response = service.commentState(tableName, apiKey, bearer, body)
-                                    if (response.isSuccessful || response.code() == 409 || response.code() == 400) {
+                                    if (response.isSuccessful || response.code() == 409) {
                                         success = true
                                         val finalEntity = commentDao.getCommentById(parsedLocalCommentId)?.copy(syncStatus = "synced")
                                         if (finalEntity != null) commentDao.upsert(finalEntity)
@@ -194,7 +194,7 @@ class SocialSyncWorker(
                                 val commentDto = PostCommentDto(id = parsedLocalCommentId, postId = action.targetId, userId = action.userId, content = parsedCommentText)
                                 try {
                                     val response = service.addComment(apiKey, bearer, commentDto)
-                                    if (response.isSuccessful || response.code() == 409 || response.code() == 400) {
+                                    if (response.isSuccessful || response.code() == 409) {
                                         success = true
                                         val finalEntity = commentDao.getCommentById(parsedLocalCommentId)?.copy(syncStatus = "synced")
                                         if (finalEntity != null) commentDao.upsert(finalEntity)

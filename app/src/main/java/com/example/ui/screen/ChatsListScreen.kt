@@ -3908,7 +3908,7 @@ fun TuTabContent(
                         horizontalArrangement = Arrangement.Center
                     ) {
                         Text(
-                            text = displayName.ifEmpty { "Pana" },
+                            text = displayName,
                             color = Color.White,
                             fontSize = 22.sp,
                             fontWeight = FontWeight.Bold

@@ -845,6 +845,54 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
 
                 Log.i(TAG, "PANALINK_SYNC: chatId=${entity.chatId}, message_type=${entity.messageType}, media_url=${entity.mediaUrl}")
 
+                // Pre-POST Reconciliation Check (Rule 1)
+                var wasReconciled = false
+                if (!entity.clientMessageUuid.isNullOrBlank()) {
+                    try {
+                        val verifyResponse = runCall { auth ->
+                            service.getThreadMessageByClientUuid(
+                                apiKey = SupabaseClient.supabaseAnonKey,
+                                authorization = auth,
+                                clientUuidFilter = "eq.${entity.clientMessageUuid}"
+                            )
+                        }
+                        if (verifyResponse?.isSuccessful == true && verifyResponse.body()?.isNotEmpty() == true) {
+                            val serverMsgList = verifyResponse.body()!!
+                            val threadMsg = serverMsgList.first()
+                            val mappedMsg = threadMsg.toMessage()
+                            val finalMsg = com.example.util.CryptoManager.decryptMessageIfNeeded(mappedMsg).copy(
+                                status = "sent",
+                                clientMessageUuid = entity.clientMessageUuid
+                            )
+                            val effectiveClearedAt = getEffectiveClearedAt(finalMsg.chatId, null)
+                            val shouldKeep = com.example.util.MessageFilter.shouldKeepMessage(
+                                messageId = finalMsg.id,
+                                messageClientUuid = finalMsg.clientMessageUuid,
+                                messageCreatedAt = finalMsg.createdAt,
+                                lastClearedAt = effectiveClearedAt,
+                                deletedMessageIds = getUserDeletedMessageIds()
+                            )
+                            if (shouldKeep) {
+                                if (entity.id.startsWith("temp_") && finalMsg.id != entity.id) {
+                                    messageDao.replaceTemporaryMessage(entity.id, MessageEntity.fromMessage(finalMsg))
+                                } else {
+                                    messageDao.insertMessage(MessageEntity.fromMessage(finalMsg))
+                                }
+                            } else {
+                                messageDao.deleteMessageById(entity.id)
+                            }
+                            Log.i(TAG, "TRACE_SYNC: Reconciled message ${entity.clientMessageUuid} before POST. Marked as SENT.")
+                            wasReconciled = true
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error checking reconciliation before POST for msg ${entity.clientMessageUuid}", e)
+                    }
+                }
+
+                if (wasReconciled) {
+                    continue
+                }
+
                 var successful = false
                 var is409OrTimeout = false
                 var threadResponse: retrofit2.Response<okhttp3.ResponseBody>? = null
@@ -857,11 +905,16 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
                                 message = cleanMsgMap
                             )
                     }
-                    if (threadResponse?.code() == 409 || threadResponse?.code() == 408) {
+                    if (threadResponse?.code() == 409 || threadResponse?.code() == 408 || (threadResponse?.code() ?: 0) >= 500) {
                         is409OrTimeout = true
                     }
                 } catch (e: Exception) {
-                    if (e is java.io.IOException || (e as? retrofit2.HttpException)?.code() == 408 || (e as? retrofit2.HttpException)?.code() == 409) {
+                    val isTransient = e is java.io.IOException || 
+                                      e is java.net.SocketTimeoutException || 
+                                      e is java.net.ConnectException || 
+                                      (e as? retrofit2.HttpException)?.code() in listOf(408, 409) || 
+                                      ((e as? retrofit2.HttpException)?.code() ?: 0) >= 500
+                    if (isTransient) {
                         is409OrTimeout = true
                     } else {
                         throw e
@@ -873,8 +926,8 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
                 var errBody = threadResponse?.errorBody()?.string()
                 var respBody = if (isSuccessful) threadResponse?.body()?.string() else null
                 
-                if (is409OrTimeout && entity.clientMessageUuid != null) {
-                    Log.i(TAG, "TRACE_SYNC: 409 or timeout detected for msg ${entity.clientMessageUuid}. Reconciling...")
+                if (is409OrTimeout && !entity.clientMessageUuid.isNullOrBlank()) {
+                    Log.i(TAG, "TRACE_SYNC: 409, timeout or transient error detected for msg ${entity.clientMessageUuid}. Reconciling...")
                     try {
                         val verifyResponse = runCall { auth ->
                             service.getThreadMessageByClientUuid(
@@ -885,24 +938,40 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
                         }
                         if (verifyResponse?.isSuccessful == true && verifyResponse.body()?.isNotEmpty() == true) {
                             val serverMsgList = verifyResponse.body()!!
-                            if (serverMsgList.isNotEmpty()) {
-                                val listType = com.squareup.moshi.Types.newParameterizedType(List::class.java, com.example.data.model.ThreadMessage::class.java)
-                                val adapter = SupabaseClient.moshi.adapter<List<com.example.data.model.ThreadMessage>>(listType)
-                                respBody = adapter.toJson(serverMsgList)
-                                successful = true
-                                isSuccessful = true
-                                errBody = null
-                                code = 200
-                                Log.i(TAG, "TRACE_SYNC: Reconciled message ${entity.clientMessageUuid} with server id ${serverMsgList.first().id}")
+                            val threadMsg = serverMsgList.first()
+                            val mappedMsg = threadMsg.toMessage()
+                            val finalMsg = com.example.util.CryptoManager.decryptMessageIfNeeded(mappedMsg).copy(
+                                status = "sent",
+                                clientMessageUuid = entity.clientMessageUuid
+                            )
+                            val effectiveClearedAt = getEffectiveClearedAt(finalMsg.chatId, null)
+                            val shouldKeep = com.example.util.MessageFilter.shouldKeepMessage(
+                                messageId = finalMsg.id,
+                                messageClientUuid = finalMsg.clientMessageUuid,
+                                messageCreatedAt = finalMsg.createdAt,
+                                lastClearedAt = effectiveClearedAt,
+                                deletedMessageIds = getUserDeletedMessageIds()
+                            )
+                            if (shouldKeep) {
+                                if (entity.id.startsWith("temp_") && finalMsg.id != entity.id) {
+                                    messageDao.replaceTemporaryMessage(entity.id, MessageEntity.fromMessage(finalMsg))
+                                } else {
+                                    messageDao.insertMessage(MessageEntity.fromMessage(finalMsg))
+                                }
                             } else {
-                                allSuccessful = false
+                                messageDao.deleteMessageById(entity.id)
                             }
+                            Log.i(TAG, "TRACE_SYNC: Reconciled message ${entity.clientMessageUuid} after failed POST. Marked as SENT.")
+                            continue
                         } else {
+                            Log.w(TAG, "TRACE_SYNC: Message ${entity.clientMessageUuid} not found on remote after error/timeout. Keeping as pending/sending.")
                             allSuccessful = false
+                            continue
                         }
                     } catch (e: Exception) {
-                        Log.e(TAG, "Error reconciling message", e)
+                        Log.e(TAG, "Error reconciling message after failed POST", e)
                         allSuccessful = false
+                        continue
                     }
                 }
                    
@@ -938,7 +1007,7 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
 
                 if (successful || threadResponse?.isSuccessful == true) {
                     successful = true
-                    val responseBody = respBody ?: threadResponse.body()?.string()
+                    val responseBody = respBody ?: threadResponse?.body()?.string()
                     Log.i(TAG, "PANALINK_SYNC_RESULT: $responseBody, markedAsSent=true")
                 } else {
                     val code = threadResponse?.code()

@@ -41,7 +41,7 @@ fun PanaAvatar(
     borderWidth: Dp = 1.dp,
     borderColor: Color = Color.White,
     contentDescription: String? = "Avatar",
-    placeholderName: String? = "Pana"
+    placeholderName: String? = ""
 ) {
     var finalAvatarUrl = avatarUrl
     var finalPlaceholder = placeholderName
@@ -58,7 +58,7 @@ fun PanaAvatar(
         identityUiState?.let {
             if (finalAvatarUrl == null) finalAvatarUrl = it.avatarUrl
             finalAvatarLocalPath = it.avatarLocalPath
-            if (finalPlaceholder == "Pana" || finalPlaceholder == null) {
+            if (finalPlaceholder.isNullOrBlank()) {
                 finalPlaceholder = it.displayName
             }
         }
@@ -164,12 +164,12 @@ private fun InitialsAvatar(
     placeholderName: String?,
     size: Dp
 ) {
-    val cleanName = placeholderName?.trim()?.ifBlank { "Pana" } ?: ""
+    val cleanName = placeholderName?.trim() ?: ""
     val words = cleanName.split(" ").filter { it.isNotBlank() }
     val initials = when {
         words.size >= 2 -> "${words[0].first().uppercaseChar()}${words[1].first().uppercaseChar()}"
         words.size == 1 -> "${words[0].first().uppercaseChar()}"
-        else -> "P"
+        else -> ""
     }
 
     val colorPairs = listOf(

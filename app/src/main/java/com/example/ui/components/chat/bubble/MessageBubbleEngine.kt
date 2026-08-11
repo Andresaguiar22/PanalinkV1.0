@@ -402,7 +402,7 @@ fun MessageBubbleEngine(
                 ) {
                     // Show Replied Message Preview inside bubble
                     if (repliedMsg != null) {
-                        val replySenderName = if (repliedMsg.senderId == (SupabaseClient.currentUser?.id ?: "")) "Tú" else "Pana"
+                        val replySenderName = if (repliedMsg.senderId == (SupabaseClient.currentUser?.id ?: "")) "Tú" else ""
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()

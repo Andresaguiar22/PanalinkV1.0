@@ -116,7 +116,7 @@ class SignalingClient(private val userId: String) {
             Log.d(TAG, "Received webrtc_offer")
             val data = args.getOrNull(0) as? JSONObject ?: return@on
             val callerId = data.optString("callerId").ifEmpty { data.optString("senderId") }
-            val callerName = data.optString("callerName", "Pana")
+            val callerName = data.optString("callerName", "")
             val callType = data.optString("callType", "voice")
             val sdp = data.optString("sdp")
             _incomingCallFlow.tryEmit(IncomingCallData(callerId, callerName, callType, sdp))

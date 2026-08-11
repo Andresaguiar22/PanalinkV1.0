@@ -6,7 +6,7 @@ data class SessionUiState(
     val isAuthenticated: Boolean = false,
     val userId: String = "",
     val email: String = "",
-    val displayName: String = "Pana",
+    val displayName: String = "",
     val avatarUrl: String? = null,
     val isProfileComplete: Boolean = false,
     val profile: Profile? = null,

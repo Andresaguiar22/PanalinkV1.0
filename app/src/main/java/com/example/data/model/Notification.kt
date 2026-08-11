@@ -62,7 +62,7 @@ data class NotificationDto(
             id = id,
             type = notifType,
             sourceId = entityId ?: "",
-            profile = actorProfile ?: Profile(actorId ?: "", "Usuario", null),
+            profile = actorProfile ?: Profile(actorId ?: "", "", null),
             timestamp = createdAt ?: "",
             isRead = isRead ?: false,
             actionText = actionText,
