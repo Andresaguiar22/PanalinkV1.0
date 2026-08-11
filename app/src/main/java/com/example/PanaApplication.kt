@@ -79,8 +79,9 @@ class PanaApplication : Application(), ImageLoaderFactory, DefaultLifecycleObser
         
         try {
             SessionManager.init(this)
+            com.example.data.repository.CdnManager.init(this)
         } catch (e: Throwable) {
-            android.util.Log.e("PanaApplication", "SessionManager init failed safely", e)
+            android.util.Log.e("PanaApplication", "SessionManager/CdnManager init failed safely", e)
         }
         
         try {

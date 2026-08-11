@@ -203,8 +203,26 @@ object SessionManager {
         Log.i(TAG, "Session cleared")
     }
 
+    fun getJwtUserId(token: String?): String? {
+        if (token.isNullOrBlank()) return null
+        try {
+            val parts = token.split(".")
+            if (parts.size < 2) return null
+            val payloadBase64 = parts[1]
+            val decodedBytes = android.util.Base64.decode(payloadBase64, android.util.Base64.DEFAULT or android.util.Base64.NO_WRAP)
+            val decodedString = String(decodedBytes, Charsets.UTF_8)
+            val json = org.json.JSONObject(decodedString)
+            if (json.has("sub")) {
+                return json.optString("sub")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error parsing JWT sub claim", e)
+        }
+        return null
+    }
+
     fun isJwtExpired(token: String?): Boolean {
-        if (token == null) return true
+        if (token.isNullOrBlank()) return true
         try {
             val parts = token.split(".")
             if (parts.size < 2) return true
@@ -224,18 +242,26 @@ object SessionManager {
         return true
     }
 
-    // Refresh token synchronously or via mutex to avoid concurrent refreshes (single-flight)
+    // Refresh token synchronously via mutex to avoid concurrent refreshes (single-flight)
     suspend fun refreshSession(): Boolean = mutex.withLock {
         if (!SupabaseClient.isConfigured) return@withLock true
 
         // Double-check if token was already refreshed by a concurrent caller
-        val currentToken = SupabaseClient.currentToken
-        if (currentToken != null && !isJwtExpired(currentToken)) {
+        val activeToken = SupabaseClient.currentToken
+        if (activeToken != null && !isJwtExpired(activeToken)) {
             Log.i(TAG, "Session was already refreshed by a concurrent task.")
             return@withLock true
         }
         
-        val rToken = SupabaseClient.currentRefreshToken
+        var rToken = SupabaseClient.currentRefreshToken
+        if (rToken.isNullOrEmpty() && isInitialized) {
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            rToken = prefs.getString(KEY_REFRESH_TOKEN, null)
+            if (!rToken.isNullOrEmpty()) {
+                SupabaseClient.currentRefreshToken = rToken
+            }
+        }
+
         if (rToken.isNullOrEmpty()) {
             Log.w(TAG, "No refresh token available to refresh session")
             return@withLock false
@@ -259,14 +285,7 @@ object SessionManager {
                     SupabaseClient.currentRefreshToken = authBody.refreshToken ?: rToken
                     SupabaseClient.currentUser = authBody.user
 
-                    val userId = authBody.user.id
-                    val profilesRepo = com.example.data.repository.ProfilesRepository()
-                    val profResult = profilesRepo.getProfile(userId)
-                    val realProfile = profResult.getOrNull()
-
-                    if (realProfile != null && realProfile.isProfileComplete) {
-                        SupabaseClient.currentProfile = realProfile
-                    } else if (SupabaseClient.currentProfile == null) {
+                    if (SupabaseClient.currentProfile == null) {
                         SupabaseClient.currentProfile = getCachedProfile()
                     }
 
@@ -278,6 +297,15 @@ object SessionManager {
                     )
                     _isOffline.value = false
                     Log.i(TAG, "Session refreshed successfully. New token updated.")
+
+                    try {
+                        if (SupabaseClient.currentProfile?.isProfileComplete == true) {
+                            SupabaseClient.connectRealtime()
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Error reconnecting realtime after session refresh", e)
+                    }
+
                     _sessionEvent.emit(SessionEvent.REFRESHED)
                     return@withLock true
                 }

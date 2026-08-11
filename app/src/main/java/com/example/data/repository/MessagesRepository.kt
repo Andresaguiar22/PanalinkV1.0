@@ -837,24 +837,7 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
     suspend fun syncPendingMessages(): Boolean = withContext(Dispatchers.IO) {
         if (!SupabaseClient.isConfigured) return@withContext true
         val pending = messageDao.getPendingMessages()
-        try {
-            val service = SupabaseClient.apiService
-            if (service != null) {
-                runCall { auth ->
-                    service.createDebugLog(
-                        apiKey = SupabaseClient.supabaseAnonKey,
-                        authorization = auth,
-                        logMap = mapOf(
-                            "fecha" to java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US).format(java.util.Date()),
-                            "etapa" to "START_SYNC_PENDING",
-                            "response_body" to "pending_count=${pending.size}"
-                        )
-                    )
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error logging START_SYNC_PENDING", e)
-        }
+        Log.d(TAG, "[DIAGNOSTIC_LOG] START_SYNC_PENDING: pending_count=${pending.size}")
         if (pending.isEmpty()) return@withContext true
         Log.i(TAG, "Syncing ${pending.size} pending offline messages...")
 
@@ -1114,33 +1097,7 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
                    
                 Log.i(TAG, "TRACE_SYNC_AFTER_CREATE_THREAD: httpStatus=$code, isSuccessful=$isSuccessful, supabaseResponse=$respBody, errorBody=$errBody")
 
-                try {
-                    runCall { auth ->
-                        val afterMap = mapOf<String, Any?>(
-                            "fecha" to java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US).format(java.util.Date()),
-                            "message_id" to entity.id,
-                            "message_type" to entity.messageType,
-                            "media_url" to entity.mediaUrl,
-                            "media_mime" to entity.mediaMime,
-                            "media_size" to entity.mediaSize,
-                            "media_width" to entity.mediaWidth,
-                            "media_height" to entity.mediaHeight,
-                            "client_message_uuid" to entity.clientMessageUuid,
-                            "http_status" to code,
-                            "is_successful" to isSuccessful,
-                            "response_body" to respBody,
-                            "error_body" to errBody,
-                            "etapa" to "AFTER_CREATE_THREAD"
-                        )
-                        service.createDebugLog(
-                            apiKey = SupabaseClient.supabaseAnonKey,
-                            authorization = auth,
-                            logMap = afterMap
-                        )
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error logging AFTER_CREATE_THREAD debug log", e)
-                }
+                Log.d(TAG, "[DIAGNOSTIC_LOG] AFTER_CREATE_THREAD: msgId=${entity.id}, clientUuid=${entity.clientMessageUuid}, httpStatus=$code, isSuccessful=$isSuccessful, err=${errBody?.take(100)}")
 
                 if (successful || threadResponse?.isSuccessful == true) {
                     successful = true
@@ -1709,10 +1666,16 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
                     Log.e(TAG, "Error parsing response body", e)
                 }
             } else {
-                val errorCode = response?.code()
+                val errorCode = response?.code() ?: 0
                 val errorBody = response?.errorBody()?.string() ?: "Response is null"
                 errorStr = "Code: $errorCode, Body: $errorBody"
-                Log.w(TAG, "createThreadMessage failed: $errorStr.")
+                
+                val jwtUserId = SessionManager.getJwtUserId(SupabaseClient.currentToken)
+                if (!jwtUserId.isNullOrBlank() && !currentUid.isNullOrBlank() && jwtUserId != currentUid) {
+                    Log.e(TAG, "[DIAGNOSTIC_LOG] AUTH_IDENTITY_MISMATCH: jwtUserId=$jwtUserId != currentUserId=$currentUid, senderId=$currentUid")
+                }
+                
+                Log.w(TAG, "[DIAGNOSTIC_LOG] createThreadMessage failed: HTTP status=$errorCode, threadId=$chatId, senderId=$currentUid, currentUserId=$currentUid, clientMessageUuid=$clientUuid, responseBody=${errorBody.take(200)}")
                 
                 // FALLBACK TO LEGACY MESSAGES TABLE (ONLY FOR NON-DM)
                 if (!isDm) {
@@ -1768,7 +1731,7 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
                         Log.e(TAG, "Legacy createMessage also failed: $errorStr")
                     }
                 } else {
-                    Log.e(TAG, "DM creation failed: $errorStr. No legacy fallback allowed.")
+                    Log.e(TAG, "DM creation failed: $errorStr. Message remains pending for background sync retry.")
                 }
             }
 
@@ -1790,31 +1753,13 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
                 }
                 return@withContext Result.success(updated)
             } else {
-                messageDao.updateMessageStatus(tempId, "failed")
+                messageDao.updateMessageStatus(tempId, "pending")
                 scheduleSync()
-                withContext(Dispatchers.Main) {
-                    try {
-                        android.widget.Toast.makeText(
-                            com.example.PanaApplication.instance,
-                            "Error Supabase: $errorStr",
-                            android.widget.Toast.LENGTH_LONG
-                        ).show()
-                    } catch (t: Throwable) {}
-                }
                 return@withContext Result.failure(Exception("Failed to send message: $errorStr"))
             }
         } catch (e: Exception) {
             Log.e(TAG, "sendMessage exception", e)
-            withContext(Dispatchers.Main) {
-                try {
-                    android.widget.Toast.makeText(
-                        com.example.PanaApplication.instance,
-                        "Error de envío: ${e.localizedMessage}",
-                        android.widget.Toast.LENGTH_LONG
-                    ).show()
-                } catch (t: Throwable) {}
-            }
-            messageDao.updateMessageStatus(tempId, "failed")
+            messageDao.updateMessageStatus(tempId, "pending")
             scheduleSync()
             Result.failure(e)
         }
@@ -2414,24 +2359,7 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
     }
 
     suspend fun logDebug(etapa: String, info: String) {
-        try {
-            val service = SupabaseClient.apiService
-            if (service != null) {
-                runCall { auth ->
-                    service.createDebugLog(
-                        apiKey = SupabaseClient.supabaseAnonKey,
-                        authorization = auth,
-                        logMap = mapOf(
-                            "fecha" to java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US).format(java.util.Date()),
-                            "etapa" to etapa,
-                            "response_body" to info
-                        )
-                    )
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error logging debug $etapa", e)
-        }
+        Log.d(TAG, "[DIAGNOSTIC_LOG] $etapa: $info")
     }
 
     private fun parseToEpochMilli(ts: String?): Long {
