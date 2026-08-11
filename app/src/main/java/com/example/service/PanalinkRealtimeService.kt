@@ -88,13 +88,6 @@ class PanalinkRealtimeService : Service() {
                         deletedMessageIds = msgsRepo.getUserDeletedMessageIds()
                     )
                     if (shouldKeep) {
-                        try {
-                            val db = com.example.data.database.PanalinkDatabase.getDatabase(this@PanalinkRealtimeService)
-                            db.messageDao().mergeAndSaveMessage(com.example.data.database.MessageEntity.fromMessage(decryptedMsg))
-                            Log.d(TAG, "Saved/Merged realtime message in Room: ${decryptedMsg.id}")
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Error inserting realtime message into Room", e)
-                        }
                         handleIncomingMessage(decryptedMsg)
                     } else {
                         Log.d(TAG, "Realtime message filtered out by MessageFilter: ${decryptedMsg.id}")

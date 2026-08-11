@@ -51,12 +51,36 @@ class MessagesRepository private constructor() {
 
     init {
         repositoryScope.launch {
-            SupabaseClient.realtimeMessageDeletions.collect { messageId ->
-                try {
-                    messageDao.deleteMessageById(messageId)
-                    Log.d(TAG, "Realtime: Deleted message $messageId from local DB")
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error deleting message $messageId from Room upon realtime signal", e)
+            launch {
+                SupabaseClient.realtimeMessageDeletions.collect { messageId ->
+                    try {
+                        messageDao.deleteMessageById(messageId)
+                        Log.d(TAG, "Realtime: Deleted message $messageId from local DB")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error deleting message $messageId from Room upon realtime signal", e)
+                    }
+                }
+            }
+
+            launch {
+                SupabaseClient.realtimeMessages.collect { msg ->
+                    try {
+                        val decryptedMsg = com.example.util.CryptoManager.decryptMessageIfNeeded(msg)
+                        val effectiveClearedAt = getEffectiveClearedAt(decryptedMsg.chatId, null)
+                        val shouldKeep = com.example.util.MessageFilter.shouldKeepMessage(
+                            messageId = decryptedMsg.id,
+                            messageClientUuid = decryptedMsg.clientMessageUuid,
+                            messageCreatedAt = decryptedMsg.createdAt,
+                            lastClearedAt = effectiveClearedAt,
+                            deletedMessageIds = getUserDeletedMessageIds()
+                        )
+                        if (shouldKeep) {
+                            messageDao.mergeAndSaveMessage(com.example.data.database.MessageEntity.fromMessage(decryptedMsg))
+                            Log.d(TAG, "MessagesRepository (Realtime): Merged message ${decryptedMsg.id} into Room")
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "MessagesRepository (Realtime): Error processing incoming message", e)
+                    }
                 }
             }
         }
