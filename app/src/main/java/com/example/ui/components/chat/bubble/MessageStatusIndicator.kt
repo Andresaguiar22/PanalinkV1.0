@@ -71,7 +71,7 @@ fun MessageStatusIndicator(
             fontWeight = FontWeight.Normal
         )
         if (isMe) {
-            Spacer(modifier = Modifier.width(3.dp))
+            Spacer(modifier = Modifier.width(4.dp))
             AnimatedContent(
                 targetState = status,
                 transitionSpec = {
@@ -85,7 +85,7 @@ fun MessageStatusIndicator(
                             imageVector = Icons.Filled.AccessTime,
                             contentDescription = "Enviando",
                             tint = textColor.copy(alpha = 0.7f),
-                            modifier = Modifier.size(12.dp)
+                            modifier = Modifier.size(13.dp)
                         )
                     }
                     "failed" -> {
@@ -93,7 +93,7 @@ fun MessageStatusIndicator(
                             imageVector = Icons.Filled.Error,
                             contentDescription = "Error",
                             tint = Color(0xFFEF5350),
-                            modifier = Modifier.size(13.dp)
+                            modifier = Modifier.size(14.dp)
                         )
                     }
                     "sent" -> {
@@ -101,7 +101,7 @@ fun MessageStatusIndicator(
                             imageVector = Icons.Filled.Done,
                             contentDescription = "Enviado",
                             tint = textColor.copy(alpha = 0.8f),
-                            modifier = Modifier.size(13.dp)
+                            modifier = Modifier.size(15.dp)
                         )
                     }
                     "delivered" -> {
@@ -109,7 +109,7 @@ fun MessageStatusIndicator(
                             imageVector = Icons.Filled.DoneAll,
                             contentDescription = "Entregado",
                             tint = textColor.copy(alpha = 0.8f),
-                            modifier = Modifier.size(14.dp)
+                            modifier = Modifier.size(15.dp)
                         )
                     }
                     "seen", "read" -> {
@@ -117,16 +117,11 @@ fun MessageStatusIndicator(
                             imageVector = Icons.Filled.DoneAll,
                             contentDescription = "Leído",
                             tint = Color(0xFF34B7F1),
-                            modifier = Modifier.size(14.dp)
+                            modifier = Modifier.size(15.dp)
                         )
                     }
                     else -> {
-                        androidx.compose.material3.Icon(
-                            imageVector = Icons.Filled.Done,
-                            contentDescription = "Enviado",
-                            tint = textColor.copy(alpha = 0.8f),
-                            modifier = Modifier.size(13.dp)
-                        )
+                        // For null, unknown, unexpected states: DO NOT show a false checkmark!
                     }
                 }
             }

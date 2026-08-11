@@ -5,6 +5,7 @@ import com.example.util.AudioRecorder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.StateFlow
 import java.io.File
 
@@ -119,6 +120,18 @@ class VoiceRecordingController(private val context: Context) {
     }
 
     fun isCurrentlyRecording(): Boolean = recordingState == RecordingState.RECORDING || recordingState == RecordingState.PAUSED
+
+    fun release() {
+        try {
+            cancel()
+        } catch (_: Exception) {}
+        try {
+            amplitudeMonitor.stop()
+        } catch (_: Exception) {}
+        try {
+            scope.cancel()
+        } catch (_: Exception) {}
+    }
 
     fun getElapsedMillis(): Long {
         return when (recordingState) {

@@ -76,6 +76,117 @@ class MessagesRepository private constructor() {
         }
     }
 
+    enum class ChatKind {
+        DM,
+        CHANNEL,
+        LEGACY,
+        UNKNOWN
+    }
+
+    data class CanonicalChatIdentity(
+        val kind: ChatKind,
+        val chatId: String,
+        val threadId: String? = null,
+        val receiverId: String? = null
+    )
+
+    suspend fun resolveChatIdentity(chatId: String, receiverHint: String? = null): CanonicalChatIdentity = withContext(Dispatchers.IO) {
+        val currentUid = try { SupabaseClient.currentUser?.id } catch (e: Throwable) { null }
+        val db = PanalinkDatabase.getDatabase(PanaApplication.instance)
+        val chatEntity = try { db.chatDao().getChatById(chatId) } catch (e: Exception) { null }
+        
+        var kind = when (chatEntity?.type?.lowercase()) {
+            "dm", "direct", "one_to_one" -> ChatKind.DM
+            "channel", "group" -> ChatKind.CHANNEL
+            "legacy" -> ChatKind.LEGACY
+            else -> ChatKind.UNKNOWN
+        }
+        
+        var receiverId = receiverHint?.takeIf { isValidUuid(it) } ?: chatEntity?.otherUserId?.takeIf { isValidUuid(it) }
+        
+        if (kind == ChatKind.DM && !receiverId.isNullOrEmpty() && receiverId != currentUid) {
+            return@withContext CanonicalChatIdentity(
+                kind = ChatKind.DM,
+                chatId = chatId,
+                threadId = chatId,
+                receiverId = receiverId
+            )
+        }
+
+        // Attempt remote resolution via one_to_one_threads
+        val service = SupabaseClient.apiService
+        if (service != null && !currentUid.isNullOrEmpty() && SupabaseClient.isConfigured) {
+            try {
+                val threadResponse = runCall { auth ->
+                    service.getOneToOneThreads(
+                        apiKey = SupabaseClient.supabaseAnonKey,
+                        authorization = auth,
+                        orFilter = "(id.eq.$chatId)"
+                    )
+                }
+                if (threadResponse != null && threadResponse.isSuccessful) {
+                    val threads = threadResponse.body()
+                    if (!threads.isNullOrEmpty()) {
+                        val thread = threads[0]
+                        val derivedReceiver = if (thread.userA == currentUid) thread.userB else thread.userA
+                        if (!derivedReceiver.isNullOrEmpty() && derivedReceiver != currentUid) {
+                            try {
+                                if (chatEntity != null) {
+                                    db.chatDao().insertChat(chatEntity.copy(type = "dm", otherUserId = derivedReceiver))
+                                } else {
+                                    db.chatDao().insertChat(
+                                        com.example.data.database.ChatEntity(
+                                            id = chatId,
+                                            createdAt = SupabaseClient.getNowIsoString(),
+                                            type = "dm",
+                                            name = "Chat",
+                                            otherUserId = derivedReceiver
+                                        )
+                                    )
+                                }
+                            } catch (_: Exception) {}
+                            
+                            return@withContext CanonicalChatIdentity(
+                                kind = ChatKind.DM,
+                                chatId = chatId,
+                                threadId = thread.id,
+                                receiverId = derivedReceiver
+                            )
+                        }
+                    } else {
+                        // Confirmed non-existent in one_to_one_threads
+                        if (chatEntity?.type == "channel" || chatEntity?.type == "group") {
+                            return@withContext CanonicalChatIdentity(kind = ChatKind.CHANNEL, chatId = chatId)
+                        }
+                        if (chatEntity?.type == "legacy") {
+                            return@withContext CanonicalChatIdentity(kind = ChatKind.LEGACY, chatId = chatId)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error resolving canonical identity for $chatId", e)
+            }
+        }
+
+        if (!receiverId.isNullOrEmpty() && receiverId != currentUid) {
+            return@withContext CanonicalChatIdentity(
+                kind = ChatKind.DM,
+                chatId = chatId,
+                threadId = chatId,
+                receiverId = receiverId
+            )
+        }
+        
+        if (chatEntity?.type == "channel" || chatEntity?.type == "group") {
+            return@withContext CanonicalChatIdentity(kind = ChatKind.CHANNEL, chatId = chatId)
+        }
+        if (chatEntity?.type == "legacy") {
+            return@withContext CanonicalChatIdentity(kind = ChatKind.LEGACY, chatId = chatId)
+        }
+
+        return@withContext CanonicalChatIdentity(kind = ChatKind.UNKNOWN, chatId = chatId)
+    }
+
     private suspend fun <R> runCall(call: suspend (String) -> retrofit2.Response<R>): retrofit2.Response<R>? {
         return com.example.util.Resilience.retry(
             times = 5,
@@ -224,8 +335,8 @@ class MessagesRepository private constructor() {
                 }
             }
 
-            val chatEntity = db.chatDao().getChatById(chatId)
-            val isDm = chatEntity?.type == "dm" || !chatEntity?.otherUserId.isNullOrEmpty()
+            val identity = resolveChatIdentity(chatId)
+            val isDm = identity.kind == ChatKind.DM
 
             val response = if (isDm) {
                 runCall { authHeader ->
@@ -233,14 +344,14 @@ class MessagesRepository private constructor() {
                     service.getThreadMessages(
                         apiKey = SupabaseClient.supabaseAnonKey,
                         authorization = authHeader,
-                        threadIdFilter = "eq.$chatId",
+                        threadIdFilter = "eq.${identity.threadId ?: chatId}",
                         createdAtFilter = createdAtFilterStr,
                         order = "created_at.desc",
                         limit = limit
                     )
                 }
             } else {
-                null // Skip thread_messages for non-DM/Channel chats
+                null
             }
 
             if (response != null) {
@@ -290,13 +401,13 @@ class MessagesRepository private constructor() {
                 } else {
                     val errBody = response.errorBody()?.string() ?: "No error body"
                     Log.e(TAG, "🚨 getMessagesForChatPaged (thread_messages) FAILED: code=${response.code()}, error=$errBody")
-                    // If it's a DM, we DO NOT fall through to legacy. We return what we have in cache.
+                    // DM strictly returns local cache and NEVER falls through to messages table
                     if (isDm) return@withContext Result.success(messagesList)
                 }
             }
 
-            // If it's NOT a DM (Channel/Legacy), try getMessages
-            if (!isDm) {
+            // If CHANNEL or LEGACY
+            if (identity.kind == ChatKind.CHANNEL || identity.kind == ChatKind.LEGACY) {
                 val legacyResponse = runCall { authHeader ->
                     Log.d(TAG, "getMessagesForChatPaged: Querying legacy messages for Channel $chatId with createdAtFilter=$createdAtFilterStr")
                     service.getMessages(
@@ -309,50 +420,48 @@ class MessagesRepository private constructor() {
                     )
                 }
 
-                if (legacyResponse != null) {
-                    if (legacyResponse.isSuccessful) {
-                        lastSyncTimestamps[chatId] = System.currentTimeMillis()
-                        val remoteList = legacyResponse.body() ?: emptyList()
-                        Log.i(TAG, "getMessagesForChatPaged (legacy messages) SUCCESS: code=${legacyResponse.code()}, size=${remoteList.size} filas")
-                        if (remoteList.isNotEmpty()) {
-                            val decryptedList = remoteList.map { it: Message -> com.example.util.CryptoManager.decryptMessageIfNeeded(it) }.filter { msg ->
-                                com.example.util.MessageFilter.shouldKeepMessage(
-                                    messageId = msg.id,
-                                    messageClientUuid = msg.clientMessageUuid,
-                                    messageCreatedAt = msg.createdAt,
-                                    lastClearedAt = lastClearedAt,
-                                    deletedMessageIds = userDeletedIds
-                                )
-                            }
-                            val entities = decryptedList.map { MessageEntity.fromMessage(it) }
-                            if (entities.isNotEmpty()) {
-                                messageDao.insertOrMergeMessages(entities)
-                            }
-                        }
-                        if (!lastClearedAt.isNullOrEmpty()) {
-                            try {
-                                val allLocal = messageDao.getMessagesForChat(chatId)
-                                val staleLocal = allLocal.filter { isTimestampBeforeOrEqual(it.createdAt, lastClearedAt) }
-                                staleLocal.forEach { messageDao.deleteMessageById(it.id) }
-                            } catch (e: Exception) {
-                                Log.e(TAG, "Error purging stale local messages", e)
-                            }
-                        }
-                        val freshLocal = messageDao.getMessagesForChatPaged(chatId, limit, oldestTimestamp)
-                        val validLocal = freshLocal.filter { local ->
+                if (legacyResponse != null && legacyResponse.isSuccessful) {
+                    lastSyncTimestamps[chatId] = System.currentTimeMillis()
+                    val remoteList = legacyResponse.body() ?: emptyList()
+                    Log.i(TAG, "getMessagesForChatPaged (legacy messages) SUCCESS: code=${legacyResponse.code()}, size=${remoteList.size} filas")
+                    if (remoteList.isNotEmpty()) {
+                        val decryptedList = remoteList.map { it: Message -> com.example.util.CryptoManager.decryptMessageIfNeeded(it) }.filter { msg ->
                             com.example.util.MessageFilter.shouldKeepMessage(
-                                messageId = local.id,
-                                messageClientUuid = local.clientMessageUuid,
-                                messageCreatedAt = local.createdAt,
+                                messageId = msg.id,
+                                messageClientUuid = msg.clientMessageUuid,
+                                messageCreatedAt = msg.createdAt,
                                 lastClearedAt = lastClearedAt,
                                 deletedMessageIds = userDeletedIds
                             )
                         }
-                        return@withContext Result.success(decryptMessages(validLocal.map { it.toMessage() }.sortedBy { it.createdAt }))
-                    } else {
-                        val errBody = legacyResponse.errorBody()?.string() ?: "No error body"
-                        Log.e(TAG, "getMessagesForChatPaged (legacy messages) FAILED: code=${legacyResponse.code()}, error=$errBody")
+                        val entities = decryptedList.map { MessageEntity.fromMessage(it) }
+                        if (entities.isNotEmpty()) {
+                            messageDao.insertOrMergeMessages(entities)
+                        }
                     }
+                    if (!lastClearedAt.isNullOrEmpty()) {
+                        try {
+                            val allLocal = messageDao.getMessagesForChat(chatId)
+                            val staleLocal = allLocal.filter { isTimestampBeforeOrEqual(it.createdAt, lastClearedAt) }
+                            staleLocal.forEach { messageDao.deleteMessageById(it.id) }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error purging stale local messages", e)
+                        }
+                    }
+                    val freshLocal = messageDao.getMessagesForChatPaged(chatId, limit, oldestTimestamp)
+                    val validLocal = freshLocal.filter { local ->
+                        com.example.util.MessageFilter.shouldKeepMessage(
+                            messageId = local.id,
+                            messageClientUuid = local.clientMessageUuid,
+                            messageCreatedAt = local.createdAt,
+                            lastClearedAt = lastClearedAt,
+                            deletedMessageIds = userDeletedIds
+                        )
+                    }
+                    return@withContext Result.success(decryptMessages(validLocal.map { it.toMessage() }.sortedBy { it.createdAt }))
+                } else {
+                    val errBody = legacyResponse?.errorBody()?.string() ?: "No error body"
+                    Log.e(TAG, "getMessagesForChatPaged (legacy messages) FAILED: code=${legacyResponse?.code()}, error=$errBody")
                 }
             }
 
@@ -433,8 +542,8 @@ class MessagesRepository private constructor() {
 
             var remoteMessages = emptyList<Message>()
             
-            val chatEntity = db.chatDao().getChatById(chatId)
-            val isDm = chatEntity?.type == "dm" || !chatEntity?.otherUserId.isNullOrEmpty()
+            val identity = resolveChatIdentity(chatId)
+            val isDm = identity.kind == ChatKind.DM
 
             if (isDm) {
                 val response = runCall { authHeader ->
@@ -442,7 +551,7 @@ class MessagesRepository private constructor() {
                     service.getIncrementalThreadMessages(
                         apiKey = SupabaseClient.supabaseAnonKey,
                         authorization = authHeader,
-                        threadIdFilter = "eq.$chatId",
+                        threadIdFilter = "eq.${identity.threadId ?: chatId}",
                         updatedAtFilter = "gt.$timestamp"
                     )
                 }
@@ -456,7 +565,7 @@ class MessagesRepository private constructor() {
                     Log.e(TAG, "🚨 syncUpdatedMessages (thread_messages) FAILED: error=$errBody")
                     return@withContext Result.failure(Exception("DM sync failed: $errBody"))
                 }
-            } else {
+            } else if (identity.kind == ChatKind.CHANNEL || identity.kind == ChatKind.LEGACY) {
                 val legacyResponse = runCall { authHeader ->
                     Log.d(TAG, "syncUpdatedMessages: Querying legacy messages for Channel $chatId with updatedAtFilter=gt.$timestamp")
                     service.getIncrementalMessages(
@@ -475,6 +584,9 @@ class MessagesRepository private constructor() {
                     val errBody = legacyResponse?.errorBody()?.string() ?: "No legacy response or error body"
                     Log.e(TAG, "🚨 syncUpdatedMessages (legacy messages) FAILED: error=$errBody")
                 }
+            } else {
+                Log.w(TAG, "syncUpdatedMessages: Chat $chatId identity is UNKNOWN. Skipping remote incremental query.")
+                return@withContext Result.success(emptyList())
             }
 
             val processedMessages = remoteMessages.map { msg ->
@@ -641,12 +753,15 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
                 content
             }
 
+            val identity = resolveChatIdentity(chatId, receiverId)
+            val resolvedReceiver = identity.receiverId ?: receiverId
+
             // 3. Create and insert MessageEntity with local paths and "sending" status
             val entity = MessageEntity(
                 id = tempId,
                 chatId = chatId,
                 senderId = currentUid,
-                receiverId = receiverId,
+                receiverId = resolvedReceiver,
                 content = formattedContent,
                 createdAt = nowStr,
                 status = "sending",
@@ -781,47 +896,21 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
                 val service = SupabaseClient.apiService ?: run { allSuccessful = false; return@withContext false }
                 val currentUid = SupabaseClient.currentUser?.id ?: run { allSuccessful = false; return@withContext false }
 
-                // Resolve receiver and determine if it's a DM (thread_messages) or Channel (messages)
-                var receiverUid: String? = entity.receiverId
-                var isDmSync = !receiverUid.isNullOrEmpty()
+                // Resolve receiver and determine canonical identity
+                val identity = resolveChatIdentity(entity.chatId, entity.receiverId)
+                if (identity.kind == ChatKind.UNKNOWN) {
+                    Log.w(TAG, "Chat ${entity.chatId} identity UNKNOWN during pending sync. Staying pending.")
+                    allSuccessful = false
+                    continue
+                }
 
-                if (receiverUid.isNullOrEmpty()) {
+                val isDmSync = identity.kind == ChatKind.DM
+                val receiverUid: String? = identity.receiverId ?: entity.receiverId
+
+                if (isDmSync && !receiverUid.isNullOrEmpty() && entity.receiverId.isNullOrEmpty()) {
                     try {
-                        val threadResponse = runCall { auth ->
-                            service.getOneToOneThreads(
-                                apiKey = SupabaseClient.supabaseAnonKey,
-                                authorization = auth,
-                                orFilter = "(id.eq.${entity.chatId})"
-                            )
-                        }
-                        if (threadResponse != null && threadResponse.isSuccessful) {
-                            val threads = threadResponse.body()
-                            if (!threads.isNullOrEmpty()) {
-                                val thread = threads[0]
-                                receiverUid = if (thread.userA == currentUid) thread.userB else thread.userA
-                                isDmSync = true
-                                
-                                // Save resolved receiverId back to local DB to avoid re-fetching
-                                if (!receiverUid.isNullOrEmpty()) {
-                                    messageDao.updateMessageReceiverId(entity.id, receiverUid!!)
-                                }
-                            } else {
-                                // Successfully confirmed it is NOT a 1:1 thread, so it must be a channel
-                                isDmSync = false
-                            }
-                        } else {
-                            // API call failed, we don't know if it's a DM or not. 
-                            // Stay pending to avoid incorrect fallback.
-                            Log.e(TAG, "Failed to resolve thread for message ${entity.id} (code: ${threadResponse?.code()}). Staying pending.")
-                            allSuccessful = false
-                            continue
-                        }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Exception resolving receiver during sync for message ${entity.id}", e)
-                        // Error occurred, stay pending.
-                        allSuccessful = false
-                        continue
-                    }
+                        messageDao.updateMessageReceiverId(entity.id, receiverUid)
+                    } catch (_: Exception) {}
                 }
 
                 // VALIDACIÓN PARA DMs
@@ -1499,27 +1588,18 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
             val service = SupabaseClient.apiService ?: return@withContext Result.success(message)
             SessionManager.validateAndRefreshSessionIfNeeded()
 
-            var finalReceiverUid = receiverUid
-            if (finalReceiverUid.isNullOrEmpty()) {
-                try {
-                    val threadResponse = runCall { auth ->
-                        service.getOneToOneThreads(
-                            apiKey = SupabaseClient.supabaseAnonKey,
-                            authorization = auth,
-                            orFilter = "(id.eq.$chatId)"
-                        )
-                    }
-                    if (threadResponse != null && threadResponse.isSuccessful && !threadResponse.body().isNullOrEmpty()) {
-                        val thread = threadResponse.body()!![0]
-                        finalReceiverUid = if (thread.userA == currentUid) thread.userB else thread.userA
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error resolving receiver during send", e)
-                }
+            val identity = resolveChatIdentity(chatId, receiverUid)
+            var finalReceiverUid = identity.receiverId ?: receiverUid
+            val isDm = identity.kind == ChatKind.DM
+
+            if (identity.kind == ChatKind.UNKNOWN) {
+                Log.w(TAG, "sendMessage: Chat $chatId identity UNKNOWN. Keeping message local and scheduling sync.")
+                scheduleSync()
+                return@withContext Result.success(message)
             }
 
             // We need to use Supabase API to insert the message
-            val receiverPublicKey = if (!finalReceiverUid.isNullOrEmpty()) {
+            val receiverPublicKey = if (isDm && !finalReceiverUid.isNullOrEmpty()) {
                 com.example.data.repository.UserKeysRepository.getPublicKeyForUser(finalReceiverUid)
             } else {
                 null
@@ -1578,13 +1658,12 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
                 else -> messageType.lowercase()
             }
 
-            val isDm = !finalReceiverUid.isNullOrEmpty()
             val msgMap = mutableMapOf<String, Any?>(
                 "id" to remoteId,
-                "thread_id" to if (isDm) chatId else null,
+                "thread_id" to if (isDm) (identity.threadId ?: chatId) else null,
                 "chat_id" to if (isDm) null else chatId,
                 "sender_id" to currentUid,
-                "receiver_id" to finalReceiverUid?.takeIf { isValidUuid(it) },
+                "receiver_id" to if (isDm) finalReceiverUid?.takeIf { isValidUuid(it) } else null,
                 "reply_to" to replyToId?.takeIf { isValidUuid(it) },
                 "text_content" to contentToUpload,
                 "client_message_uuid" to clientUuid,
@@ -1607,11 +1686,19 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
             var errorStr = ""
 
             val response = runCall { auth ->
-                service.createThreadMessage(
-                    apiKey = SupabaseClient.supabaseAnonKey,
-                    authorization = auth,
-                    message = cleanMsgMap
-                )
+                if (isDm) {
+                    service.createThreadMessage(
+                        apiKey = SupabaseClient.supabaseAnonKey,
+                        authorization = auth,
+                        message = cleanMsgMap
+                    )
+                } else {
+                    service.createMessage(
+                        apiKey = SupabaseClient.supabaseAnonKey,
+                        authorization = auth,
+                        message = cleanMsgMap
+                    )
+                }
             }
 
             var returnedId: String? = null

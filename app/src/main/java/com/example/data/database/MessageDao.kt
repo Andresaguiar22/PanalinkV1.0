@@ -164,13 +164,7 @@ interface MessageDao {
 
     @Transaction
     suspend fun insertOrMergeMessage(remote: MessageEntity) {
-        val local = getMessageById(remote.id)
-        if (local != null) {
-            val merged = mergeEntities(local, remote)
-            insertMessage(merged)
-        } else {
-            insertMessage(remote)
-        }
+        mergeAndSaveMessage(remote)
     }
 
     @Transaction

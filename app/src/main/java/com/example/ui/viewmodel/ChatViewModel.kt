@@ -124,6 +124,9 @@ class ChatViewModel : ViewModel() {
     private val _recordState = MutableStateFlow(RecordState.IDLE)
     val recordState: StateFlow<RecordState> = _recordState.asStateFlow()
 
+    private val _isPreviewSending = MutableStateFlow(false)
+    val isPreviewSending: StateFlow<Boolean> = _isPreviewSending.asStateFlow()
+
     private val voiceController by lazy { com.example.ui.components.chat.voice.VoiceRecordingController(com.example.PanaApplication.instance) }
     private val previewAudioPlayer by lazy { com.example.util.AudioPlayer() }
 
@@ -518,9 +521,13 @@ private var chatJob: kotlinx.coroutines.Job? = null
 
     fun cancelPreviewRecording() {
         previewAudioPlayer.release()
-        previewFile?.delete()
+        try {
+            previewFile?.delete()
+        } catch (_: Exception) {}
         previewFile = null
+        _previewWaveform.value = emptyList()
         _recordState.value = RecordState.IDLE
+        _isPreviewSending.value = false
     }
 
     fun getRecordingElapsedSeconds(): Int {
@@ -565,7 +572,12 @@ private var chatJob: kotlinx.coroutines.Job? = null
         replyToId: String? = null,
         onProgress: (Boolean) -> Unit = {}
     ) {
-        val file = previewFile ?: return
+        val file = previewFile
+        if (_isPreviewSending.value || file == null || !file.exists()) {
+            Log.w("ChatViewModel", "sendPreviewRecording ignored: file null/missing or already sending.")
+            return
+        }
+        _isPreviewSending.value = true
         previewAudioPlayer.release()
         _recordState.value = RecordState.IDLE
         
@@ -575,7 +587,12 @@ private var chatJob: kotlinx.coroutines.Job? = null
             typeLabel = "Voice",
             replyToId = replyToId,
             context = context,
-            onProgress = onProgress
+            onProgress = { isUploading ->
+                onProgress(isUploading)
+                if (!isUploading) {
+                    _isPreviewSending.value = false
+                }
+            }
         )
         previewFile = null
     }
@@ -741,5 +758,15 @@ fun sendSticker(url: String, preview: String?, replyToId: String?) {
                 Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
             }
         }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        try {
+            voiceController.release()
+        } catch (_: Exception) {}
+        try {
+            previewAudioPlayer.release()
+        } catch (_: Exception) {}
     }
 }
