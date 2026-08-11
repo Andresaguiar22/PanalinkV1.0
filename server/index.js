@@ -5,7 +5,7 @@ const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
-const { exec, spawn } = require("child_process");
+const { spawn } = require("child_process");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -17,9 +17,10 @@ const MAX_FILES = 1;
 
 // --- MIDDLEWARE: SUPABASE JWT AUTHENTICATION ---
 function authUserMiddleware(req, res, next) {
-  const secret = process.env.SUPABASE_JWT_SECRET || process.env.SOCKET_JWT_SECRET;
+  // REQUIRE EXPLICIT SUPABASE SECRET - NO FALLBACK TO SIGNALING SECRET
+  const secret = process.env.SUPABASE_JWT_SECRET;
   if (!secret) {
-    console.error("❌ SUPABASE_JWT_SECRET/SOCKET_JWT_SECRET no configurado.");
+    console.error("❌ SUPABASE_JWT_SECRET no configurado. El servidor no puede validar sesiones de usuario.");
     return res.status(500).json({ error: "Error de configuración de seguridad en el servidor" });
   }
 
@@ -34,34 +35,70 @@ function authUserMiddleware(req, res, next) {
   }
 
   try {
+    // ENFORCE HS256 ALGORITHM ONLY (STANDARD SUPABASE)
     const decoded = jwt.verify(token, secret, {
-      algorithms: ["HS256", "HS384", "HS512"]
+      algorithms: ["HS256"]
     });
 
-    const userId = decoded.sub || decoded.userId || decoded.id || decoded.user_id;
+    // EXCLUSIVELY USE 'sub' FOR IDENTITY
+    const userId = decoded.sub;
     if (!userId) {
-      return res.status(401).json({ error: "Token inválido: Identidad de usuario no encontrada" });
+      console.warn("⚠️ Token validado pero sin claim 'sub'. Rechazando.");
+      return res.status(401).json({ error: "Token inválido: Identidad de usuario no encontrada en 'sub'" });
     }
 
+    // VALIDATE AUDIENCE (SUPABASE DEFAULT)
+    if (decoded.aud !== "authenticated") {
+      console.warn(`⚠️ Intento de acceso con audience inválida: ${decoded.aud}`);
+      return res.status(401).json({ error: "Token inválido: Audience no autorizada" });
+    }
+
+    // req.user.id is the authority
     req.user = { id: userId, ...decoded };
     next();
   } catch (err) {
-    console.warn(`⚠️ Intento de upload con token inválido: ${err.message}`);
+    console.warn(`⚠️ Intento de acceso con token inválido: ${err.message}`);
+    // ALL ERRORS (EXPIRED, INVALID SIG, etc.) -> 401
     return res.status(401).json({ error: "Sesión inválida o expirada" });
   }
 }
 
-// --- HELPER: MIME VALIDATION VIA MAGIC BYTES ---
-function validateMimeWithFileCommand(filePath) {
-  return new Promise((resolve, reject) => {
-    exec(`file --mime-type -b "${filePath}"`, (error, stdout, stderr) => {
-      if (error) {
-        console.error("Error ejecutando comando file:", error);
-        return resolve(null);
-      }
-      resolve(stdout.trim());
-    });
-  });
+// --- HELPER: SECURE MIME VALIDATION VIA MAGIC BYTES (NO EXEC) ---
+function getMimeTypeByMagic(filePath) {
+  try {
+    if (!fs.existsSync(filePath)) return null;
+    
+    const buffer = Buffer.alloc(16);
+    const fd = fs.openSync(filePath, "r");
+    const bytesRead = fs.readSync(fd, buffer, 0, 16, 0);
+    fs.closeSync(fd);
+
+    if (bytesRead < 4) return null;
+
+    // JPEG: FF D8 FF
+    if (buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) return "image/jpeg";
+    // PNG: 89 50 4E 47
+    if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) return "image/png";
+    // GIF: 47 49 46 38
+    if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x38) return "image/gif";
+    // PDF: 25 50 44 46
+    if (buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46) return "application/pdf";
+    // ZIP: 50 4B 03 04
+    if (buffer[0] === 0x50 && buffer[1] === 0x4B && buffer[2] === 0x03 && buffer[3] === 0x04) return "application/zip";
+    // WEBP: RIFF...WEBP
+    if (buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46 &&
+        buffer[8] === 0x57 && buffer[9] === 0x45 && buffer[10] === 0x42 && buffer[11] === 0x50) return "image/webp";
+    // MP4: offset 4: ftyp
+    if (buffer[4] === 0x66 && buffer[5] === 0x74 && buffer[6] === 0x79 && buffer[7] === 0x70) return "video/mp4";
+    // MP3: ID3 (49 44 33) or Frame Sync (FF FB)
+    if (buffer[0] === 0x49 && buffer[1] === 0x44 && buffer[2] === 0x33) return "audio/mpeg";
+    if (buffer[0] === 0xFF && (buffer[1] & 0xE0) === 0xE0) return "audio/mpeg";
+
+    return null;
+  } catch (e) {
+    console.error("❌ Error en validación MIME por bytes:", e);
+    return null;
+  }
 }
 
 // Centralized single source of truth for dynamic CDN URL
@@ -247,11 +284,11 @@ app.post("/upload", authUserMiddleware, upload.single("mediaFile"), async (req, 
   }
 
   // 2. Validate MIME type via magic bytes
-  const detectedMime = await validateMimeWithFileCommand(tempPath);
+  const detectedMime = getMimeTypeByMagic(tempPath);
   if (!detectedMime) {
-    console.error("❌ Falló la detección de MIME para:", tempPath);
+    console.error("❌ Falló la detección de MIME (tipo no soportado o archivo corrupto):", tempPath);
     if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
-    return res.status(400).json({ error: "No se pudo validar el tipo de archivo" });
+    return res.status(400).json({ error: "Tipo de archivo no soportado o no se pudo validar" });
   }
 
   console.log(`🔍 Validación MIME: Enviado=${req.file.mimetype}, Detectado=${detectedMime}`);
@@ -468,13 +505,13 @@ io.use((socket, next) => {
 
   try {
     const decoded = jwt.verify(token, secret, {
-      algorithms: ["HS256", "HS384", "HS512"]
+      algorithms: ["HS256"]
     });
 
-    const userId = decoded.sub || decoded.userId || decoded.id || decoded.user_id;
+    const userId = decoded.sub;
 
     if (!userId || typeof userId !== "string" || userId.trim() === "") {
-      console.warn(`❌ Intento de conexión Socket.IO rechazado: Claim 'sub' o 'userId' inválido (${socket.id})`);
+      console.warn(`❌ Intento de conexión Socket.IO rechazado: Claim 'sub' inválido (${socket.id})`);
       return next(new Error("Authentication error: Invalid token claims (sub missing)"));
     }
 

@@ -187,7 +187,8 @@ class UploadRepository {
 
                 Log.d(TAG, "=== REGISTRO DE RESPUESTA CDN ===")
                 Log.d(TAG, "5. Código HTTP recibido: $responseCode")
-                Log.d(TAG, "Headers de la petición:\n$requestHeaders")
+                // Headers removed from log to prevent leaking Authorization tokens
+                // Log.d(TAG, "Headers de la petición:\n$requestHeaders")
                 Log.d(TAG, "Headers de la respuesta recibidos:\n$responseHeaders")
 
                 if (response.isSuccessful) {
