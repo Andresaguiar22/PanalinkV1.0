@@ -64,35 +64,76 @@ function authUserMiddleware(req, res, next) {
 }
 
 // --- HELPER: SECURE MIME VALIDATION VIA MAGIC BYTES (NO EXEC) ---
-function getMimeTypeByMagic(filePath) {
+function getMimeTypeByMagic(filePath, clientMime = null) {
   try {
     if (!fs.existsSync(filePath)) return null;
     
-    const buffer = Buffer.alloc(16);
+    const buffer = Buffer.alloc(24);
     const fd = fs.openSync(filePath, "r");
-    const bytesRead = fs.readSync(fd, buffer, 0, 16, 0);
+    const bytesRead = fs.readSync(fd, buffer, 0, 24, 0);
     fs.closeSync(fd);
 
     if (bytesRead < 4) return null;
 
     // JPEG: FF D8 FF
     if (buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) return "image/jpeg";
+    
     // PNG: 89 50 4E 47
     if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) return "image/png";
-    // GIF: 47 49 46 38
+    
+    // GIF: 47 49 46 38 (GIF87a or GIF89a)
     if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x38) return "image/gif";
-    // PDF: 25 50 44 46
+    
+    // PDF: 25 50 44 46 (%PDF)
     if (buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46) return "application/pdf";
-    // ZIP: 50 4B 03 04
-    if (buffer[0] === 0x50 && buffer[1] === 0x4B && buffer[2] === 0x03 && buffer[3] === 0x04) return "application/zip";
-    // WEBP: RIFF...WEBP
-    if (buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46 &&
-        buffer[8] === 0x57 && buffer[9] === 0x45 && buffer[10] === 0x42 && buffer[11] === 0x50) return "image/webp";
-    // MP4: offset 4: ftyp
-    if (buffer[4] === 0x66 && buffer[5] === 0x74 && buffer[6] === 0x79 && buffer[7] === 0x70) return "video/mp4";
-    // MP3: ID3 (49 44 33) or Frame Sync (FF FB)
+    
+    // ZIP: 50 4B 03 04 (PK\x03\x04)
+    if (buffer[0] === 0x50 && buffer[1] === 0x4B && buffer[2] === 0x03 && buffer[3] === 0x04) {
+      // Office docs are ZIP-based. If client says it's a doc, we can trust it if it's a valid ZIP.
+      if (clientMime && (clientMime.includes("word") || clientMime.includes("excel") || clientMime.includes("officedocument") || clientMime.includes("sheet"))) {
+         return clientMime;
+      }
+      return "application/zip";
+    }
+    
+    // WEBP / WAV: RIFF container
+    if (buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46) {
+      const type = buffer.toString("ascii", 8, 12);
+      if (type === "WEBP") return "image/webp";
+      if (type === "WAVE") return "audio/wav";
+    }
+
+    // OGG: OggS
+    if (buffer[0] === 0x4F && buffer[1] === 0x67 && buffer[2] === 0x67 && buffer[3] === 0x53) return "audio/ogg";
+
+    // MP4 / M4A / MOV: ftyp at offset 4
+    if (buffer[4] === 0x66 && buffer[5] === 0x74 && buffer[6] === 0x79 && buffer[7] === 0x70) {
+      const brand = buffer.toString("ascii", 8, 12);
+      if (brand === "m4a " || brand === "M4A ") return "audio/mp4";
+      if (brand === "qt  ") return "video/quicktime";
+      
+      // Generic MP4 brands (isom, mp41, mp42, etc.)
+      if (brand.startsWith("mp4") || brand === "isom" || brand === "iso2") {
+        // If client specifically says it's audio/mp4 (e.g. voice note), we allow it.
+        if (clientMime && clientMime.startsWith("audio/")) return "audio/mp4";
+        return "video/mp4";
+      }
+      // If it has ftyp but unknown brand, we can check client hint
+      if (clientMime && (clientMime.startsWith("video/") || clientMime.startsWith("audio/"))) return clientMime;
+      return "video/mp4";
+    }
+
+    // MP3: ID3 (49 44 33) or Frame Sync (FF FB / FF F3 / FF F2)
     if (buffer[0] === 0x49 && buffer[1] === 0x44 && buffer[2] === 0x33) return "audio/mpeg";
     if (buffer[0] === 0xFF && (buffer[1] & 0xE0) === 0xE0) return "audio/mpeg";
+
+    // Legacy Office Docs: D0 CF 11 E0 A1 B1 1A E1
+    if (buffer[0] === 0xD0 && buffer[1] === 0xCF && buffer[2] === 0x11 && buffer[3] === 0xE0) {
+      if (clientMime && (clientMime.includes("msword") || clientMime.includes("ms-excel") || clientMime.includes("ms-powerpoint"))) {
+        return clientMime;
+      }
+      return "application/msword";
+    }
 
     return null;
   } catch (e) {
@@ -284,7 +325,8 @@ app.post("/upload", authUserMiddleware, upload.single("mediaFile"), async (req, 
   }
 
   // 2. Validate MIME type via magic bytes
-  const detectedMime = getMimeTypeByMagic(tempPath);
+  const clientMime = req.file.mimetype;
+  const detectedMime = getMimeTypeByMagic(tempPath, clientMime);
   if (!detectedMime) {
     console.error("❌ Falló la detección de MIME (tipo no soportado o archivo corrupto):", tempPath);
     if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
@@ -300,12 +342,12 @@ app.post("/upload", authUserMiddleware, upload.single("mediaFile"), async (req, 
   if (detectedMime.startsWith("image/")) {
     targetFolder = "images";
     finalExt = detectedMime.split("/")[1].replace("jpeg", "jpg");
-  } else if (detectedMime.startsWith("video/")) {
+  } else if (detectedMime.startsWith("video/") || detectedMime === "video/quicktime") {
     targetFolder = "videos";
-    finalExt = detectedMime.split("/")[1];
+    finalExt = detectedMime.split("/")[1].replace("quicktime", "mov");
   } else if (detectedMime.startsWith("audio/")) {
     targetFolder = "audio";
-    finalExt = detectedMime.split("/")[1].replace("mpeg", "mp3");
+    finalExt = detectedMime.split("/")[1].replace("mpeg", "mp3").replace("mp4", "m4a");
   } else if (detectedMime.includes("sticker")) {
     targetFolder = "stickers";
     finalExt = "webp";
