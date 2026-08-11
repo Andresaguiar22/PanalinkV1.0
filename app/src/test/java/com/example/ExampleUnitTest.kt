@@ -48,6 +48,11 @@ class ExampleUnitTest {
         override suspend fun getUnreadCountForChat(chatId: String, myUserId: String) = throw NotImplementedError()
         override suspend fun getOldestMessageTimestamp(chatId: String) = throw NotImplementedError()
         override suspend fun getNewestMessageTimestamp(chatId: String) = throw NotImplementedError()
+        override suspend fun insertMessageRaw(message: MessageEntity) = throw NotImplementedError()
+        override suspend fun insertMessagesRaw(messages: List<MessageEntity>) = throw NotImplementedError()
+        override suspend fun updateChatLastMessageAndUnread(chatId: String, lastMessageId: String, shouldIncrementUnread: Int) = throw NotImplementedError()
+        override suspend fun hasChat(chatId: String) = throw NotImplementedError()
+        override suspend fun insertChatPlaceholder(chat: com.example.data.database.ChatEntity) = throw NotImplementedError()
     }
 
     @Test
