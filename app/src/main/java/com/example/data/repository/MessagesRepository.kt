@@ -789,21 +789,33 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
                                 orFilter = "(id.eq.${entity.chatId})"
                             )
                         }
-                        if (threadResponse != null && threadResponse.isSuccessful && !threadResponse.body().isNullOrEmpty()) {
-                            val thread = threadResponse.body()!![0]
-                            receiverUid = if (thread.userA == currentUid) thread.userB else thread.userA
-                            isDmSync = true
-                            
-                            // Save resolved receiverId back to local DB to avoid re-fetching
-                            if (!receiverUid.isNullOrEmpty()) {
-                                messageDao.updateMessageReceiverId(entity.id, receiverUid!!)
+                        if (threadResponse != null && threadResponse.isSuccessful) {
+                            val threads = threadResponse.body()
+                            if (!threads.isNullOrEmpty()) {
+                                val thread = threads[0]
+                                receiverUid = if (thread.userA == currentUid) thread.userB else thread.userA
+                                isDmSync = true
+                                
+                                // Save resolved receiverId back to local DB to avoid re-fetching
+                                if (!receiverUid.isNullOrEmpty()) {
+                                    messageDao.updateMessageReceiverId(entity.id, receiverUid!!)
+                                }
+                            } else {
+                                // Successfully confirmed it is NOT a 1:1 thread, so it must be a channel
+                                isDmSync = false
                             }
                         } else {
-                            isDmSync = false
+                            // API call failed, we don't know if it's a DM or not. 
+                            // Stay pending to avoid incorrect fallback.
+                            Log.e(TAG, "Failed to resolve thread for message ${entity.id} (code: ${threadResponse?.code()}). Staying pending.")
+                            allSuccessful = false
+                            continue
                         }
                     } catch (e: Exception) {
-                        Log.e(TAG, "Error resolving receiver during sync for message ${entity.id}", e)
-                        isDmSync = false
+                        Log.e(TAG, "Exception resolving receiver during sync for message ${entity.id}", e)
+                        // Error occurred, stay pending.
+                        allSuccessful = false
+                        continue
                     }
                 }
 

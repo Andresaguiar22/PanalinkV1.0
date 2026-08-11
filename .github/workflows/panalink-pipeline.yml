@@ -1,0 +1,206 @@
+name: PanaLink V2.0 Unified Pipeline
+
+on:
+  push:
+    branches: [ "main", "master", "develop" ]
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      changelog:
+        description: 'Changelog description (OTA only)'
+        required: false
+        default: 'PanaLink V2.0 Security and Performance update.'
+      is_mandatory:
+        description: 'Is this a mandatory update? (OTA only)'
+        required: false
+        default: 'false'
+      minimum_version:
+        description: 'Minimum supported versionCode (OTA only)'
+        required: false
+        default: '1'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: Download and Install Gradle 9.3.1
+        run: |
+          wget -q https://services.gradle.org/distributions/gradle-9.3.1-bin.zip
+          unzip -q gradle-9.3.1-bin.zip
+          echo "$GITHUB_WORKSPACE/gradle-9.3.1/bin" >> $GITHUB_PATH
+
+      - name: Setup Android Build Tools
+        run: |
+          BUILD_TOOLS_VERSION=$(ls $ANDROID_SDK_ROOT/build-tools | tail -n 1)
+          echo "Using Android Build Tools: $BUILD_TOOLS_VERSION"
+          echo "$ANDROID_SDK_ROOT/build-tools/$BUILD_TOOLS_VERSION" >> $GITHUB_PATH
+
+      - name: Prepare Secrets Configuration
+        run: |
+          touch secrets.properties
+          touch secrets.defaults.properties
+          touch app/secrets.properties
+          touch app/secrets.defaults.properties
+
+      - name: Inyectar Google Services JSON
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -n "$GOOGLE_SERVICES_JSON" ]; then
+            cat << 'EOF' > app/google-services.json
+            ${{ secrets.GOOGLE_SERVICES_JSON }}
+            EOF
+          else
+            echo "Warning: GOOGLE_SERVICES_JSON secret is missing."
+          fi
+
+      - name: Decode Keystore
+        run: |
+          if [ -z "${{ secrets.KEYSTORE_BASE64 }}" ]; then
+            echo "::error::KEYSTORE_BASE64 secret is missing! Build will likely fail."
+            exit 1
+          fi
+          cat << 'EOF' > base64_temp.txt
+          ${{ secrets.KEYSTORE_BASE64 }}
+          EOF
+          base64 --decode --ignore-garbage base64_temp.txt > app/release-key.jks
+
+      - name: Test Keystore Integrity & Fingerprint
+        env:
+          KEY_PASS_RAW: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS_RAW: ${{ secrets.KEY_ALIAS }}
+        run: |
+          CLEAN_PASS=$(echo "$KEY_PASS_RAW" | xargs)
+          CLEAN_ALIAS=$(echo "$KEY_ALIAS_RAW" | xargs)
+          echo "=== VERIFICANDO IDENTIDAD DE FIRMA ==="
+          keytool -list -v -keystore app/release-key.jks -alias "$CLEAN_ALIAS" -storepass "$CLEAN_PASS" | grep -E "Alias name|Owner|Issuer|SHA256" || { echo "❌ ERROR: Keystore inválido o contraseña incorrecta."; exit 1; }
+          echo "✅ KEYSTORE OK"
+
+      - name: Build Release APK
+        env:
+          KEY_ALIAS_RAW: ${{ secrets.KEY_ALIAS }}
+          KEY_PASS_RAW: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASS_PRIVATE_RAW: ${{ secrets.KEY_PASSWORD || secrets.KEYSTORE_PASSWORD }}
+          # Use Git Tag as Version Name if available, fallback to run number
+          VERSION_NAME: ${{ github.ref_type == 'tag' && github.ref_name || format('1.0.{0}', github.run_number) }}
+          VERSION_CODE: ${{ github.run_number }}
+        run: |
+          export KEY_ALIAS=$(echo "$KEY_ALIAS_RAW" | xargs)
+          export KEYSTORE_PASSWORD=$(echo "$KEY_PASS_RAW" | xargs)
+          export KEY_PASSWORD=$(echo "$KEY_PASS_PRIVATE_RAW" | xargs)
+          export KEYSTORE_FILE="release-key.jks"
+          
+          gradle assembleRelease
+
+      - name: Process APK and Generate Metadata
+        id: package_step
+        run: |
+          python3 -c '
+          import os, subprocess, hashlib, json, re
+
+          # Find the compiled release APK
+          apk_path = ""
+          for root, dirs, files in os.walk("app/build/outputs/apk/release"):
+              for file in files:
+                  if file.endswith(".apk") and not file.endswith("-unsigned.apk"):
+                      apk_path = os.path.join(root, file)
+                      break
+
+          if not apk_path:
+              print("::error::No signed release APK found!")
+              exit(1)
+
+          # Extract badging info
+          badging = subprocess.check_output(["aapt2", "dump", "badging", apk_path], text=True)
+          
+          # Validate Package Name (Crucial for updates)
+          package_name = re.search(r"package:\s+name='\''([^'\'']*)'\''", badging).group(1)
+          if package_name != "com.panalink.app":
+              print(f"::error::Package name mismatch! Found: {package_name}")
+              exit(1)
+
+          vn = re.search(r"versionName='\''([^'\'']*)'\''", badging).group(1)
+          vc = re.search(r"versionCode='\''(\d+)'\''", badging).group(1)
+          
+          # SHA-256 for integrity check in OTA
+          sha256 = hashlib.sha256(open(apk_path, "rb").read()).hexdigest()
+          
+          # Rename for distribution
+          target_name = f"panalink-v2-{vn}.apk"
+          target_path = os.path.join(os.path.dirname(apk_path), target_name)
+          os.rename(apk_path, target_path)
+          
+          # Build OTA Manifest
+          is_mandatory = "${{ github.event.inputs.is_mandatory }}".lower() == "true"
+          min_v = "${{ github.event.inputs.minimum_version }}" or "1"
+          changelog_input = """${{ github.event.inputs.changelog }}""" or f"Update v{vn}"
+          
+          manifest_data = {
+              "versionCode": int(vc),
+              "versionName": vn,
+              "downloadUrl": f"https://github.com/Andresaguiar22/panalink-ota/releases/download/v{vn}/{target_name}",
+              "sha256": sha256,
+              "mandatory": is_mandatory,
+              "minimumSupportedVersionCode": int(min_v),
+              "changelog": [line.strip() for line in changelog_input.split("\n") if line.strip()]
+          }
+
+          with open("manifest.json", "w") as f:
+              json.dump(manifest_data, f, indent=2)
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as go:
+              go.write(f"version_name=v{vn}\n")
+              go.write(f"apk_path={target_path}\n")
+              go.write(f"apk_name={target_name}\n")
+          '
+
+      - name: Upload APK to Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package_step.outputs.apk_name }}
+          path: ${{ steps.package_step.outputs.apk_path }}
+          retention-days: 14
+
+      - name: Publish to OTA Repository
+        if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.OTA_GITHUB_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "Warning: OTA_GITHUB_TOKEN is missing. Skipping OTA publication."
+            exit 0
+          fi
+          
+          TAG_NAME="${{ steps.package_step.outputs.version_name }}"
+          APK_PATH="${{ steps.package_step.outputs.apk_path }}"
+          
+          echo "=== PUBLISHING TO OTA REPOSITORY ==="
+          if gh release view "$TAG_NAME" --repo "Andresaguiar22/panalink-ota" > /dev/null 2>&1; then
+            gh release upload "$TAG_NAME" --repo "Andresaguiar22/panalink-ota" --clobber "$APK_PATH" manifest.json
+          else
+            gh release create "$TAG_NAME" \
+              --repo "Andresaguiar22/panalink-ota" \
+              --title "PanaLink V2.0 OTA $TAG_NAME" \
+              --notes "Production Build from Unified Pipeline" \
+              "$APK_PATH" manifest.json
+          fi
+
+      - name: Clean up
+        if: always()
+        run: rm -f app/release-key.jks base64_temp.txt
