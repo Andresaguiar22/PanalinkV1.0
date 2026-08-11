@@ -158,7 +158,7 @@ object NotificationHelper {
         }
     }
 
-    // Gentle "water drop" sound inside the active chat (completely self-contained, no raw files required)
+    // Gentle sound inside active chat using PanaLinkSoundManager
     fun playActiveChatSound(context: Context) {
         val prefs = context.getSharedPreferences("panalink_prefs", Context.MODE_PRIVATE)
         val globalEnabled = prefs.getBoolean("notifications_global_enabled", true)
@@ -167,22 +167,24 @@ object NotificationHelper {
         val chatSoundEnabled = prefs.getBoolean("notifications_chat_sound_enabled", true)
         if (!chatSoundEnabled) return
 
-        val tone = prefs.getString("notifications_chat_sound_tone", "water_drop") ?: "water_drop"
-        when (tone) {
-            "water_drop" -> playWaterDrop()
-            "soft_pop" -> playSoftPop()
-            "none" -> { /* silent */ }
-            else -> playWaterDrop()
-        }
+        com.example.util.PanaLinkSoundManager.play(context, com.example.util.PanaSoundEvent.MESSAGE_RECEIVED)
     }
 
-    // Gentle "swoosh" sound for sending your own messages (with active setting verification)
+    // Gentle sound for sending your own messages
     fun playOutgoingSound(context: Context) {
         val prefs = context.getSharedPreferences("panalink_prefs", Context.MODE_PRIVATE)
         val outgoingEnabled = prefs.getBoolean("notifications_outgoing_sound_enabled", true)
         if (!outgoingEnabled) return
 
-        playSwoosh()
+        com.example.util.PanaLinkSoundManager.play(context, com.example.util.PanaSoundEvent.MESSAGE_SEND)
+    }
+
+    fun playReadSound(context: Context) {
+        val prefs = context.getSharedPreferences("panalink_prefs", Context.MODE_PRIVATE)
+        val globalEnabled = prefs.getBoolean("notifications_global_enabled", true)
+        if (!globalEnabled) return
+
+        com.example.util.PanaLinkSoundManager.play(context, com.example.util.PanaSoundEvent.MESSAGE_READ)
     }
 
     private fun playWaterDrop() {

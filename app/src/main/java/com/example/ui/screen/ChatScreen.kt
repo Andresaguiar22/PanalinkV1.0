@@ -1472,7 +1472,6 @@ fun ChatScreen(
                                 .clip(CircleShape)
                                 .background(Color(0xFFFCE8E6))
                                 .clickable {
-                                    playCancelBeep()
                                     triggerLightVibration(context)
                                     isRecordingPaused = false
                                     Toast.makeText(context, "Grabación descartada", Toast.LENGTH_SHORT).show()
@@ -1610,9 +1609,8 @@ fun ChatScreen(
                                 .clip(CircleShape)
                                 .background(Color(0xFFFCE8E6))
                                 .clickable {
-                                    playCancelBeep()
                                     triggerLightVibration(context)
-                                    viewModel.cancelPreviewRecording()
+                                    viewModel.cancelPreviewRecording(context)
                                     Toast.makeText(context, "Nota de voz descartada", Toast.LENGTH_SHORT).show()
                                 },
                             contentAlignment = Alignment.Center
@@ -1802,7 +1800,7 @@ fun ChatScreen(
                                 viewModel.editMessage(editingMessage!!.id, inputMessage)
                                 viewModel.clearReplyAndEdit()
                             } else {
-                                viewModel.sendMessage(inputMessage, replyToId = replyingToMessage?.id)
+                                viewModel.sendMessage(inputMessage, replyToId = replyingToMessage?.id, context = context)
                                 viewModel.clearReplyAndEdit()
                             }
                             viewModel.onInputMessageChange("")

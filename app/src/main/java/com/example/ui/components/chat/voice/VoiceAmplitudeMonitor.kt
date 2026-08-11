@@ -11,7 +11,7 @@ import kotlinx.coroutines.launch
 
 class VoiceAmplitudeMonitor(private val barCount: Int = 35) {
 
-    private val _amplitudes = MutableStateFlow(List(barCount) { 0.1f })
+    private val _amplitudes = MutableStateFlow(List(barCount) { 0.05f })
     val amplitudes: StateFlow<List<Float>> = _amplitudes.asStateFlow()
 
     private val amplitudeHistory = mutableListOf<Float>()
@@ -23,13 +23,19 @@ class VoiceAmplitudeMonitor(private val barCount: Int = 35) {
         stop()
         isPaused = false
         monitorJob = scope.launch(Dispatchers.Default) {
-            val currentList = MutableList(barCount) { 0.1f }
+            val currentList = MutableList(barCount) { 0.05f }
+            var lastNormalized = 0.05f
             while (monitorJob?.isActive == true) {
                 if (!isPaused) {
                     val raw = getRawAmplitude()
-                    // Normalize raw amplitude (0..32767) to a factor (0.1..1.0)
-                    val normalized = ((raw - 200) / 10000f).coerceIn(0.1f, 1.0f)
+                    // Improved logarithmic/square-root normalization for natural height & dynamic range
+                    val rawClamped = (raw.toFloat() - 150f).coerceAtLeast(0f)
+                    val targetNormalized = (0.05f + 0.95f * kotlin.math.sqrt(rawClamped / 24000f)).coerceIn(0.05f, 1.0f)
                     
+                    // Light exponential smoothing to avoid sudden visual jitter
+                    val normalized = (lastNormalized * 0.25f + targetNormalized * 0.75f).coerceIn(0.05f, 1.0f)
+                    lastNormalized = normalized
+
                     synchronized(amplitudeHistory) {
                         amplitudeHistory.add(normalized)
                     }
@@ -47,7 +53,7 @@ class VoiceAmplitudeMonitor(private val barCount: Int = 35) {
     fun getSampledWaveform(targetBars: Int = 35): List<Float> {
         val historySnapshot = synchronized(amplitudeHistory) { amplitudeHistory.toList() }
         if (historySnapshot.isEmpty()) {
-            return List(targetBars) { 0.1f }
+            return List(targetBars) { 0.05f }
         }
         if (historySnapshot.size <= targetBars) {
             val result = ArrayList<Float>(targetBars)
@@ -69,7 +75,7 @@ class VoiceAmplitudeMonitor(private val barCount: Int = 35) {
                 count++
             }
             val avg = if (count > 0) sum / count else historySnapshot[start]
-            result.add(avg.coerceIn(0.1f, 1.0f))
+            result.add(avg.coerceIn(0.05f, 1.0f))
         }
         return result
     }
@@ -86,7 +92,7 @@ class VoiceAmplitudeMonitor(private val barCount: Int = 35) {
         monitorJob?.cancel()
         monitorJob = null
         isPaused = false
-        _amplitudes.value = List(barCount) { 0.1f }
+        _amplitudes.value = List(barCount) { 0.05f }
         synchronized(amplitudeHistory) {
             amplitudeHistory.clear()
         }

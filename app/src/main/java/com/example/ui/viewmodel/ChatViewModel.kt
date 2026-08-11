@@ -372,9 +372,12 @@ private var chatJob: kotlinx.coroutines.Job? = null
         _typingUsers.value = emptyList()
     }
 
-    fun sendMessage(text: String, replyToId: String? = null) {
+    fun sendMessage(text: String, replyToId: String? = null, context: Context? = null) {
         val chatId = currentChatId ?: return
         val otherId = currentOtherUserId
+        if (context != null) {
+            com.example.service.NotificationHelper.playOutgoingSound(context)
+        }
         viewModelScope.launch {
             messagesRepo.sendMessage(chatId, text, replyToId = replyToId, receiverUid = otherId, isGhost = _isGhostMode.value)
             _inputMessage.value = ""
