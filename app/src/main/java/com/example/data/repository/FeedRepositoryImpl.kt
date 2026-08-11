@@ -262,7 +262,7 @@ class FeedRepositoryImpl : FeedRepository {
         val commentDao = database.commentDao()
         val pendingDao = database.pendingSocialActionDao()
 
-        val tempCommentId = "temp_" + java.util.UUID.randomUUID().toString()
+        val tempCommentId = java.util.UUID.randomUUID().toString()
         val timestamp = com.example.data.supabase.SupabaseClient.getNowIsoString()
 
         // 1. Increment comments count locally
@@ -280,7 +280,7 @@ class FeedRepositoryImpl : FeedRepository {
             id = tempCommentId,
             targetId = postId,
             authorId = userId,
-            authorName = myProfile?.displayName ?: "Yo",
+            authorName = myProfile?.displayName ?: "",
             authorAvatarUrl = myProfile?.avatarUrl,
             content = content,
             createdAt = timestamp,

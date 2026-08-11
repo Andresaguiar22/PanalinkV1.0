@@ -758,7 +758,7 @@ fun ChatsListScreen(
                                     size = 32.dp,
                                     borderWidth = 1.5.dp,
                                     borderColor = Color(0xFFB026FF),
-                                    placeholderName = SupabaseClient.currentProfile?.displayName ?: "Pana",
+                                    placeholderName = SupabaseClient.currentProfile?.displayName ?: "",
                                     contentDescription = "Perfil"
                                 )
                                 val myPresence by com.example.data.repository.PresenceRepository.currentUserStatus.collectAsStateWithLifecycle()
@@ -3360,13 +3360,13 @@ fun ContactsTabContent(
                                 com.example.ui.components.PanaAvatar(
                                     avatarUrl = request.sender?.avatarUrl,
                                     userId = request.sender?.id,
-                                    placeholderName = request.sender?.displayName ?: "Usuario",
+                                    placeholderName = request.sender?.displayName ?: "",
                                     size = 40.dp,
                                     modifier = Modifier.size(40.dp)
                                 )
                                 Spacer(modifier = Modifier.width(12.dp))
                                 Text(
-                                    text = request.sender?.displayName ?: "Usuario",
+                                    text = request.sender?.displayName ?: "",
                                     color = Color.White,
                                     modifier = Modifier.weight(1f)
                                 )
@@ -4646,7 +4646,7 @@ fun InicioTabContent(
 
                                             // Username bottom
                                             Text(
-                                                text = safeDisplayName?.take(15) ?: "Pana",
+                                                text = safeDisplayName?.take(15) ?: "",
                                                 color = Color.White,
                                                 fontSize = 11.sp,
                                                 fontWeight = FontWeight.Bold,
@@ -6072,7 +6072,7 @@ fun PostCard(
                     borderWidth = 1.5.dp,
                     borderColor = Color(0xFF00FF85),
                     contentDescription = identityState?.displayName ?: post.profile?.displayName,
-                    placeholderName = identityState?.displayName ?: post.profile?.displayName ?: "Pana"
+                    placeholderName = identityState?.displayName ?: post.profile?.displayName ?: ""
                 )
 
                 Spacer(modifier = Modifier.width(10.dp))

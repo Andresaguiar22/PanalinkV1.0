@@ -45,7 +45,7 @@ class NotificationBuilderV2(private val context: Context) {
 
             // MessagingStyle for Chat messages
             if (event.domain == NotificationDomain.CHAT || event.type == NotificationTypeV2.CHAT_MESSAGE) {
-                val senderName = event.actor?.name ?: "Pana"
+                val senderName = event.actor?.name ?: ""
                 val person = Person.Builder()
                     .setName(senderName)
                     .setKey(event.actor?.id)

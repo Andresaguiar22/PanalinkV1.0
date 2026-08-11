@@ -173,7 +173,7 @@ class SocialRepositoryImpl : SocialRepository {
             val commentDao = database.commentDao()
             val pendingDao = database.pendingSocialActionDao()
             
-            val localCommentId = "temp_${java.util.UUID.randomUUID()}"
+            val localCommentId = java.util.UUID.randomUUID().toString()
             val nowStr = SupabaseClient.getNowIsoString()
             
             val profile = SupabaseClient.currentProfile
@@ -182,7 +182,7 @@ class SocialRepositoryImpl : SocialRepository {
                 id = localCommentId,
                 targetId = stateId,
                 authorId = currentUid,
-                authorName = profile?.displayName ?: "Usuario",
+                authorName = profile?.displayName ?: "",
                 authorAvatarUrl = profile?.avatarUrl,
                 content = text,
                 createdAt = nowStr,

@@ -35,7 +35,7 @@ class ProfileSurrogateAdapter {
     fun fromJson(surrogate: ProfileSurrogate): Profile {
         return Profile(
             id = surrogate.id,
-            displayName = surrogate.displayName ?: "Usuario",
+            displayName = surrogate.displayName ?: "",
             avatarUrl = surrogate.avatarUrl,
             pinHash = surrogate.pinHash,
             pin = surrogate.pin,

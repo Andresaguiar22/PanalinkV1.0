@@ -703,7 +703,7 @@ fun TikTokPageItem(
     val identityState by identityRepository.observeIdentity(state.userId).collectAsStateWithLifecycle(initialValue = initialCached?.toIdentityUiState())
     
     val safeAvatarUrl = identityState?.avatarUrl ?: initialProfile?.avatarUrl
-    val safeDisplayName = identityState?.displayName ?: initialProfile?.displayName ?: "Pana"
+    val safeDisplayName = identityState?.displayName ?: initialProfile?.displayName ?: ""
     val safeProfileId = identityState?.userId ?: initialProfile?.id ?: state.userId
 
     val profilesRepo = remember { ProfilesRepository() }
@@ -941,7 +941,7 @@ fun TikTokPageItem(
                 if (hasError) {
                     ReelsErrorView(
                         avatarUrl = safeAvatarUrl,
-                        displayName = safeDisplayName ?: "Pana",
+                        displayName = safeDisplayName ?: "",
                         onRetry = {
                             CdnManager.clearCache()
                             hasError = false
@@ -999,7 +999,7 @@ fun TikTokPageItem(
                         if (isBuffering) {
                             ReelsSkeletonLoader(
                                 avatarUrl = safeAvatarUrl,
-                                displayName = safeDisplayName ?: "Pana"
+                                displayName = safeDisplayName ?: ""
                             )
                         }
                     }
@@ -1008,7 +1008,7 @@ fun TikTokPageItem(
                 // Placeholder skeleton for non-active or preparing pages
                 ReelsSkeletonLoader(
                     avatarUrl = safeAvatarUrl,
-                    displayName = safeDisplayName ?: "Pana"
+                    displayName = safeDisplayName ?: ""
                 )
             }
         }

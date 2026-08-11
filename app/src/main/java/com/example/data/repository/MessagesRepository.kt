@@ -846,18 +846,66 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
                 Log.i(TAG, "PANALINK_SYNC: chatId=${entity.chatId}, message_type=${entity.messageType}, media_url=${entity.mediaUrl}")
 
                 var successful = false
-                val threadResponse = runCall { auth ->
-                    service.createThreadMessage(
-                            apiKey = SupabaseClient.supabaseAnonKey,
-                            authorization = auth,
-                            message = cleanMsgMap
-                        )
-                }
-                val code = threadResponse?.code()
-                val isSuccessful = threadResponse?.isSuccessful == true
-                val errBody = threadResponse?.errorBody()?.string()
-                val respBody = if (isSuccessful) threadResponse?.body()?.string() else null
+                var is409OrTimeout = false
+                var threadResponse: retrofit2.Response<okhttp3.ResponseBody>? = null
                 
+                try {
+                    threadResponse = runCall { auth ->
+                        service.createThreadMessage(
+                                apiKey = SupabaseClient.supabaseAnonKey,
+                                authorization = auth,
+                                message = cleanMsgMap
+                            )
+                    }
+                    if (threadResponse?.code() == 409 || threadResponse?.code() == 408) {
+                        is409OrTimeout = true
+                    }
+                } catch (e: Exception) {
+                    if (e is java.io.IOException || (e as? retrofit2.HttpException)?.code() == 408 || (e as? retrofit2.HttpException)?.code() == 409) {
+                        is409OrTimeout = true
+                    } else {
+                        throw e
+                    }
+                }
+                
+                var code = threadResponse?.code()
+                var isSuccessful = threadResponse?.isSuccessful == true
+                var errBody = threadResponse?.errorBody()?.string()
+                var respBody = if (isSuccessful) threadResponse?.body()?.string() else null
+                
+                if (is409OrTimeout && entity.clientMessageUuid != null) {
+                    Log.i(TAG, "TRACE_SYNC: 409 or timeout detected for msg ${entity.clientMessageUuid}. Reconciling...")
+                    try {
+                        val verifyResponse = runCall { auth ->
+                            service.getThreadMessageByClientUuid(
+                                apiKey = SupabaseClient.supabaseAnonKey,
+                                authorization = auth,
+                                clientUuidFilter = "eq.${entity.clientMessageUuid}"
+                            )
+                        }
+                        if (verifyResponse?.isSuccessful == true && verifyResponse.body()?.isNotEmpty() == true) {
+                            val serverMsgList = verifyResponse.body()!!
+                            if (serverMsgList.isNotEmpty()) {
+                                val listType = com.squareup.moshi.Types.newParameterizedType(List::class.java, com.example.data.model.ThreadMessage::class.java)
+                                val adapter = SupabaseClient.moshi.adapter<List<com.example.data.model.ThreadMessage>>(listType)
+                                respBody = adapter.toJson(serverMsgList)
+                                successful = true
+                                isSuccessful = true
+                                errBody = null
+                                code = 200
+                                Log.i(TAG, "TRACE_SYNC: Reconciled message ${entity.clientMessageUuid} with server id ${serverMsgList.first().id}")
+                            } else {
+                                allSuccessful = false
+                            }
+                        } else {
+                            allSuccessful = false
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error reconciling message", e)
+                        allSuccessful = false
+                    }
+                }
+                   
                 Log.i(TAG, "TRACE_SYNC_AFTER_CREATE_THREAD: httpStatus=$code, isSuccessful=$isSuccessful, supabaseResponse=$respBody, errorBody=$errBody")
 
                 try {
@@ -888,7 +936,7 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
                     Log.e(TAG, "Error logging AFTER_CREATE_THREAD debug log", e)
                 }
 
-                if (threadResponse != null && threadResponse.isSuccessful) {
+                if (successful || threadResponse?.isSuccessful == true) {
                     successful = true
                     val responseBody = respBody ?: threadResponse.body()?.string()
                     Log.i(TAG, "PANALINK_SYNC_RESULT: $responseBody, markedAsSent=true")

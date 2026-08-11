@@ -381,7 +381,7 @@ class MainActivity : ComponentActivity() {
                             } else if (profile != null) {
                                 AuthUiState.NeedsProfileSetup(user, profile)
                             } else {
-                                AuthUiState.NeedsProfileSetup(user, com.example.data.model.Profile(id = user.id, displayName = user.email?.substringBefore("@") ?: "Pana", avatarUrl = null, isProfileComplete = false))
+                                AuthUiState.NeedsProfileSetup(user, com.example.data.model.Profile(id = user.id, displayName = user.email?.substringBefore("@") ?: "", avatarUrl = null, isProfileComplete = false))
                             }
                         }
                         is AuthUiState.AuthenticatedReady -> {
@@ -397,7 +397,7 @@ class MainActivity : ComponentActivity() {
                             } else if (profile != null) {
                                 AuthUiState.NeedsProfileSetup(user, profile)
                             } else {
-                                AuthUiState.NeedsProfileSetup(user, com.example.data.model.Profile(id = user.id, displayName = user.email?.substringBefore("@") ?: "Pana", avatarUrl = null, isProfileComplete = false))
+                                AuthUiState.NeedsProfileSetup(user, com.example.data.model.Profile(id = user.id, displayName = user.email?.substringBefore("@") ?: "", avatarUrl = null, isProfileComplete = false))
                             }
                         }
                         // Loading, Error, and Idle do not change the active root layout tree!
@@ -460,7 +460,7 @@ class MainActivity : ComponentActivity() {
                     } else {
                         if (isUserAuthenticated) {
                             if (callState != com.example.call.CallState.IDLE) {
-                                val opponentNameStr = opponentName ?: "Pana"
+                                val opponentNameStr = opponentName ?: ""
                                 val formattedDuration = callManager.formattedDuration()
                                 val videoViewModel: com.example.call.VideoCallViewModel? = if (callType == com.example.call.CallType.VIDEO) {
                                     androidx.lifecycle.viewmodel.compose.viewModel()

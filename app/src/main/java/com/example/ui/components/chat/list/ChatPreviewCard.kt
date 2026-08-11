@@ -47,7 +47,7 @@ fun ChatPreviewCard(
     val identityState by identityRepository.observeIdentity(initialOtherUser?.id ?: "").collectAsStateWithLifecycle(initialValue = initialCached?.toIdentityUiState()) // Wait, I need to import it or use top level
     
     val safeAvatarUrl = identityState?.avatarUrl ?: initialOtherUser?.avatarUrl
-    val safeDisplayName = identityState?.displayName ?: initialOtherUser?.displayName ?: "Usuario Desconocido"
+    val safeDisplayName = identityState?.displayName ?: initialOtherUser?.displayName ?: ""
     val safeUserId = identityState?.userId ?: initialOtherUser?.id
     val safeVerified = identityState?.verified ?: false
 

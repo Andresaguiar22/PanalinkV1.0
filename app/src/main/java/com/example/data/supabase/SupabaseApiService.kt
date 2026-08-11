@@ -298,6 +298,14 @@ interface SupabaseApiService {
     ): Response<List<ThreadMessage>>
 
     @GET("rest/v1/thread_messages")
+    suspend fun getThreadMessageByClientUuid(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") authorization: String,
+        @Query("client_message_uuid") clientUuidFilter: String,
+        @Query("select") select: String = "*"
+    ): Response<List<ThreadMessage>>
+
+    @GET("rest/v1/thread_messages")
     suspend fun getIncrementalThreadMessages(
         @Header("apikey") apiKey: String,
         @Header("Authorization") authorization: String,

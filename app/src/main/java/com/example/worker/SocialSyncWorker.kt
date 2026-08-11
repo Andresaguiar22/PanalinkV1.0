@@ -52,13 +52,13 @@ class SocialSyncWorker(
                         if (action.isReel) {
                             val params = mapOf<String, Any>("p_reel_id" to action.targetId, "p_favorited" to true)
                             val response = service.setReelFavoriteRpc(apiKey, bearer, params)
-                            if (response.isSuccessful || response.code() == 409) {
+                            if (response.isSuccessful || response.code() == 409 || response.code() == 400) {
                                 success = true
                             }
                         } else {
                             val params = mapOf<String, Any>("p_story_id" to action.targetId, "p_favorited" to true)
                             val response = service.setStoryFavoriteRpc(apiKey, bearer, params)
-                            if (response.isSuccessful || response.code() == 409) {
+                            if (response.isSuccessful || response.code() == 409 || response.code() == 400) {
                                 success = true
                             }
                         }
@@ -82,7 +82,7 @@ class SocialSyncWorker(
                         if (action.isReel) {
                             val params = mapOf<String, Any>("p_reel_id" to action.targetId, "p_liked" to true)
                             val response = service.setReelLikeRpc(apiKey, bearer, params)
-                            if (response.isSuccessful || response.code() == 409) {
+                            if (response.isSuccessful || response.code() == 409 || response.code() == 400) {
                                 success = true
                             }
                         } else {
@@ -90,13 +90,13 @@ class SocialSyncWorker(
                             if (isStory) {
                                 val params = mapOf<String, Any>("p_story_id" to action.targetId, "p_liked" to true)
                                 val response = service.setStoryLikeRpc(apiKey, bearer, params)
-                                if (response.isSuccessful || response.code() == 409) {
+                                if (response.isSuccessful || response.code() == 409 || response.code() == 400) {
                                     success = true
                                 }
                             } else {
                                 val likeDto = PostLikeDto(postId = action.targetId, userId = action.userId)
                                 val response = service.addLike(apiKey, bearer, likeDto)
-                                if (response.isSuccessful || response.code() == 409) {
+                                if (response.isSuccessful || response.code() == 409 || response.code() == 400) {
                                     success = true
                                 }
                             }
@@ -143,47 +143,68 @@ class SocialSyncWorker(
                         if (action.isReel) {
                             val tableName = "reel_comments"
                             val body = mutableMapOf<String, Any>(
+                                "id" to parsedLocalCommentId,
                                 "reel_id" to action.targetId,
                                 "author_id" to action.userId,
                                 "body" to parsedCommentText,
                                 "created_at" to SupabaseClient.getNowIsoString()
                             )
                             if (parsedParentId != null) body["parent_comment_id"] = parsedParentId
-                            val response = service.commentState(tableName, apiKey, bearer, body)
-                            if (response.isSuccessful) {
-                                success = true
-                                // We don't have a returned DTO here directly, but we can clear local temp comment
-                                commentDao.deleteById(parsedLocalCommentId)
+                            try {
+                                val response = service.commentState(tableName, apiKey, bearer, body)
+                                if (response.isSuccessful || response.code() == 409 || response.code() == 400) {
+                                    success = true
+                                    val finalEntity = commentDao.getCommentById(parsedLocalCommentId)?.copy(syncStatus = "synced")
+                                    if (finalEntity != null) commentDao.upsert(finalEntity)
+                                }
+                            } catch (e: Exception) {
+                                if (e is retrofit2.HttpException && e.code() == 409) {
+                                    success = true
+                                    val finalEntity = commentDao.getCommentById(parsedLocalCommentId)?.copy(syncStatus = "synced")
+                                    if (finalEntity != null) commentDao.upsert(finalEntity)
+                                } else throw e
                             }
                         } else {
                             val isStory = statesDao.getStateById(action.targetId) != null
                             if (isStory) {
                                 val tableName = "story_comments"
                                 val body = mutableMapOf<String, Any>(
+                                    "id" to parsedLocalCommentId,
                                     "story_id" to action.targetId,
                                     "author_id" to action.userId,
                                     "body" to parsedCommentText,
                                     "created_at" to SupabaseClient.getNowIsoString()
                                 )
                                 if (parsedParentId != null) body["parent_comment_id"] = parsedParentId
-                                val response = service.commentState(tableName, apiKey, bearer, body)
-                                if (response.isSuccessful) {
-                                    success = true
-                                    commentDao.deleteById(parsedLocalCommentId)
+                                try {
+                                    val response = service.commentState(tableName, apiKey, bearer, body)
+                                    if (response.isSuccessful || response.code() == 409 || response.code() == 400) {
+                                        success = true
+                                        val finalEntity = commentDao.getCommentById(parsedLocalCommentId)?.copy(syncStatus = "synced")
+                                        if (finalEntity != null) commentDao.upsert(finalEntity)
+                                    }
+                                } catch (e: Exception) {
+                                    if (e is retrofit2.HttpException && e.code() == 409) {
+                                        success = true
+                                        val finalEntity = commentDao.getCommentById(parsedLocalCommentId)?.copy(syncStatus = "synced")
+                                        if (finalEntity != null) commentDao.upsert(finalEntity)
+                                    } else throw e
                                 }
                             } else {
-                                val commentDto = PostCommentDto(postId = action.targetId, userId = action.userId, content = parsedCommentText)
-                                val response = service.addComment(apiKey, bearer, commentDto)
-                                if (response.isSuccessful && !response.body().isNullOrEmpty()) {
-                                    val createdRemote = response.body()!!.first()
-                                    success = true
-                                    // Replace temporary comment with final remote comment in Room
-                                    val localTemp = commentDao.getCommentById(parsedLocalCommentId)
-                                    if (localTemp != null) {
-                                        commentDao.deleteById(parsedLocalCommentId)
-                                        val finalEntity = CommentEntity.fromPostCommentDto(createdRemote)
-                                        commentDao.upsert(finalEntity)
+                                val commentDto = PostCommentDto(id = parsedLocalCommentId, postId = action.targetId, userId = action.userId, content = parsedCommentText)
+                                try {
+                                    val response = service.addComment(apiKey, bearer, commentDto)
+                                    if (response.isSuccessful || response.code() == 409 || response.code() == 400) {
+                                        success = true
+                                        val finalEntity = commentDao.getCommentById(parsedLocalCommentId)?.copy(syncStatus = "synced")
+                                        if (finalEntity != null) commentDao.upsert(finalEntity)
                                     }
+                                } catch (e: Exception) {
+                                    if (e is retrofit2.HttpException && e.code() == 409) {
+                                        success = true
+                                        val finalEntity = commentDao.getCommentById(parsedLocalCommentId)?.copy(syncStatus = "synced")
+                                        if (finalEntity != null) commentDao.upsert(finalEntity)
+                                    } else throw e
                                 }
                             }
                         }
@@ -216,8 +237,10 @@ class SocialSyncWorker(
                             success = true
                         }
                     }
+                    else -> {
+                        success = false
+                    }
                 }
-
                 if (success) {
                     pendingDao.deleteActionById(action.localActionId)
                     Log.d("SocialSyncWorker", "Action ${action.actionType} on ${action.targetId} synced successfully.")

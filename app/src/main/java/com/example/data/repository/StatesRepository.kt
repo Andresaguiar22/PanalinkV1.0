@@ -642,7 +642,7 @@ class StatesRepository {
         val commentDao = db.commentDao()
         val pendingDao = db.pendingSocialActionDao()
 
-        val tempCommentId = "temp_" + java.util.UUID.randomUUID().toString()
+        val tempCommentId = java.util.UUID.randomUUID().toString()
         val timestamp = com.example.data.supabase.SupabaseClient.getNowIsoString()
 
         // 1. Increment local comments count
@@ -660,7 +660,7 @@ class StatesRepository {
             id = tempCommentId,
             targetId = stateId,
             authorId = currentUid,
-            authorName = myProfile?.displayName ?: "Yo",
+            authorName = myProfile?.displayName ?: "",
             authorAvatarUrl = myProfile?.avatarUrl,
             content = commentText,
             createdAt = timestamp,

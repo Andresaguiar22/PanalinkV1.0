@@ -25,7 +25,7 @@ class SessionRepository(private val context: Context) {
             isAuthenticated = user != null,
             userId = user?.id ?: "",
             email = user?.email ?: "",
-            displayName = profile?.displayName ?: user?.userMetadata?.get("displayName")?.toString() ?: "Pana",
+            displayName = profile?.displayName ?: user?.userMetadata?.get("displayName")?.toString() ?: "",
             avatarUrl = profile?.avatarUrl ?: user?.userMetadata?.get("avatar_url")?.toString(),
             isProfileComplete = profile?.isProfileComplete ?: false,
             profile = profile,

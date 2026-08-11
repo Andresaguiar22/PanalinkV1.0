@@ -73,7 +73,7 @@ fun FeedPostCard(
     val identityState by identityRepository.observeIdentity(state.userId).collectAsStateWithLifecycle(initialValue = com.example.identity.memory.IdentityMemoryCache.profiles.get(state.userId)?.toIdentityUiState())
     
     val safeAvatarUrl = identityState?.avatarUrl ?: initialProfile?.avatarUrl
-    val safeDisplayName = identityState?.displayName ?: initialProfile?.displayName ?: "Usuario"
+    val safeDisplayName = identityState?.displayName ?: initialProfile?.displayName ?: ""
     val safeUserId = identityState?.userId ?: initialProfile?.id ?: state.userId
 
     Card(
@@ -444,7 +444,7 @@ fun FeedPostCard(
             if (state.mediaType != "text" && !state.caption.isNullOrBlank()) {
                 Row(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
                     Text(
-                        text = safeDisplayName ?: "Pana",
+                        text = safeDisplayName ?: "",
                         fontWeight = FontWeight.Bold,
                         color = Color.White,
                         fontSize = 13.sp

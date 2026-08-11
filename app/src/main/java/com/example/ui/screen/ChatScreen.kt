@@ -2079,7 +2079,7 @@ fun ChatScreen(
     // Simulated Call Overlay
     if (activeCallState != null) {
         val otherUser = (uiState as? ChatUiState.Success)?.otherUser
-        val otherName = otherUser?.displayName ?: "Pana"
+        val otherName = otherUser?.displayName ?: ""
         val otherAvatar = otherUser?.avatarUrl ?: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80"
         
         Box(
@@ -2236,7 +2236,7 @@ fun ChatScreen(
     ) {
         val state = uiState as? ChatUiState.Success
         val otherUser = state?.otherUser
-        val otherName = otherUser?.displayName ?: "Pana"
+        val otherName = otherUser?.displayName ?: ""
         val otherAvatar = otherUser?.avatarUrl ?: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80"
         val otherBio = otherUser?.status?.takeIf { it.isNotEmpty() } ?: "¡Hola! Estoy usando PanaLink para hablar de pana. 🇻🇪"
         val otherPin = otherUser?.pin ?: (otherUser?.id?.take(6)?.uppercase() ?: "PANA12")

@@ -119,7 +119,7 @@ class PanalinkFirebaseMessagingService : FirebaseMessagingService() {
                 } else if (notificationType == "new_message") {
                     PanaLinkNotificationManager.showChatNotification(
                         context = applicationContext,
-                        senderName = remoteMessage.data["sender_name"] ?: remoteMessage.data["senderName"] ?: "Pana",
+                        senderName = remoteMessage.data["sender_name"] ?: remoteMessage.data["senderName"] ?: "",
                         senderAvatarUrl = remoteMessage.data["sender_avatar"] ?: remoteMessage.data["senderAvatar"],
                         messageText = notificationBody,
                         chatId = chatId

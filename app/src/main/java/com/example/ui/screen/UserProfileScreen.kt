@@ -237,7 +237,7 @@ fun UserProfileScreen(
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
                                 Text(
-                                    text = profile.displayName ?: "Pana",
+                                    text = profile.displayName ?: "",
                                     color = Color.White,
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 22.sp

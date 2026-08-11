@@ -295,7 +295,7 @@ fun TikTokCommentRow(
         Column(modifier = Modifier.weight(1f)) {
             // Author Name
             Text(
-                text = identityState?.displayName ?: comment.profile?.displayName ?: "Usuario",
+                text = identityState?.displayName ?: comment.profile?.displayName ?: "",
                 color = Color.Gray,
                 fontWeight = FontWeight.Bold,
                 fontSize = 13.sp
@@ -346,7 +346,7 @@ fun TikTokCommentRow(
                     fontWeight = FontWeight.Bold,
                     fontSize = 12.sp,
                     modifier = Modifier.clickable {
-                        onReplyClick(identityState?.displayName ?: comment.profile?.displayName ?: "Usuario")
+                        onReplyClick(identityState?.displayName ?: comment.profile?.displayName ?: "")
                     }
                 )
             }

@@ -164,7 +164,7 @@ private fun InitialsAvatar(
     placeholderName: String?,
     size: Dp
 ) {
-    val cleanName = placeholderName?.trim()?.ifBlank { "Pana" } ?: "Pana"
+    val cleanName = placeholderName?.trim()?.ifBlank { "Pana" } ?: ""
     val words = cleanName.split(" ").filter { it.isNotBlank() }
     val initials = when {
         words.size >= 2 -> "${words[0].first().uppercaseChar()}${words[1].first().uppercaseChar()}"

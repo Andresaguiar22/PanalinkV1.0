@@ -92,29 +92,11 @@ class MediaUploadWorker(
                 Result.success()
             } else {
                 Log.e(TAG, "Upload failed: ${uploadResult.exceptionOrNull()?.message}")
-                if (runAttemptCount < 3) {
-                    Result.retry()
-                } else {
-                    try {
-                        messageDao.updateMessageStatus(messageId, "failed")
-                    } catch (dbEx: Exception) {
-                        Log.e(TAG, "Failed to update db status to failed", dbEx)
-                    }
-                    Result.failure()
-                }
+                Result.retry()
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error in MediaUploadWorker: ${e.localizedMessage}", e)
-            if (runAttemptCount < 3) {
-                Result.retry()
-            } else {
-                try {
-                    messageDao.updateMessageStatus(messageId, "failed")
-                } catch (dbEx: Exception) {
-                    Log.e(TAG, "Failed to update db status to failed", dbEx)
-                }
-                Result.failure()
-            }
+            Result.retry()
         }
     }
 }

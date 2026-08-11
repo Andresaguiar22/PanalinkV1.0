@@ -207,7 +207,7 @@ fun NotificationCard(
         Spacer(modifier = Modifier.width(12.dp))
         
         Column(modifier = Modifier.weight(1f)) {
-            val name = identityState?.displayName ?: notification.profile?.displayName ?: "Usuario"
+            val name = identityState?.displayName ?: notification.profile?.displayName ?: ""
             val timeStr = formatNotificationTime(notification.timestamp)
             
             Row(verticalAlignment = Alignment.CenterVertically) {

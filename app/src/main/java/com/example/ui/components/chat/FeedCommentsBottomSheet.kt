@@ -136,7 +136,7 @@ fun CommentItem(comment: ChannelComment) {
         Column {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = comment.author?.displayName ?: "Usuario",
+                    text = comment.author?.displayName ?: "",
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color.White
