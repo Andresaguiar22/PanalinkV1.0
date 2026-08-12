@@ -20,6 +20,9 @@ interface CommentDao {
     @Upsert
     suspend fun upsertAll(entities: List<CommentEntity>)
 
+    @Query("SELECT COUNT(*) FROM local_comments WHERE targetId = :targetId AND isReel = :isReel")
+    suspend fun getCommentCount(targetId: String, isReel: Boolean): Int
+
     @Query("DELETE FROM local_comments WHERE id = :id")
     suspend fun deleteById(id: String)
 

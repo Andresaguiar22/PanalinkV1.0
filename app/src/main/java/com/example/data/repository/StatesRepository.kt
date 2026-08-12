@@ -23,6 +23,16 @@ import kotlinx.coroutines.flow.map
 
 class StatesRepository {
     private val TAG = "StatesRepository"
+
+    companion object {
+        private val processedRealtimeEventIds = java.util.Collections.synchronizedSet(
+            object : java.util.LinkedHashMap<String, Boolean>(200, 0.75f, true) {
+                override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>?): Boolean {
+                    return size > 500
+                }
+            }.let { java.util.Collections.newSetFromMap(it) }
+        )
+    }
     
     private val db by lazy { com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance) }
     private val statesDao by lazy { db.statesDao() }
@@ -308,37 +318,67 @@ class StatesRepository {
                     )
                 }
 
-                // Save to local database for SSOT using Smart Merge to prevent local state regression
+                // Save to local database for SSOT using Smart Merge:
+                // Distinguishes local pending unsynced actions from remote confirmed state.
                 try {
+                    val pendingDao = db.pendingSocialActionDao()
+                    val pendingActions = try { pendingDao.getPendingActions() } catch (e: Exception) { emptyList() }
+                    val pendingLikesMap = pendingActions.filter { it.userId == currentUid && (it.actionType == "LIKE" || it.actionType == "UNLIKE") }
+                        .associateBy { it.targetId }
+                    val pendingFavsMap = pendingActions.filter { it.userId == currentUid && (it.actionType == "FAVORITE" || it.actionType == "UNFAVORITE") }
+                        .associateBy { it.targetId }
+
                     val finalEntities = resolvedList.map { item ->
                         val newEntity = com.example.data.database.StateEntity.fromUserStateWithUser(item)
-                        val existingEntity = statesDao.getStateById(item.state.id)
-                        if (existingEntity != null) {
-                            // Smart Merge: Preserve user interactions if backend view has temporary sync delay
-                            val mergedLiked = if (existingEntity.likedByMe) true else newEntity.likedByMe
-                            val mergedLikesCount = if (existingEntity.likedByMe && !newEntity.likedByMe) {
-                                maxOf(existingEntity.likesCount, newEntity.likesCount, 1)
-                            } else {
-                                maxOf(existingEntity.likesCount, newEntity.likesCount)
-                            }
-                            val mergedFavorited = if (existingEntity.favoritedByMe) true else newEntity.favoritedByMe
-                            val mergedFavoritesCount = if (existingEntity.favoritedByMe && !newEntity.favoritedByMe) {
-                                maxOf(existingEntity.favoritesCount, newEntity.favoritesCount, 1)
-                            } else {
-                                maxOf(existingEntity.favoritesCount, newEntity.favoritesCount)
-                            }
-                            val mergedCommentsCount = maxOf(existingEntity.commentsCount, newEntity.commentsCount)
+                        val pendingLike = pendingLikesMap[item.state.id]
+                        val pendingFav = pendingFavsMap[item.state.id]
 
-                            newEntity.copy(
-                                likedByMe = mergedLiked,
-                                likesCount = mergedLikesCount,
-                                favoritedByMe = mergedFavorited,
-                                favoritesCount = mergedFavoritesCount,
-                                commentsCount = mergedCommentsCount
-                            )
-                        } else {
-                            newEntity
+                        val finalLiked = when {
+                            pendingLike != null -> pendingLike.actionType == "LIKE"
+                            else -> newEntity.likedByMe
                         }
+
+                        val finalLikesCount = when {
+                            pendingLike != null -> {
+                                if (pendingLike.actionType == "LIKE") {
+                                    if (newEntity.likedByMe) newEntity.likesCount else newEntity.likesCount + 1
+                                } else {
+                                    if (newEntity.likedByMe) (newEntity.likesCount - 1).coerceAtLeast(0) else newEntity.likesCount
+                                }
+                            }
+                            else -> newEntity.likesCount
+                        }
+
+                        val finalFavorited = when {
+                            pendingFav != null -> pendingFav.actionType == "FAVORITE"
+                            else -> newEntity.favoritedByMe
+                        }
+
+                        val finalFavsCount = when {
+                            pendingFav != null -> {
+                                if (pendingFav.actionType == "FAVORITE") {
+                                    if (newEntity.favoritedByMe) newEntity.favoritesCount else newEntity.favoritesCount + 1
+                                } else {
+                                    if (newEntity.favoritedByMe) (newEntity.favoritesCount - 1).coerceAtLeast(0) else newEntity.favoritesCount
+                                }
+                            }
+                            else -> newEntity.favoritesCount
+                        }
+
+                        val commentDao = db.commentDao()
+                        val localCommentCount = commentDao.getCommentCount(item.state.id, item.state.isReel)
+                        val finalCommentsCount = if (localCommentCount > 0) maxOf(newEntity.commentsCount, localCommentCount) else newEntity.commentsCount
+
+                        val finalSharesCount = newEntity.sharesCount
+
+                        newEntity.copy(
+                            likedByMe = finalLiked,
+                            likesCount = finalLikesCount,
+                            favoritedByMe = finalFavorited,
+                            favoritesCount = finalFavsCount,
+                            commentsCount = finalCommentsCount,
+                            sharesCount = finalSharesCount
+                        )
                     }
                     statesDao.insertStates(finalEntities)
                     // Purge expired states synchronously within this IO dispatcher
@@ -930,6 +970,140 @@ class StatesRepository {
             }
         } catch (e: Exception) {
             Result.failure(e)
+        }
+    }
+
+    suspend fun handleRealtimeStatus(userState: com.example.data.model.UserState) = withContext(Dispatchers.IO) {
+        val profile = getProfileForUser(userState.userId)
+        val item = com.example.data.model.UserStateWithUser(userState, profile)
+        val entity = com.example.data.database.StateEntity.fromUserStateWithUser(item)
+        val existing = statesDao.getStateById(userState.id)
+        if (existing != null) {
+            statesDao.insertState(existing.copy(
+                mediaUrl = if (entity.mediaUrl.isNotEmpty()) entity.mediaUrl else existing.mediaUrl,
+                caption = entity.caption ?: existing.caption
+            ))
+        } else {
+            statesDao.insertState(entity)
+        }
+    }
+
+    private suspend fun fetchAndSaveSingleReel(reelId: String, isReel: Boolean): com.example.data.database.StateEntity? = withContext(Dispatchers.IO) {
+        val service = SupabaseClient.apiService ?: return@withContext null
+        val apiKey = SupabaseClient.supabaseAnonKey
+        val response = runCall { b ->
+            if (isReel) service.getUserReels(apiKey, b, idFilter = "eq.$reelId")
+            else service.getUserStories(apiKey, b, idFilter = "eq.$reelId")
+        }
+        val rawState = response?.body()?.firstOrNull() ?: return@withContext null
+        val state = rawState.copy(type = if (isReel) "reel" else "story")
+        val profile = getProfileForUser(state.userId)
+        val item = com.example.data.model.UserStateWithUser(state, profile)
+        val entity = com.example.data.database.StateEntity.fromUserStateWithUser(item)
+        statesDao.insertState(entity)
+        entity
+    }
+
+    private suspend fun ensureReelInRoom(reelId: String, isReel: Boolean): com.example.data.database.StateEntity? {
+        val existing = statesDao.getStateById(reelId)
+        if (existing != null) return existing
+        Log.i(TAG, "Reel/Story $reelId not found in Room. Fetching for reconciliation...")
+        return fetchAndSaveSingleReel(reelId, isReel)
+    }
+
+    suspend fun handleRealtimeSocialInteraction(
+        update: com.example.data.supabase.SupabaseClient.SocialInteractionUpdate,
+        interactionType: String
+    ) = withContext(Dispatchers.IO) {
+        if (update.recordId.isNotEmpty()) {
+            if (!processedRealtimeEventIds.add(update.recordId)) {
+                Log.d(TAG, "Realtime event ${update.recordId} already processed. Skipping duplicate.")
+                return@withContext
+            }
+        }
+
+        val entity = ensureReelInRoom(update.statusId, update.isReel) ?: return@withContext
+        val currentUid = SupabaseClient.currentUser?.id ?: ""
+        val record = update.record
+        val actorUserId = record.optString("user_id", record.optString("author_id", ""))
+        val isCurrentUser = actorUserId.isNotEmpty() && actorUserId == currentUid
+        val isDelete = update.eventType == "DELETE"
+
+        when (interactionType) {
+            "LIKE" -> {
+                val newLiked = if (isCurrentUser) !isDelete else entity.likedByMe
+                val newLikesCount = if (isDelete) {
+                    if (isCurrentUser) {
+                        if (entity.likedByMe) (entity.likesCount - 1).coerceAtLeast(0) else entity.likesCount
+                    } else {
+                        (entity.likesCount - 1).coerceAtLeast(0)
+                    }
+                } else {
+                    if (isCurrentUser) {
+                        if (!entity.likedByMe) entity.likesCount + 1 else entity.likesCount
+                    } else {
+                        entity.likesCount + 1
+                    }
+                }
+                statesDao.insertState(entity.copy(likesCount = newLikesCount, likedByMe = newLiked))
+            }
+            "FAVORITE" -> {
+                val newFav = if (isCurrentUser) !isDelete else entity.favoritedByMe
+                val newFavCount = if (isDelete) {
+                    if (isCurrentUser) {
+                        if (entity.favoritedByMe) (entity.favoritesCount - 1).coerceAtLeast(0) else entity.favoritesCount
+                    } else {
+                        (entity.favoritesCount - 1).coerceAtLeast(0)
+                    }
+                } else {
+                    if (isCurrentUser) {
+                        if (!entity.favoritedByMe) entity.favoritesCount + 1 else entity.favoritesCount
+                    } else {
+                        entity.favoritesCount + 1
+                    }
+                }
+                statesDao.insertState(entity.copy(favoritesCount = newFavCount, favoritedByMe = newFav))
+            }
+            "COMMENT" -> {
+                val commentDao = db.commentDao()
+                val commentId = update.recordId.ifEmpty { record.optString("id", java.util.UUID.randomUUID().toString()) }
+                if (isDelete) {
+                    commentDao.deleteById(commentId)
+                    val actualCount = commentDao.getCommentCount(update.statusId, update.isReel)
+                    statesDao.insertState(entity.copy(commentsCount = actualCount))
+                } else {
+                    val bodyText = record.optString("body", record.optString("content", record.optString("text", "")))
+                    val createdAt = record.optString("created_at", SupabaseClient.getNowIsoString())
+                    val rawParentId = record.optString("parent_comment_id", record.optString("parentId", ""))
+                    val parentId = rawParentId.takeIf { it.isNotBlank() && it != "null" }
+                    if (bodyText.isNotBlank()) {
+                        val authorProfile = getProfileForUser(actorUserId)
+                        val commentEntity = com.example.data.database.CommentEntity(
+                            id = commentId,
+                            targetId = update.statusId,
+                            isReel = update.isReel,
+                            authorId = actorUserId,
+                            authorName = authorProfile.displayName.ifBlank { "Usuario" },
+                            authorAvatarUrl = authorProfile.avatarUrl,
+                            content = bodyText,
+                            createdAt = createdAt,
+                            parentCommentId = parentId,
+                            syncStatus = "synced"
+                        )
+                        commentDao.upsert(commentEntity)
+                    }
+                    val actualCount = commentDao.getCommentCount(update.statusId, update.isReel)
+                    statesDao.insertState(entity.copy(commentsCount = actualCount))
+                }
+            }
+            "SHARE" -> {
+                val newSharesCount = if (isDelete) {
+                    (entity.sharesCount - 1).coerceAtLeast(0)
+                } else {
+                    entity.sharesCount + 1
+                }
+                statesDao.insertState(entity.copy(sharesCount = newSharesCount))
+            }
         }
     }
 }

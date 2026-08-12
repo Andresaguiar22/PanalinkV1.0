@@ -368,6 +368,7 @@ interface SupabaseApiService {
         @Header("Authorization") authorization: String,
         @Query("select") select: String = "*",
         @Query("author_id") authorFilter: String? = null,
+        @Query("id") idFilter: String? = null,
         @Header("Accept-Profile") acceptProfile: String = "social"
     ): Response<List<UserState>>
 
@@ -378,6 +379,7 @@ interface SupabaseApiService {
         @Query("select") select: String = "*",
         @Query("expires_at") expiresAtFilter: String? = "gt.now()",
         @Query("author_id") authorFilter: String? = null,
+        @Query("id") idFilter: String? = null,
         @Header("Accept-Profile") acceptProfile: String = "social"
     ): Response<List<UserState>>
 
