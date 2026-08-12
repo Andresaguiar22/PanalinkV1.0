@@ -16,6 +16,56 @@ interface PendingSocialActionDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAction(action: PendingSocialActionEntity)
 
+    /**
+     * Atomically replaces the desired state for one logical interaction family.
+     *
+     * Declarative actions (LIKE/FAVORITE) must use this method instead of
+     * insertAction(), so rapid toggles collapse into a single pending row while
+     * preserving the existing localActionId.
+     */
+    @Transaction
+    suspend fun replaceDesiredState(action: PendingSocialActionEntity) {
+        require(action.actionFamily != null) {
+            "replaceDesiredState requires a non-null actionFamily"
+        }
+        require(action.desiredState != null) {
+            "replaceDesiredState requires a non-null desiredState"
+        }
+
+        val updatedRows = updateActionFamilyState(
+            userId = action.userId,
+            targetId = action.targetId,
+            isReel = action.isReel,
+            actionFamily = action.actionFamily,
+            desiredState = action.desiredState,
+            createdAt = action.createdAt
+        )
+
+        if (updatedRows == 0) {
+            insertAction(action.copy(status = "pending", retryCount = 0))
+        }
+    }
+
+    @Query("""
+        UPDATE pending_social_actions
+        SET desiredState = :desiredState,
+            createdAt = :createdAt,
+            retryCount = 0,
+            status = 'pending'
+        WHERE userId = :userId
+          AND targetId = :targetId
+          AND isReel = :isReel
+          AND actionFamily = :actionFamily
+    """)
+    suspend fun updateActionFamilyState(
+        userId: String,
+        targetId: String,
+        isReel: Boolean,
+        actionFamily: String,
+        desiredState: Boolean,
+        createdAt: Long
+    ): Int
+
     @Query("UPDATE pending_social_actions SET retryCount = retryCount + 1, status = :status WHERE localActionId = :id")
     suspend fun updateActionStatus(id: String, status: String)
 
