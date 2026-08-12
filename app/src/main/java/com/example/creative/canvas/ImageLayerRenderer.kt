@@ -34,19 +34,23 @@ fun ImageLayerRenderer(
     var currentScale = remember(layer.id) { mutableFloatStateOf(layer.scale) }
     var currentRotation = remember(layer.id) { mutableFloatStateOf(layer.rotation) }
 
-    val colorMatrix = ColorMatrix().apply {
+    val adjustmentMatrix = ColorMatrix().apply {
         val brightness = layer.brightness.coerceIn(-1f, 1f)
-        val contrast = layer.contrast.coerceAtLeast(0f)
-        val saturation = layer.saturation.coerceAtLeast(0f)
-        val translate = (1f - contrast) * 128f + brightness * 255f
+        val contrast = layer.contrast.coerceIn(-1f, 1f)
+        val saturation = layer.saturation.coerceIn(0f, 2f)
+        val contrastScale = 1f + contrast
+        val translate = brightness * 255f + (1f - contrastScale) * 128f
         setTo(
-            contrast, 0f, 0f, 0f, translate,
-            0f, contrast, 0f, 0f, translate,
-            0f, 0f, contrast, 0f, translate,
+            contrastScale, 0f, 0f, 0f, translate,
+            0f, contrastScale, 0f, 0f, translate,
+            0f, 0f, contrastScale, 0f, translate,
             0f, 0f, 0f, 1f, 0f
         )
         setSaturation(saturation)
     }
+
+    val filterMatrix = ImageFilterMatrices.forName(layer.filterName)
+    val combinedMatrix = ColorMatrix(adjustmentMatrix).apply { postConcat(filterMatrix) }
 
     Box(
         modifier = Modifier
@@ -77,7 +81,7 @@ fun ImageLayerRenderer(
             model = layer.imageUriOrPath,
             contentDescription = "Imagen de Reel",
             modifier = Modifier.size(180.dp),
-            colorFilter = ColorFilter.colorMatrix(colorMatrix)
+            colorFilter = ColorFilter.colorMatrix(combinedMatrix)
         )
     }
 }
