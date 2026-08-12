@@ -1,12 +1,6 @@
 package com.example.ui.story
 
-/** Content types supported by the Story Studio editor. */
-enum class StoryStudioKind {
-    PHOTO,
-    VIDEO,
-    TEXT
-}
-
+/** Shared content types supported by the Story Studio editor. */
 data class StoryStudioSlide(
     val id: String,
     val kind: StoryStudioKind = StoryStudioKind.PHOTO,
@@ -18,6 +12,7 @@ data class StoryStudioSlide(
         StoryStudioKind.VIDEO -> 0L
         StoryStudioKind.TEXT -> 5000L
         StoryStudioKind.PHOTO -> 5000L
+        StoryStudioKind.CAROUSEL -> 5000L
     }
 )
 
