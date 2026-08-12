@@ -220,7 +220,7 @@ fun PostDetailScreen(
                     contentPadding = PaddingValues(bottom = 16.dp)
                 ) {
                     item {
-                        PostCard(
+                        com.example.ui.components.FeedPostCard(
                             post = post,
                             onLikeClick = { viewModel.toggleLike(post) },
                             onCommentClick = {

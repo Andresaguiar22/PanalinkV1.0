@@ -1,20 +1,11 @@
 import sys
 
-content = open('app/src/main/java/com/example/ui/screen/ViewStateScreen.kt').read()
+with open('app/src/main/java/com/example/ui/components/FeedPostCard.kt', 'r') as f:
+    content = f.read()
 
-content = content.replace(
-'''    var exoPlayerRef by remember { mutableStateOf<androidx.media3.exoplayer.ExoPlayer?>(null) }''',
-'''    var exoPlayerRef by remember { mutableStateOf<androidx.media3.exoplayer.ExoPlayer?>(null) }
-    var hasError by remember { mutableStateOf(false) }
-    var isBuffering by remember { mutableStateOf(true) }'''
-)
+content = content.replace("import com.example.media.ui.VideoPreviewPlayer\n", "")
+content = content.replace("com.example.media.ui.VideoPreviewPlayer", "SimpleVideoPreviewPlayer")
 
-content = content.replace(
-'''    var hasError by remember { mutableStateOf(false) }
-    var isBuffering by remember { mutableStateOf(true) }
+with open('app/src/main/java/com/example/ui/components/FeedPostCard.kt', 'w') as f:
+    f.write(content)
 
-    Box(modifier = modifier) {''',
-'''    Box(modifier = modifier) {'''
-)
-
-open('app/src/main/java/com/example/ui/screen/ViewStateScreen.kt', 'w').write(content)

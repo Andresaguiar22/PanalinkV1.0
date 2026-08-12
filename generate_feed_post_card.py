@@ -1,4 +1,6 @@
-package com.example.ui.components
+import sys
+
+content = """package com.example.ui.components
 
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -46,23 +48,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.example.ui.screen.parseStateMetadata
-import com.example.ui.screen.RenderOverlays
 import com.example.data.model.PostDto
 import com.example.identity.model.toIdentityUiState
-
-
-fun isVideoUrl(url: String): Boolean {
-    if (url.isBlank()) return false
-    val lower = url.lowercase()
-    return lower.contains(".mp4") || lower.contains(".mov") || lower.contains(".webm") || lower.contains(".mkv") || lower.contains("video")
-}
-
-fun isAudioUrl(url: String): Boolean {
-    if (url.isBlank()) return false
-    val lower = url.lowercase()
-    return lower.contains(".mp3") || lower.contains(".wav") || lower.contains(".ogg") || lower.contains(".m4a") || lower.contains("audio")
-}
 
 @Composable
 fun FeedPostCard(
@@ -274,7 +261,7 @@ fun FeedPostCard(
                         ) {
                             if (post.type == "VIDEO" || post.type == "REEL" || isVideoUrl(resolvedUrl)) {
                                 val videoUri = remember(resolvedUrl) { Uri.parse(resolvedUrl) }
-                                SimpleVideoPreviewPlayer(
+                                com.example.media.ui.VideoPreviewPlayer(
                                     videoUri = videoUri,
                                     isMuted = isMuted,
                                     modifier = Modifier.fillMaxSize()
@@ -477,3 +464,8 @@ fun FeedPostCard(
         }
     }
 }
+"""
+
+with open('app/src/main/java/com/example/ui/components/FeedPostCard.kt', 'w') as f:
+    f.write(content)
+
