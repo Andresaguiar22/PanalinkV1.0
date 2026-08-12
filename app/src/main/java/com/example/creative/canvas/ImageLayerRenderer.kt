@@ -3,6 +3,7 @@ package com.example.creative.canvas
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -21,6 +22,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.example.creative.core.CreativeLayer
+
+private const val IMAGE_CANVAS_SIZE_DP = 180f
 
 @Composable
 fun ImageLayerRenderer(
@@ -52,9 +55,16 @@ fun ImageLayerRenderer(
     val filterMatrix = ImageFilterMatrices.forName(layer.filterName)
     val combinedMatrix = ColorMatrix(adjustmentMatrix).apply { postConcat(filterMatrix) }
 
+    val cropX = layer.cropXRatio.coerceIn(0f, 0.9f)
+    val cropY = layer.cropYRatio.coerceIn(0f, 0.9f)
+    val cropWidth = layer.cropWidthRatio.coerceIn(0.1f, 1f - cropX)
+    val cropHeight = layer.cropHeightRatio.coerceIn(0.1f, 1f - cropY)
+    val renderedWidth = IMAGE_CANVAS_SIZE_DP / cropWidth
+    val renderedHeight = IMAGE_CANVAS_SIZE_DP / cropHeight
+
     Box(
         modifier = Modifier
-            .size(180.dp)
+            .size(IMAGE_CANVAS_SIZE_DP.dp)
             .graphicsLayer(alpha = layer.opacity)
             .scale(currentScale.floatValue)
             .rotate(currentRotation.floatValue)
@@ -80,7 +90,12 @@ fun ImageLayerRenderer(
         AsyncImage(
             model = layer.imageUriOrPath,
             contentDescription = "Imagen de Reel",
-            modifier = Modifier.size(180.dp),
+            modifier = Modifier
+                .size(renderedWidth.dp, renderedHeight.dp)
+                .offset(
+                    x = (-cropX * renderedWidth).dp,
+                    y = (-cropY * renderedHeight).dp
+                ),
             colorFilter = ColorFilter.colorMatrix(combinedMatrix)
         )
     }
