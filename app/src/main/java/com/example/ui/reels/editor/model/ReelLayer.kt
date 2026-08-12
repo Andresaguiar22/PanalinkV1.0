@@ -21,11 +21,8 @@ data class ReelLayer(
 }
 
 sealed class ReelLayerContent {
-    data class Media(
-        val uri: String,
-        val mimeType: String? = null
-    ) : ReelLayerContent()
-
+    data class Media(val uri: String, val mimeType: String? = null) : ReelLayerContent()
+    data class Image(val uri: String) : ReelLayerContent()
     data class Text(
         val value: String,
         val fontFamily: String? = null,
@@ -33,22 +30,8 @@ sealed class ReelLayerContent {
         val colorArgb: Int = 0xFFFFFFFF.toInt(),
         val backgroundColorArgb: Int? = null
     ) : ReelLayerContent()
-
-    data class Sticker(
-        val uri: String
-    ) : ReelLayerContent()
-
-    data class Audio(
-        val uri: String,
-        val volume: Float = 1f
-    ) : ReelLayerContent()
-
-    data class Effect(
-        val effectId: String
-    ) : ReelLayerContent()
-
-    data class Subtitle(
-        val value: String,
-        val styleId: String = "default"
-    ) : ReelLayerContent()
+    data class Sticker(val uri: String) : ReelLayerContent()
+    data class Audio(val uri: String, val volume: Float = 1f) : ReelLayerContent()
+    data class Effect(val effectId: String) : ReelLayerContent()
+    data class Subtitle(val value: String, val styleId: String = "default") : ReelLayerContent()
 }
