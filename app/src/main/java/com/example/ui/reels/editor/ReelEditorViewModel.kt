@@ -13,7 +13,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 
-/** State and editing commands for Reel Studio. Media rendering/export remains outside the ViewModel. */
 class ReelEditorViewModel : ViewModel() {
     private val _uiState = MutableStateFlow(ReelEditorUiState())
     val uiState: StateFlow<ReelEditorUiState> = _uiState.asStateFlow()
@@ -54,18 +53,12 @@ class ReelEditorViewModel : ViewModel() {
         }
     }
 
-    private fun addTextLayer(text: String) {
-        addOverlayTrack(ReelTrackType.TEXT, "Texto") { start, end ->
-            ReelLayer("text_${System.nanoTime()}", ReelTrackType.TEXT, start, end, zIndex = 100, x = 0.5f, y = 0.5f,
-                content = ReelLayerContent.Text(value = text.ifBlank { "Escribe aquí" }))
-        }
+    private fun addTextLayer(text: String) = addOverlayTrack(ReelTrackType.TEXT, "Texto") { start, end ->
+        ReelLayer("text_${System.nanoTime()}", ReelTrackType.TEXT, start, end, zIndex = 100, x = 0.5f, y = 0.5f, content = ReelLayerContent.Text(value = text.ifBlank { "Escribe aquí" }))
     }
 
-    private fun addStickerLayer(stickerUri: String) {
-        addOverlayTrack(ReelTrackType.STICKER, "Stickers") { start, end ->
-            ReelLayer("sticker_${System.nanoTime()}", ReelTrackType.STICKER, start, end, zIndex = 110, x = 0.5f, y = 0.5f,
-                content = ReelLayerContent.Sticker(stickerUri))
-        }
+    private fun addStickerLayer(stickerUri: String) = addOverlayTrack(ReelTrackType.STICKER, "Stickers") { start, end ->
+        ReelLayer("sticker_${System.nanoTime()}", ReelTrackType.STICKER, start, end, zIndex = 110, x = 0.5f, y = 0.5f, content = ReelLayerContent.Sticker(stickerUri))
     }
 
     private fun updateTextStyle(event: ReelEditorEvent.UpdateTextStyle) {
@@ -90,8 +83,7 @@ class ReelEditorViewModel : ViewModel() {
 
     private fun updateSelectedLayer(layerId: String, transform: (ReelLayer) -> ReelLayer) {
         _uiState.update { state ->
-            val track = state.project.timeline.tracks.firstOrNull { track -> track.layers.any { it.id == layerId } }
-                ?: return@update state
+            val track = state.project.timeline.tracks.firstOrNull { it.layers.any { layer -> layer.id == layerId } } ?: return@update state
             val layer = track.layers.first { it.id == layerId }
             val updated = transform(layer)
             state.copy(project = state.project.copy(timeline = ReelTimelineOperations.updateLayer(state.project.timeline, track.id, updated), selectedLayerId = layerId))
@@ -101,8 +93,7 @@ class ReelEditorViewModel : ViewModel() {
     private fun addOverlayTrack(type: ReelTrackType, name: String, createLayer: (Long, Long) -> ReelLayer) {
         _uiState.update { state ->
             val timeline = state.project.timeline
-            val track = timeline.tracks.firstOrNull { it.type == type }
-                ?: ReelTrack("${type.name.lowercase()}_${System.nanoTime()}", type, name, zIndex = timeline.tracks.size)
+            val track = timeline.tracks.firstOrNull { it.type == type } ?: ReelTrack("${type.name.lowercase()}_${System.nanoTime()}", type, name, zIndex = timeline.tracks.size)
             val baseEnd = timeline.durationMs.coerceAtLeast(1000L)
             val start = timeline.currentTimeMs.coerceIn(0L, (baseEnd - 500L).coerceAtLeast(0L))
             val end = (start + 5000L).coerceAtMost(baseEnd).coerceAtLeast(start + 1L)
@@ -123,7 +114,8 @@ class ReelEditorViewModel : ViewModel() {
     private fun removeTrack(trackId: String) {
         _uiState.update { state ->
             val timeline = ReelTimelineOperations.removeTrack(state.project.timeline, trackId)
-            state.copy(project = state.project.copy(durationMs = timeline.tracks.flatMap { it.layers }.maxOfOrNull { it.endTimeMs } ?: 0L, timeline = timeline.withDuration(timeline.durationMs)))
+            val duration = timeline.tracks.flatMap { it.layers }.maxOfOrNull { it.endTimeMs } ?: 0L
+            state.copy(project = state.project.copy(durationMs = duration, timeline = timeline.withDuration(duration)))
         }
     }
 
