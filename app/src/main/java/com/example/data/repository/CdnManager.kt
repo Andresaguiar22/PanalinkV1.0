@@ -174,19 +174,12 @@ object CdnManager {
                                         val reachable = isCdnReachable(cdnUrl)
                                         if (reachable) {
                                             Log.i(TAG, "🟢 URL del CDN verificada exitosamente: '$cdnUrl'")
-                                            cachedCdnUrl = cdnUrl
-                                            saveToPrefs(cdnUrl)
-                                            return@withLock cdnUrl
                                         } else {
-                                            Log.w(TAG, "CDN_UNREACHABLE: URL '$cdnUrl' configurada en Supabase no respondió a health check")
-                                            if (!cachedCdnUrl.isNullOrEmpty()) {
-                                                Log.i(TAG, "🟢 Conservando URL anterior funcional: '$cachedCdnUrl'")
-                                                return@withLock cachedCdnUrl!!
-                                            } else {
-                                                Log.w(TAG, "No hay URL anterior funcional. Devolviendo '$cdnUrl' como último recurso sin guardar.")
-                                                return@withLock cdnUrl
-                                            }
+                                            Log.w(TAG, "⚠️ URL del CDN '$cdnUrl' configurada en Supabase no respondió a health check local, pero se asume activa de todos modos para evitar desconexiones.")
                                         }
+                                        cachedCdnUrl = cdnUrl
+                                        saveToPrefs(cdnUrl)
+                                        return@withLock cdnUrl
                                     }
                                 } else {
                                     Log.e(TAG, "No se encontró ningún registro en global_server_config para id=1")
