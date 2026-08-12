@@ -55,19 +55,14 @@ fun CanvasEditorEngine(
     var hudText by remember { mutableStateOf<String?>(null) }
 
     Box(modifier = modifier.fillMaxSize()) {
-        // 1. Base Content (Video / Image preview)
         backgroundContent()
-
-        // 2. Active Filter Overlay
         FilterRenderer(filterName = activeFilterName)
 
-        // 3. Render Drawings (Filter out hidden layers or outside time window)
         val visibleDrawings = project.layers
             .filterIsInstance<CreativeLayer.Drawing>()
             .filter { it.isVisible && currentVideoTimeMs >= it.startOffsetMs && currentVideoTimeMs <= (it.startOffsetMs + it.durationMs) }
         DrawingRenderer(drawings = visibleDrawings)
 
-        // 4. Interactive Drawing Canvas (When in drawing mode)
         if (isDrawingMode) {
             Canvas(
                 modifier = Modifier
@@ -133,7 +128,6 @@ fun CanvasEditorEngine(
             }
         }
 
-        // Helper function for magnetic snapping
         fun applyMagneticSnap(
             rawXFraction: Float,
             rawYFraction: Float,
@@ -145,7 +139,6 @@ fun CanvasEditorEngine(
             var vSnap = false
             var hSnap = false
 
-            // Snap to Center X = 0.5f
             if (abs(rawXFraction - 0.5f) < 0.04f) {
                 snapX = 0.5f
                 vSnap = true
@@ -157,7 +150,6 @@ fun CanvasEditorEngine(
                 vSnap = true
             }
 
-            // Snap to Center Y = 0.5f
             if (abs(rawYFraction - 0.5f) < 0.04f) {
                 snapY = 0.5f
                 hSnap = true
@@ -185,7 +177,6 @@ fun CanvasEditorEngine(
             return Pair(snapX, snapY)
         }
 
-        // Render Layers
         project.layers.forEach { layer ->
             if (!layer.isVisible) return@forEach
             if (currentVideoTimeMs < layer.startOffsetMs || currentVideoTimeMs > (layer.startOffsetMs + layer.durationMs)) return@forEach
@@ -231,6 +222,28 @@ fun CanvasEditorEngine(
                         onLongPress = { onLayerLongPress(layer) }
                     )
                 }
+                is CreativeLayer.Image -> {
+                    ImageLayerRenderer(
+                        layer = layer,
+                        isSelected = isSelected,
+                        onLayerTransformed = { xFrac, yFrac, scale, rotation ->
+                            if (layer.isLocked) return@ImageLayerRenderer
+                            val (snappedX, snappedY) = applyMagneticSnap(xFrac, yFrac, scale, rotation)
+                            val updatedLayers = project.layers.map {
+                                if (it.id == layer.id) {
+                                    layer.copy(
+                                        xFraction = snappedX,
+                                        yFraction = snappedY,
+                                        scale = scale,
+                                        rotation = rotation
+                                    )
+                                } else it
+                            }
+                            onProjectUpdated(project.copy(layers = updatedLayers))
+                        },
+                        onClick = { onLayerSelected(layer.id) }
+                    )
+                }
                 is CreativeLayer.Interactive -> {
                     InteractiveLayerRenderer(
                         layer = layer,
@@ -254,7 +267,6 @@ fun CanvasEditorEngine(
             }
         }
 
-        // 6. SNAP GUIDES OVERLAY (Vertical and Horizontal Alignment Lines)
         if (showVerticalSnapGuide || showHorizontalSnapGuide) {
             Canvas(modifier = Modifier.fillMaxSize()) {
                 if (showVerticalSnapGuide) {
@@ -276,7 +288,6 @@ fun CanvasEditorEngine(
             }
         }
 
-        // 7. SMART RULES HUD (Real-time X, Y, Scale, Rotation display)
         if (hudText != null) {
             Box(
                 modifier = Modifier
@@ -296,4 +307,3 @@ fun CanvasEditorEngine(
         }
     }
 }
-
