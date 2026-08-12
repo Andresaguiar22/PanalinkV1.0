@@ -20,6 +20,17 @@ sealed interface ReelEditorEvent {
     data class SelectLayer(val layerId: String?) : ReelEditorEvent
     data class AddTrack(val type: ReelTrackType, val name: String) : ReelEditorEvent
     data class AddTextLayer(val text: String = "Escribe aquí") : ReelEditorEvent
+    data class UpdateTextStyle(
+        val layerId: String,
+        val fontSizeSp: Float? = null,
+        val colorArgb: Int? = null,
+        val backgroundColorArgb: Int? = null
+    ) : ReelEditorEvent
+    data class TransformLayer(
+        val layerId: String,
+        val scale: Float? = null,
+        val rotationDegrees: Float? = null
+    ) : ReelEditorEvent
     data class AddStickerLayer(val stickerUri: String) : ReelEditorEvent
     data class RemoveTrack(val trackId: String) : ReelEditorEvent
     data class AddLayer(val trackId: String, val layer: ReelLayer) : ReelEditorEvent
