@@ -14,12 +14,7 @@ data class ReelEditorUiState(
 )
 
 sealed interface ReelEditorEvent {
-    data class MediaSelected(
-        val uri: String,
-        val mimeType: String? = null,
-        val durationMs: Long = 0L
-    ) : ReelEditorEvent
-
+    data class MediaSelected(val uri: String, val mimeType: String? = null, val durationMs: Long = 0L) : ReelEditorEvent
     data class Seek(val timeMs: Long) : ReelEditorEvent
     data class ZoomChanged(val zoom: Float) : ReelEditorEvent
     data class SelectLayer(val layerId: String?) : ReelEditorEvent
@@ -28,5 +23,8 @@ sealed interface ReelEditorEvent {
     data class AddLayer(val trackId: String, val layer: ReelLayer) : ReelEditorEvent
     data class UpdateLayer(val trackId: String, val layer: ReelLayer) : ReelEditorEvent
     data class RemoveLayer(val trackId: String, val layerId: String) : ReelEditorEvent
+    data class SplitLayer(val trackId: String, val layerId: String, val atMs: Long) : ReelEditorEvent
+    data class TrimLayer(val trackId: String, val layerId: String, val startMs: Long, val endMs: Long) : ReelEditorEvent
+    data class ReorderLayer(val trackId: String, val layerId: String, val targetIndex: Int) : ReelEditorEvent
     data object ClearError : ReelEditorEvent
 }
