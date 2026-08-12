@@ -4719,6 +4719,7 @@ fun InicioTabContent(
                         FeedPostCard(
                             post = post,
                             onLikeClick = { feedViewModel.toggleLike(post) },
+                            onShareClick = { feedViewModel.sharePost(post) },
                             onCommentClick = { selectedPostForComments = post },
                             onProfileClick = { /* Profile click */ },
                             onDeleteClick = { postToDeleteId = post.id },

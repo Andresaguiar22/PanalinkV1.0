@@ -20,6 +20,7 @@ interface FeedRepository {
     suspend fun getFeed(limit: Int = 20, lastCreatedAt: String? = null): Result<Unit>
     suspend fun createPost(post: PostDto): Result<PostDto>
     suspend fun toggleLike(postId: String, userId: String, isLiked: Boolean): Result<Unit>
+    suspend fun sharePost(postId: String, userId: String): Result<Unit>
     suspend fun addComment(postId: String, userId: String, content: String): Result<PostCommentDto>
     suspend fun getCommentsForPost(postId: String): Result<Unit>
     fun getCommentsFlow(postId: String): Flow<List<PostCommentDto>>
@@ -253,6 +254,34 @@ class FeedRepositoryImpl : FeedRepository {
         // 3. Enqueue Background Sync
         com.example.worker.SocialSyncWorker.enqueue(com.example.PanaApplication.instance)
 
+        Result.success(Unit)
+    }
+
+    override suspend fun sharePost(postId: String, userId: String): Result<Unit> = withContext(Dispatchers.IO) {
+        val database = com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance)
+        val postDao = database.postDao()
+        val pendingDao = database.pendingSocialActionDao()
+        val existing = postDao.getPostById(postId)
+        
+        // 1. Update Room immediately
+        if (existing != null) {
+            postDao.upsert(existing.copy(shareCount = existing.shareCount + 1))
+        }
+
+        // 2. Queue the action locally
+        val action = com.example.data.database.PendingSocialActionEntity(
+            localActionId = java.util.UUID.randomUUID().toString(),
+            userId = userId,
+            targetId = postId,
+            actionType = "SHARE",
+            payload = null,
+            isReel = false
+        )
+        pendingDao.insertAction(action)
+
+        // 3. Enqueue Background Sync
+        com.example.worker.SocialSyncWorker.enqueue(com.example.PanaApplication.instance)
+        
         Result.success(Unit)
     }
 

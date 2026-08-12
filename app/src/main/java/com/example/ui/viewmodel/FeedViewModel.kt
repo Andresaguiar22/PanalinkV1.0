@@ -178,6 +178,15 @@ class FeedViewModel(
         }
     }
 
+
+    fun sharePost(post: PostDto) {
+        val currentUserId = com.example.data.supabase.SupabaseClient.currentUser?.id ?: return
+        
+        viewModelScope.launch(errorHandler) {
+            feedRepository.sharePost(post.id!!, currentUserId)
+        }
+    }
+
     fun createPost(content: String, type: String = "TEXT", privacy: String = "PUBLIC", mediaUris: List<String> = emptyList()) {
         val currentUserId = SupabaseClient.currentUser?.id ?: return
         

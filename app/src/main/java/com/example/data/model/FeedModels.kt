@@ -16,6 +16,7 @@ data class PostDto(
     @Json(name = "privacy") val privacy: String? = "PUBLIC",
     @Json(name = "likes_count") val likesCount: Int = 0,
     @Json(name = "comments_count") val commentsCount: Int = 0,
+    @Json(name = "shares_count") val sharesCount: Int = 0,
     @Json(name = "created_at") val createdAt: String? = null,
     @Json(name = "profiles") val profile: Profile? = null,
     @Json(name = "preview_metadata") val previewMetadata: Map<String, String>? = null, // JSON Object or Map
@@ -51,3 +52,11 @@ data class PostCommentDto(
     val mediaId: String?
         get() = customMediaId ?: mediaUrl?.let { "media_${kotlin.math.abs(it.hashCode())}" }
 }
+
+
+@Immutable
+@JsonClass(generateAdapter = true)
+data class PostShareDto(
+    @Json(name = "post_id") val postId: String,
+    @Json(name = "user_id") val userId: String
+)

@@ -73,7 +73,8 @@ fun FeedPostCard(
     onDeleteClick: () -> Unit = {},
     onEditClick: (String) -> Unit = {},
     onMediaClick: (List<String>, Int, String?) -> Unit = { _, _, _ -> },
-    onAudioPlaylistClick: (PostDto) -> Unit = {}
+    onAudioPlaylistClick: (PostDto) -> Unit = {},
+    onShareClick: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val currentUserId = remember {
@@ -413,7 +414,15 @@ fun FeedPostCard(
                 
                 IconButton(
                     onClick = { 
-                        Toast.makeText(context, "Compartiendo...", Toast.LENGTH_SHORT).show()
+                        onShareClick()
+                        
+                        // Opcional: Compartir nativo (Android Sharesheet)
+                        val shareIntent = android.content.Intent().apply {
+                            action = android.content.Intent.ACTION_SEND
+                            putExtra(android.content.Intent.EXTRA_TEXT, "¡Mira esta publicación en PanaLink!\n${post.content ?: ""}")
+                            type = "text/plain"
+                        }
+                        context.startActivity(android.content.Intent.createChooser(shareIntent, "Compartir publicación"))
                     }
                 ) {
                     Icon(
@@ -456,12 +465,15 @@ fun FeedPostCard(
             // Counters
             val likesText = if (post.likesCount == 1) "1 Me gusta" else "${post.likesCount} Me gusta"
             val commentsText = if (post.commentsCount == 1) "1 comentario" else "${post.commentsCount} comentarios"
+            val sharesText = if (post.sharesCount == 1) "1 vez compartido" else "${post.sharesCount} veces compartido"
             
-            if (post.likesCount > 0 || post.commentsCount > 0) {
+            if (post.likesCount > 0 || post.commentsCount > 0 || post.sharesCount > 0) {
                 val countersText = buildString {
-                    if (post.likesCount > 0) append(likesText)
-                    if (post.likesCount > 0 && post.commentsCount > 0) append(" · ")
-                    if (post.commentsCount > 0) append(commentsText)
+                    val parts = mutableListOf<String>()
+                    if (post.likesCount > 0) parts.add(likesText)
+                    if (post.commentsCount > 0) parts.add(commentsText)
+                    if (post.sharesCount > 0) parts.add(sharesText)
+                    append(parts.joinToString(" · "))
                 }
                 
                 Text(

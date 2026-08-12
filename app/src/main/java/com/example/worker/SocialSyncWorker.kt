@@ -102,6 +102,13 @@ class SocialSyncWorker(
                             }
                         }
                     }
+                    "SHARE" -> {
+                        val shareDto = com.example.data.model.PostShareDto(postId = action.targetId, userId = action.userId)
+                        val response = service.addShare(apiKey, bearer, shareDto)
+                        if (response.isSuccessful || response.code() == 409) {
+                            success = true
+                        }
+                    }
                     "UNLIKE" -> {
                         if (action.isReel) {
                             val params = mapOf<String, Any>("p_reel_id" to action.targetId, "p_liked" to false)

@@ -893,6 +893,13 @@ interface SupabaseApiService {
         @Body like: com.example.data.model.PostLikeDto
     ): Response<ResponseBody>
 
+    @POST("rest/v1/post_shares")
+    suspend fun addShare(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") authorization: String,
+        @Body share: com.example.data.model.PostShareDto
+    ): retrofit2.Response<okhttp3.ResponseBody>
+
     @DELETE("rest/v1/post_likes")
     suspend fun removeLike(
         @Header("apikey") apiKey: String,

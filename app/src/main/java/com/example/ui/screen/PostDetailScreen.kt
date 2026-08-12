@@ -223,6 +223,7 @@ fun PostDetailScreen(
                         com.example.ui.components.FeedPostCard(
                             post = post,
                             onLikeClick = { viewModel.toggleLike(post) },
+                            onShareClick = { viewModel.sharePost(post) },
                             onCommentClick = {
                                 // Already on detail screen
                             },

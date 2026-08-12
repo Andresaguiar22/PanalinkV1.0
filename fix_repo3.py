@@ -1,11 +1,12 @@
-import re
+import sys
 
-with open("app/src/main/java/com/example/data/repository/MessagesRepository.kt", "r") as f:
+with open('app/src/main/java/com/example/data/repository/FeedRepositoryImpl.kt', 'r') as f:
     content = f.read()
 
-# Fix flow maps
-content = content.replace("kotlinx.coroutines.flow.map {", "map {")
-content = content.replace("kotlinx.coroutines.flow.map {", "map {")
+bad_str = "override suspend fun toggleLike(postId: String, userId: String, isLiked: Boolean): Result<Unit>\n    suspend fun sharePost(postId: String, userId: String): Result<Unit> = withContext(Dispatchers.IO) {"
+good_str = "override suspend fun toggleLike(postId: String, userId: String, isLiked: Boolean): Result<Unit> = withContext(Dispatchers.IO) {"
 
-with open("app/src/main/java/com/example/data/repository/MessagesRepository.kt", "w") as f:
+content = content.replace(bad_str, good_str)
+
+with open('app/src/main/java/com/example/data/repository/FeedRepositoryImpl.kt', 'w') as f:
     f.write(content)
