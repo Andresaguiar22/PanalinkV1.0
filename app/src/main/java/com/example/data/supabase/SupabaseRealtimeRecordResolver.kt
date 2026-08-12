@@ -46,12 +46,19 @@ object SupabaseRealtimeRecordResolver {
 
         if (statusId.isBlank()) return null
 
-        // Stable UUID transport IDs are now present on likes/favorites. For older
-        // rows or comments/shares, fall back to a deterministic composite key.
+        // Prefer a stable database transport ID. For legacy rows without an id,
+        // derive the same key from immutable row fields so redelivered Realtime
+        // frames are idempotent. created_at distinguishes repeated shares/comments
+        // by the same user on the same status while remaining stable on replay.
         val recordId = record.optString("id").ifBlank {
-            val userId = record.optString("user_id")
+            val userId = record.optString("user_id").ifBlank {
+                record.optString("author_id")
+            }
+            val createdAt = record.optString("created_at")
+            val content = record.optString("body")
             val interactionKey = if (isReel) "reel" else "story"
-            "$interactionKey:$statusId:$userId"
+            listOf(interactionKey, statusId, userId, createdAt, content)
+                .joinToString(":")
         }
 
         return ResolvedRecord(record, recordId, statusId)

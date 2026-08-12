@@ -30,10 +30,11 @@ class SupabaseRealtimeRecordResolverTest {
     }
 
     @Test
-    fun deleteWithoutTransportIdFallsBackToDeterministicCompositeKey() {
+    fun deleteWithoutTransportIdUsesStableRowFields() {
         val oldRecord = JSONObject().apply {
             put("story_id", "story-9")
             put("user_id", "user-3")
+            put("created_at", "2026-08-12T05:00:00Z")
         }
         val data = JSONObject().apply {
             put("old_record", oldRecord)
@@ -48,6 +49,33 @@ class SupabaseRealtimeRecordResolverTest {
 
         assertNotNull(resolved)
         assertEquals("story-9", resolved!!.statusId)
-        assertEquals("story:story-9:user-3", resolved.recordId)
+        assertEquals("story:story-9:user-3:2026-08-12T05:00:00Z:", resolved.recordId)
+    }
+
+    @Test
+    fun replayedShareWithoutTransportIdGetsSameId() {
+        val record = JSONObject().apply {
+            put("reel_id", "reel-1")
+            put("user_id", "user-2")
+            put("created_at", "2026-08-12T05:10:00Z")
+        }
+        val data = JSONObject().apply { put("record", record) }
+
+        val first = SupabaseRealtimeRecordResolver.resolve(
+            payload = JSONObject(),
+            data = data,
+            eventType = "INSERT",
+            isReel = true
+        )
+        val replay = SupabaseRealtimeRecordResolver.resolve(
+            payload = JSONObject(),
+            data = data,
+            eventType = "INSERT",
+            isReel = true
+        )
+
+        assertNotNull(first)
+        assertNotNull(replay)
+        assertEquals(first!!.recordId, replay!!.recordId)
     }
 }
