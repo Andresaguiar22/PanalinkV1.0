@@ -24,6 +24,10 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Supabase is the source of truth, but a candidate is promoted only after a
  * successful health check. A failed refresh never destroys the last known-good
  * CDN, which is essential because the CDN endpoint may change dynamically.
+ *
+ * URL classification is based on origin/host, never on media directory names.
+ * This prevents a new server path such as /media/reels/ from bypassing the
+ * resolver simply because it does not contain /video/, /images/, etc.
  */
 object CdnManager {
     private const val TAG = "CdnManager"
@@ -66,8 +70,6 @@ object CdnManager {
             Log.e(TAG, "Error restoring CDN URL", e)
         }
 
-        // Do not block application startup. The cached CDN can serve immediately
-        // while this background refresh reconciles it with Supabase.
         if (isStartupRefreshStarted.compareAndSet(false, true)) {
             scope.launch {
                 delay(500)
@@ -272,33 +274,45 @@ object CdnManager {
         return resolveMediaUrlSync(absolute).ifEmpty { null }
     }
 
+    private fun hostOf(rawUrl: String): String {
+        return runCatching { URI(rawUrl).host.orEmpty().lowercase() }.getOrDefault("")
+    }
+
+    private fun supabaseHost(): String {
+        return hostOf(SupabaseClient.supabaseUrl)
+    }
+
+    /**
+     * Explicit origin classification. Directory names are deliberately ignored.
+     * The only dynamic legacy patterns are infrastructure domains, not media paths.
+     */
+    private fun isKnownCdnHost(host: String): Boolean {
+        if (host.isBlank()) return false
+
+        val activeHost = cachedCdnUrl?.let(::hostOf).orEmpty()
+        if (activeHost.isNotBlank() && host == activeHost) return true
+
+        return host == "localhost" ||
+            host == "10.0.2.2" ||
+            host == "127.0.0.1" ||
+            host == "::1" ||
+            host.endsWith(".bore.pub") ||
+            host == "bore.pub" ||
+            host.endsWith(".trycloudflare.com")
+    }
+
+    /**
+     * True only when the URL originates from the configured CDN/infrastructure.
+     * Supabase Storage and arbitrary external hosts are never rewritten here.
+     */
     fun isCdnRelated(originalUrl: String): Boolean {
         if (originalUrl.isBlank()) return false
 
-        val lower = originalUrl.lowercase()
-        val supabaseHost = try { URI(SupabaseClient.supabaseUrl).host.orEmpty() } catch (_: Exception) { "" }
-        val originalHost = try { URI(originalUrl).host.orEmpty() } catch (_: Exception) { "" }
+        val host = hostOf(originalUrl)
+        if (host.isBlank()) return false
+        if (host == supabaseHost()) return false
 
-        if (supabaseHost.isNotBlank() && originalHost.equals(supabaseHost, true)) return false
-
-        // If the URL points to the currently cached CDN host, it is always CDN-related,
-        // even if the dynamic tunnel domain is not one of the known patterns below.
-        val cachedHost = cachedCdnUrl?.let {
-            runCatching { URI(it).host.orEmpty() }.getOrNull().orEmpty()
-        }
-        if (cachedHost.isNotBlank() && originalHost.equals(cachedHost, true)) return true
-
-        return lower.contains("bore.pub") ||
-            lower.contains("trycloudflare") ||
-            lower.contains("10.0.2.2") ||
-            lower.contains("localhost") ||
-            lower.contains("/video/") ||
-            lower.contains("/files/") ||
-            lower.contains("/documents/") ||
-            lower.contains("/uploads/") ||
-            lower.contains("/images/") ||
-            lower.contains("/avatars/") ||
-            lower.contains("/audios/")
+        return isKnownCdnHost(host)
     }
 
     private fun extractMediaPath(originalUrl: String): String {
