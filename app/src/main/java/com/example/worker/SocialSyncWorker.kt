@@ -4,8 +4,6 @@ import android.content.Context
 import android.util.Log
 import androidx.work.*
 import com.example.data.database.PanalinkDatabase
-import com.example.data.database.CommentEntity
-import com.example.data.database.PendingSocialActionEntity
 import com.example.data.model.PostCommentDto
 import com.example.data.model.PostLikeDto
 import com.example.data.supabase.SessionManager
@@ -20,7 +18,6 @@ class SocialSyncWorker(
     private val db = PanalinkDatabase.getDatabase(context)
     private val pendingDao = db.pendingSocialActionDao()
     private val commentDao = db.commentDao()
-    private val postDao = db.postDao()
     private val statesDao = db.statesDao()
 
     override suspend fun doWork(): Result {
@@ -28,8 +25,6 @@ class SocialSyncWorker(
 
         if (!SupabaseClient.isConfigured) return Result.success()
 
-        // Pre-flight de sesión: evita enviar acciones con un JWT caducado.
-        // SessionManager usa Mutex/single-flight para impedir refreshes concurrentes.
         val sessionValid = SessionManager.validateAndRefreshSessionIfNeeded()
         if (!sessionValid) {
             Log.w("SocialSyncWorker", "No valid session available; pending actions remain queued.")
@@ -50,7 +45,6 @@ class SocialSyncWorker(
                 val token = SupabaseClient.currentToken ?: throw Exception("Auth token not available")
                 val apiKey = SupabaseClient.supabaseAnonKey
                 val bearer = "Bearer $token"
-
                 var success = false
 
                 when (action.actionType) {
@@ -162,13 +156,16 @@ class SocialSyncWorker(
                         }
                     }
                     "DELETE_COMMENT" -> {
-                        if (action.isReel) {
-                            val response = service.deleteComment("reel_comments", apiKey, bearer, "eq.${action.targetId}")
-                            if (response.isSuccessful || response.code() == 404) {
-                                success = true
-                                commentDao.deleteById(action.targetId)
-                            }
-                        } else {
+                        // Resolve the target domain before acknowledging the local delete.
+                        // isReel is true for both Reels and Stories in the current queue contract,
+                        // so a local StateEntity is the authoritative discriminator for Stories.
+                        val table = when {
+                            action.isReel && statesDao.getStateById(action.targetId)?.type == "reel" -> "reel_comments"
+                            action.isReel -> "story_comments"
+                            else -> "post_comments"
+                        }
+                        val response = service.deleteComment(table, apiKey, bearer, "eq.${action.targetId}")
+                        if (response.isSuccessful || response.code() == 404) {
                             success = true
                             commentDao.deleteById(action.targetId)
                         }
@@ -179,7 +176,9 @@ class SocialSyncWorker(
                     }
                     "UPDATE_POST" -> {
                         val response = service.updatePost(apiKey, bearer, "eq.${action.targetId}", mapOf("content" to (action.payload ?: "")))
-                        success = response.isSuccessful || response.code() == 404
+                        // A missing post is not a successful update. Keep the action queued so
+                        // reconciliation can determine whether the target disappeared remotely.
+                        success = response.isSuccessful
                     }
                 }
 
@@ -211,8 +210,6 @@ class SocialSyncWorker(
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 10, TimeUnit.SECONDS)
                 .build()
 
-            // KEEP evita una cadena de workers redundantes cuando muchas acciones
-            // sociales se generan rápidamente. El worker existente consume toda la cola.
             WorkManager.getInstance(context).enqueueUniqueWork(
                 "social_sync_work",
                 ExistingWorkPolicy.KEEP,
