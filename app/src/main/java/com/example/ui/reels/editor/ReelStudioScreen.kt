@@ -30,7 +30,7 @@ fun ReelStudioScreen(modifier: Modifier = Modifier, viewModel: ReelEditorViewMod
     val state by viewModel.uiState.collectAsState()
     val project = state.project
     val selected = project.selectedLayerId?.let { id -> project.timeline.tracks.flatMap { track -> track.layers.map { track to it } }.firstOrNull { (_, layer) -> layer.id == id } }
-    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? -> uri?.let { viewModel.onEvent(ReelEditorEvent.AddImageLayer(it.toString())) } }
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? -> uri?.let { viewModel.onEvent(ReelEditorEvent.AddStickerLayer(it.toString())) } }
     Surface(modifier = modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
             StudioTopBar(project.durationMs) { viewModel.onEvent(ReelEditorEvent.AddTrack(it, trackName(it))) }
