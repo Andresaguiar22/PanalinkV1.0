@@ -18,17 +18,16 @@ interface PendingSocialActionDao {
 
     /**
      * Atomically replaces the desired state for one logical interaction family.
-     *
      * Declarative actions (LIKE/FAVORITE) must use this method instead of
      * insertAction(), so rapid toggles collapse into a single pending row while
-     * preserving the existing localActionId.
+     * preserving the existing localActionId and advancing its local revision.
      */
     @Transaction
     suspend fun replaceDesiredState(action: PendingSocialActionEntity) {
-        require(action.actionFamily != null) {
+        val family = requireNotNull(action.actionFamily) {
             "replaceDesiredState requires a non-null actionFamily"
         }
-        require(action.desiredState != null) {
+        val desiredState = requireNotNull(action.desiredState) {
             "replaceDesiredState requires a non-null desiredState"
         }
 
@@ -36,13 +35,19 @@ interface PendingSocialActionDao {
             userId = action.userId,
             targetId = action.targetId,
             isReel = action.isReel,
-            actionFamily = action.actionFamily,
-            desiredState = action.desiredState,
+            actionFamily = family,
+            desiredState = desiredState,
             createdAt = action.createdAt
         )
 
         if (updatedRows == 0) {
-            insertAction(action.copy(status = "pending", retryCount = 0))
+            insertAction(
+                action.copy(
+                    status = "pending",
+                    retryCount = 0,
+                    revision = 1L
+                )
+            )
         }
     }
 
@@ -51,7 +56,8 @@ interface PendingSocialActionDao {
         SET desiredState = :desiredState,
             createdAt = :createdAt,
             retryCount = 0,
-            status = 'pending'
+            status = 'pending',
+            revision = revision + 1
         WHERE userId = :userId
           AND targetId = :targetId
           AND isReel = :isReel
@@ -64,6 +70,25 @@ interface PendingSocialActionDao {
         actionFamily: String,
         desiredState: Boolean,
         createdAt: Long
+    ): Int
+
+    /**
+     * Deletes a declarative action only when the Worker is still holding the
+     * exact version it originally read. A newer intent, including one that
+     * returns to the same desiredState, therefore survives the delete.
+     */
+    @Query("""
+        DELETE FROM pending_social_actions
+        WHERE localActionId = :id
+          AND actionFamily = :family
+          AND desiredState = :desiredState
+          AND revision = :revision
+    """)
+    suspend fun deleteIfStillCurrent(
+        id: String,
+        family: String,
+        desiredState: Boolean,
+        revision: Long
     ): Int
 
     @Query("UPDATE pending_social_actions SET retryCount = retryCount + 1, status = :status WHERE localActionId = :id")
