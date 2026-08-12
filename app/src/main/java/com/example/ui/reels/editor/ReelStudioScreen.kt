@@ -27,13 +27,22 @@ fun ReelStudioScreen(modifier: Modifier = Modifier, viewModel: ReelEditorViewMod
     val state by viewModel.uiState.collectAsState()
     val project = state.project
     val selected = project.selectedLayerId?.let { id ->
-        project.timeline.tracks.flatMap { track -> track.layers.map { track to it } }
-            .firstOrNull { (_, layer) -> layer.id == id }
+        project.timeline.tracks.flatMap { track -> track.layers.map { track to it } }.firstOrNull { (_, layer) -> layer.id == id }
     }
     Surface(modifier = modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
             StudioTopBar(project.durationMs) { viewModel.onEvent(ReelEditorEvent.AddTrack(it, trackName(it))) }
-            PreviewPanel(Modifier.fillMaxWidth().weight(1f), project)
+            PreviewPanel(
+                Modifier.fillMaxWidth().weight(1f), project,
+                onSelectLayer = { viewModel.onEvent(ReelEditorEvent.SelectLayer(it)) },
+                onMoveLayer = { track, layer, dx, dy ->
+                    val updated = layer.copy(
+                        x = (layer.x + dx).coerceIn(0f, 1f),
+                        y = (layer.y + dy).coerceIn(0f, 1f)
+                    )
+                    viewModel.onEvent(ReelEditorEvent.UpdateLayer(track.id, updated))
+                }
+            )
             TimelinePanel(
                 project.timeline.tracks, project.durationMs, project.timeline.currentTimeMs, project.selectedLayerId,
                 onSeek = { viewModel.onEvent(ReelEditorEvent.Seek(it)) },
@@ -63,7 +72,10 @@ fun ReelStudioScreen(modifier: Modifier = Modifier, viewModel: ReelEditorViewMod
                     onMoveRight = { val i = track.layers.indexOfFirst { it.id == layer.id }; if (i >= 0 && i < track.layers.lastIndex) viewModel.onEvent(ReelEditorEvent.ReorderLayer(track.id, layer.id, i + 1)) },
                     onDelete = { viewModel.onEvent(ReelEditorEvent.RemoveLayer(track.id, layer.id)) })
             }
-            StudioToolbar { viewModel.onEvent(ReelEditorEvent.AddTrack(it, trackName(it))) }
+            StudioToolbar(
+                onAddTrack = { type -> viewModel.onEvent(ReelEditorEvent.AddTrack(type, trackName(type))) },
+                onAddText = { viewModel.onEvent(ReelEditorEvent.AddTextLayer()) }
+            )
         }
     }
 }
@@ -76,10 +88,17 @@ fun ReelStudioScreen(modifier: Modifier = Modifier, viewModel: ReelEditorViewMod
     }
 }
 
-@Composable private fun PreviewPanel(modifier: Modifier, project: ReelProject) {
+@Composable private fun PreviewPanel(
+    modifier: Modifier,
+    project: ReelProject,
+    onSelectLayer: (String) -> Unit,
+    onMoveLayer: (ReelTrack, ReelLayer, Float, Float) -> Unit
+) {
     Box(modifier.padding(horizontal = 12.dp).background(Color.Black), contentAlignment = Alignment.Center) {
-        if (project.timeline.tracks.any { it.layers.isNotEmpty() }) ReelTimelinePreviewSurface(project, Modifier.fillMaxSize())
-        else Text("Agrega un vídeo o una foto para comenzar", color = Color.White, style = MaterialTheme.typography.titleMedium)
+        if (project.timeline.tracks.any { it.layers.isNotEmpty() }) {
+            ReelTimelinePreviewSurface(project, Modifier.fillMaxSize())
+            ReelCanvasLayers(project, onSelectLayer, onMoveLayer)
+        } else Text("Agrega un vídeo o una foto para comenzar", color = Color.White, style = MaterialTheme.typography.titleMedium)
     }
 }
 
@@ -111,9 +130,7 @@ fun ReelStudioScreen(modifier: Modifier = Modifier, viewModel: ReelEditorViewMod
     Box(Modifier.width(timelineWidth).height(42.dp).padding(vertical = 2.dp).background(MaterialTheme.colorScheme.surfaceVariant).clickable { onSeek(durationMs / 2L) }) {
         track.layers.forEach { layer ->
             TimelineLayerBlock(layer, durationMs, timelineWidth, layer.id == selectedLayerId,
-                onSelect = { onSelectLayer(layer.id) },
-                onMove = { onMoveLayer(track.id, layer.id, it) },
-                onTrim = { start, end -> onTrimLayer(track.id, layer.id, start, end) })
+                onSelect = { onSelectLayer(layer.id) }, onMove = { onMoveLayer(track.id, layer.id, it) }, onTrim = { start, end -> onTrimLayer(track.id, layer.id, start, end) })
         }
     }
 }
@@ -127,33 +144,20 @@ fun ReelStudioScreen(modifier: Modifier = Modifier, viewModel: ReelEditorViewMod
     val pxPerMs = timelineWidthPx / durationMs.toFloat()
     val startFraction = (layer.startTimeMs.toFloat() / durationMs).coerceIn(0f, 1f)
     val widthFraction = ((layer.endTimeMs - layer.startTimeMs).toFloat() / durationMs).coerceIn(0.02f, (1f - startFraction).coerceAtLeast(0.02f))
-    Box(
-        Modifier.offset(x = (timelineWidth.value * startFraction).dp).fillMaxWidth(widthFraction).height(38.dp).padding(2.dp)
-            .background(if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primaryContainer)
-            .pointerInput(layer.id, layer.startTimeMs, layer.endTimeMs) {
-                detectDragGestures(onDragStart = { onSelect() }) { change, dragAmount ->
-                    change.consume()
-                    onMove((dragAmount.x / pxPerMs).roundToLong())
-                }
-            }
-            .clickable(onClick = onSelect)
-    ) {
+    Box(Modifier.offset(x = (timelineWidth.value * startFraction).dp).fillMaxWidth(widthFraction).height(38.dp).padding(2.dp)
+        .background(if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primaryContainer)
+        .pointerInput(layer.id, layer.startTimeMs, layer.endTimeMs) { detectDragGestures(onDragStart = { onSelect() }) { change, dragAmount -> change.consume(); onMove((dragAmount.x / pxPerMs).roundToLong()) } }
+        .clickable(onClick = onSelect)) {
         Row(Modifier.fillMaxSize(), Alignment.CenterVertically) {
-            if (selected) TrimHandle { deltaPx ->
-                onTrim(layer.startTimeMs + (deltaPx / pxPerMs).roundToLong(), layer.endTimeMs)
-            }
+            if (selected) TrimHandle { deltaPx -> onTrim(layer.startTimeMs + (deltaPx / pxPerMs).roundToLong(), layer.endTimeMs) }
             Text(layer.type.name.lowercase().replaceFirstChar { it.uppercase() }, Modifier.weight(1f).padding(horizontal = 4.dp), style = MaterialTheme.typography.labelSmall)
-            if (selected) TrimHandle { deltaPx ->
-                onTrim(layer.startTimeMs, layer.endTimeMs + (deltaPx / pxPerMs).roundToLong())
-            }
+            if (selected) TrimHandle { deltaPx -> onTrim(layer.startTimeMs, layer.endTimeMs + (deltaPx / pxPerMs).roundToLong()) }
         }
     }
 }
 
 @Composable private fun TrimHandle(onDeltaPx: (Float) -> Unit) {
-    Box(Modifier.width(10.dp).fillMaxHeight().background(MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.35f)).pointerInput(Unit) {
-        detectDragGestures { change, dragAmount -> change.consume(); onDeltaPx(dragAmount.x) }
-    })
+    Box(Modifier.width(10.dp).fillMaxHeight().background(MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.35f)).pointerInput(Unit) { detectDragGestures { change, dragAmount -> change.consume(); onDeltaPx(dragAmount.x) } })
 }
 
 @Composable private fun SelectedLayerToolbar(layer: ReelLayer, track: ReelTrack, currentTimeMs: Long, onSplit: () -> Unit, onTrimStart: () -> Unit, onTrimEnd: () -> Unit, onMoveLeft: () -> Unit, onMoveRight: () -> Unit, onDelete: () -> Unit) {
@@ -170,10 +174,12 @@ fun ReelStudioScreen(modifier: Modifier = Modifier, viewModel: ReelEditorViewMod
     }
 }
 
-@Composable private fun StudioToolbar(onAddTrack: (ReelTrackType) -> Unit) {
-    val items = listOf(ReelTrackType.VIDEO to Pair(Icons.Default.Add, "Medios"), ReelTrackType.TEXT to Pair(Icons.Default.TextFields, "Texto"), ReelTrackType.STICKER to Pair(Icons.Default.EmojiEmotions, "Sticker"), ReelTrackType.AUDIO to Pair(Icons.Default.AudioFile, "Audio"), ReelTrackType.EFFECT to Pair(Icons.Default.FilterAlt, "Filtros"))
-    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp), Arrangement.SpaceEvenly) {
+@Composable private fun StudioToolbar(onAddTrack: (ReelTrackType) -> Unit, onAddText: () -> Unit) {
+    val items = listOf(ReelTrackType.VIDEO to Pair(Icons.Default.Add, "Medios"), ReelTrackType.AUDIO to Pair(Icons.Default.AudioFile, "Audio"), ReelTrackType.EFFECT to Pair(Icons.Default.FilterAlt, "Filtros"))
+    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp), Arrangement.SpaceEvenly, Alignment.CenterVertically) {
         items.forEach { (type, item) -> Column(horizontalAlignment = Alignment.CenterHorizontally) { IconButton(onClick = { onAddTrack(type) }) { Icon(item.first, item.second) }; Text(item.second, style = MaterialTheme.typography.labelSmall) } }
+        Column(horizontalAlignment = Alignment.CenterHorizontally) { IconButton(onClick = onAddText) { Icon(Icons.Default.TextFields, "Texto") }; Text("Texto", style = MaterialTheme.typography.labelSmall) }
+        Column(horizontalAlignment = Alignment.CenterHorizontally) { IconButton(onClick = { onAddTrack(ReelTrackType.STICKER) }) { Icon(Icons.Default.EmojiEmotions, "Sticker") }; Text("Sticker", style = MaterialTheme.typography.labelSmall) }
     }
 }
 
