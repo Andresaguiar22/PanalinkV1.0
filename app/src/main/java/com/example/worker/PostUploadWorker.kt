@@ -86,7 +86,7 @@ class PostUploadWorker(
                         val itemProgress = bytes.toFloat() / total.toFloat()
                         val totalProgress = (index + itemProgress) / totalItems
                         UploadRepository.setGlobalProgress(totalProgress)
-                        CoroutineScope(coroutineContext).launch {
+                        kotlinx.coroutines.runBlocking {
                             pendingPostDao.updateStatusAndProgress(pendingPostId, "uploading", totalProgress)
                         }
                     }

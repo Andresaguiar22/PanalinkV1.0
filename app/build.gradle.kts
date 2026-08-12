@@ -44,7 +44,8 @@ android {
             val keystoreFile = System.getenv("KEYSTORE_FILE")
             val keystorePassword = System.getenv("KEYSTORE_PASSWORD")
             val keyAliasStr = System.getenv("KEY_ALIAS")
-            val keyPasswordStr = System.getenv("KEY_PASSWORD") ?: keystorePassword
+            val keyPasswordEnv = System.getenv("KEY_PASSWORD")
+            val keyPasswordStr = if (!keyPasswordEnv.isNullOrEmpty()) keyPasswordEnv else keystorePassword
             
             // Check if we are in a release build context
             val isReleaseRequested = gradle.startParameter.taskNames.any { it.contains("Release", ignoreCase = true) }
