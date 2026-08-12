@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -39,7 +38,7 @@ fun ReelCanvasLayers(
     val visibleLayers = project.timeline.tracks.flatMap { track -> track.layers.map { track to it } }
         .filter { (_, layer) ->
             layer.visible && project.timeline.currentTimeMs in layer.startTimeMs..layer.endTimeMs &&
-                layer.type in setOf(ReelTrackType.TEXT, ReelTrackType.STICKER)
+                (layer.type == ReelTrackType.TEXT || layer.type == ReelTrackType.STICKER)
         }
         .sortedBy { (_, layer) -> layer.zIndex }
 
@@ -71,11 +70,6 @@ private fun CanvasLayerItem(
     onTransform: (Float, Float) -> Unit
 ) {
     val context = LocalContext.current
-    val label = when (val content = layer.content) {
-        is ReelLayerContent.Text -> content.value
-        is ReelLayerContent.Sticker -> null
-        else -> return
-    }
 
     Box(
         modifier = Modifier
@@ -96,32 +90,37 @@ private fun CanvasLayerItem(
                 rotationZ = layer.rotationDegrees
             }
     ) {
-        if (label != null) {
-            Text(
-                text = label,
+        when (val content = layer.content) {
+            is ReelLayerContent.Text -> Text(
+                text = content.value,
                 modifier = Modifier
                     .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else Color.Transparent)
                     .padding(horizontal = 10.dp, vertical = 6.dp),
                 color = Color.White,
                 style = MaterialTheme.typography.headlineSmall
             )
-        } else {
-            val bitmap by produceState<android.graphics.Bitmap?>(initialValue = null, key1 = layer.id, key2 = layer.content) {
-                val uri = (layer.content as? ReelLayerContent.Sticker)?.uri ?: return@produceState
-                value = withContext(Dispatchers.IO) {
-                    context.contentResolver.openInputStream(android.net.Uri.parse(uri))?.use(BitmapFactory::decodeStream)
-                }
-            }
-            if (bitmap != null) {
-                Image(
-                    bitmap = bitmap!!.asImageBitmap(),
-                    contentDescription = "Sticker",
-                    contentScale = ContentScale.Fit
-                )
-            }
+            is ReelLayerContent.Image -> LayerBitmap(context, content.uri, "Imagen")
+            is ReelLayerContent.Sticker -> LayerBitmap(context, content.uri, "Sticker")
+            else -> Unit
         }
-        if (selected) {
-            ReelTransformOverlay(visible = true, modifier = Modifier.matchParentSize())
+        if (selected) ReelTransformOverlay(visible = true, modifier = Modifier.matchParentSize())
+    }
+}
+
+@Composable
+private fun LayerBitmap(context: android.content.Context, uriString: String, description: String) {
+    val bitmap by produceState<android.graphics.Bitmap?>(initialValue = null, key1 = uriString) {
+        value = withContext(Dispatchers.IO) {
+            runCatching {
+                context.contentResolver.openInputStream(android.net.Uri.parse(uriString))?.use(BitmapFactory::decodeStream)
+            }.getOrNull()
         }
+    }
+    bitmap?.let {
+        Image(
+            bitmap = it.asImageBitmap(),
+            contentDescription = description,
+            contentScale = ContentScale.Fit
+        )
     }
 }
