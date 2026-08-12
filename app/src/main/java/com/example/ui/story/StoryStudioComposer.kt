@@ -1,16 +1,24 @@
 package com.example.ui.story
 
-/**
- * Small, explicit model used by the new Story Studio.
- * A story is one publication containing one or more slides and an optional soundtrack.
- */
+/** Content types supported by the Story Studio editor. */
+enum class StoryStudioKind {
+    PHOTO,
+    VIDEO,
+    TEXT
+}
+
 data class StoryStudioSlide(
     val id: String,
+    val kind: StoryStudioKind = StoryStudioKind.PHOTO,
     val uri: String? = null,
-    val isVideo: Boolean = false,
+    val isVideo: Boolean = kind == StoryStudioKind.VIDEO,
     val text: String = "",
     val backgroundHex: String = "#111318",
-    val durationMs: Long = if (isVideo) 0L else 5000L
+    val durationMs: Long = when (kind) {
+        StoryStudioKind.VIDEO -> 0L
+        StoryStudioKind.TEXT -> 5000L
+        StoryStudioKind.PHOTO -> 5000L
+    }
 )
 
 data class StoryStudioDraft(
