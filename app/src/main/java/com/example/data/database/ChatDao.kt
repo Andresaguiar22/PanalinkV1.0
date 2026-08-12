@@ -5,14 +5,60 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface ChatDao {
-    @Query("SELECT * FROM local_chats ORDER BY createdAt DESC")
+    /**
+     * Returns one local DM row per remote participant. If stale duplicate DM rows
+     * exist from an older sync, the newest row wins. Group/channel chats keep all
+     * rows because they intentionally do not have an otherUserId identity key.
+     */
+    @Query("""
+        SELECT c.*
+        FROM local_chats c
+        WHERE c.type != 'dm'
+           OR c.otherUserId IS NULL
+           OR NOT EXISTS (
+                SELECT 1
+                FROM local_chats newer
+                WHERE newer.type = 'dm'
+                  AND newer.otherUserId = c.otherUserId
+                  AND (
+                      COALESCE(newer.createdAt, '') > COALESCE(c.createdAt, '')
+                      OR (
+                          COALESCE(newer.createdAt, '') = COALESCE(c.createdAt, '')
+                          AND newer.id > c.id
+                      )
+                  )
+           )
+        ORDER BY c.createdAt DESC
+    """)
     fun getAllChatsFlow(): Flow<List<ChatEntity>>
 
-    @Query("SELECT * FROM local_chats ORDER BY createdAt DESC")
+    @Query("""
+        SELECT c.*
+        FROM local_chats c
+        WHERE c.type != 'dm'
+           OR c.otherUserId IS NULL
+           OR NOT EXISTS (
+                SELECT 1
+                FROM local_chats newer
+                WHERE newer.type = 'dm'
+                  AND newer.otherUserId = c.otherUserId
+                  AND (
+                      COALESCE(newer.createdAt, '') > COALESCE(c.createdAt, '')
+                      OR (
+                          COALESCE(newer.createdAt, '') = COALESCE(c.createdAt, '')
+                          AND newer.id > c.id
+                      )
+                  )
+           )
+        ORDER BY c.createdAt DESC
+    """)
     suspend fun getAllChats(): List<ChatEntity>
 
     @Query("SELECT * FROM local_chats WHERE id = :id")
     suspend fun getChatById(id: String): ChatEntity?
+
+    @Query("SELECT * FROM local_chats WHERE type = 'dm' AND otherUserId = :otherUserId ORDER BY createdAt DESC, id DESC LIMIT 1")
+    suspend fun getDmChatByOtherUserId(otherUserId: String): ChatEntity?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertChat(chat: ChatEntity)
