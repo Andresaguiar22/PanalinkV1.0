@@ -38,6 +38,7 @@ class SocialSyncWorker(
         }
 
         var anyFailed = false
+        var anyStale = false
 
         for (action in pendingActions) {
             try {
@@ -156,9 +157,6 @@ class SocialSyncWorker(
                         }
                     }
                     "DELETE_COMMENT" -> {
-                        // targetId is the COMMENT id, not the Reel/Story id. Resolve the
-                        // parent state from Room first; this prevents a Reel comment from
-                        // being mistaken for a Story comment (or vice versa).
                         val localComment = commentDao.getCommentById(action.targetId)
                         val parentStateId = localComment?.targetId
                         val parentState = parentStateId?.let { statesDao.getStateById(it) }
@@ -167,11 +165,7 @@ class SocialSyncWorker(
                             !action.isReel -> "post_comments"
                             parentState?.type == "reel" -> "reel_comments"
                             parentState?.type == "story" -> "story_comments"
-                            localComment?.isReel == true -> {
-                                // Legacy queue entries may not have a StateEntity anymore.
-                                // Keep the historical Reel/Story ambiguity isolated here.
-                                "reel_comments"
-                            }
+                            localComment?.isReel == true -> "reel_comments"
                             else -> "story_comments"
                         }
 
@@ -192,20 +186,74 @@ class SocialSyncWorker(
                 }
 
                 if (success) {
-                    pendingDao.deleteActionById(action.localActionId)
-                    Log.d("SocialSyncWorker", "Action ${action.actionType} on ${action.targetId} synced successfully.")
+                    if (action.actionFamily != null && action.desiredState != null) {
+                        val deleted = pendingDao.deleteIfStillCurrent(
+                            id = action.localActionId,
+                            family = action.actionFamily,
+                            desiredState = action.desiredState,
+                            revision = action.revision
+                        )
+                        if (deleted == 0) {
+                            // The RPC succeeded for an obsolete snapshot. Do not
+                            // delete the newer intention; request another pass.
+                            anyStale = true
+                            Log.d(
+                                "SocialSyncWorker",
+                                "Stale declarative action ${action.localActionId} rev=${action.revision}; newer intent remains queued."
+                            )
+                        } else {
+                            Log.d("SocialSyncWorker", "Declarative action ${action.actionType} on ${action.targetId} synced successfully.")
+                        }
+                    } else {
+                        pendingDao.deleteActionById(action.localActionId)
+                        Log.d("SocialSyncWorker", "Event action ${action.actionType} on ${action.targetId} synced successfully.")
+                    }
                 } else {
                     anyFailed = true
-                    pendingDao.updateActionStatus(action.localActionId, "pending")
+                    if (action.actionFamily != null && action.desiredState != null) {
+                        val updated = pendingDao.updateStatusIfStillCurrent(
+                            id = action.localActionId,
+                            family = action.actionFamily,
+                            desiredState = action.desiredState,
+                            revision = action.revision,
+                            status = "pending"
+                        )
+                        if (updated == 0) {
+                            anyStale = true
+                            Log.d(
+                                "SocialSyncWorker",
+                                "Ignoring stale failure for ${action.localActionId} rev=${action.revision}; newer intent remains authoritative."
+                            )
+                        }
+                    } else {
+                        pendingDao.updateActionStatus(action.localActionId, "pending")
+                    }
                 }
             } catch (e: Exception) {
                 Log.e("SocialSyncWorker", "Error syncing action ${action.localActionId}", e)
                 anyFailed = true
-                pendingDao.updateActionStatus(action.localActionId, "pending")
+                if (action.actionFamily != null && action.desiredState != null) {
+                    val updated = pendingDao.updateStatusIfStillCurrent(
+                        id = action.localActionId,
+                        family = action.actionFamily,
+                        desiredState = action.desiredState,
+                        revision = action.revision,
+                        status = "pending"
+                    )
+                    if (updated == 0) {
+                        anyStale = true
+                        Log.d(
+                            "SocialSyncWorker",
+                            "Ignoring stale exception for ${action.localActionId} rev=${action.revision}; newer intent remains authoritative."
+                        )
+                    }
+                } else {
+                    pendingDao.updateActionStatus(action.localActionId, "pending")
+                }
             }
         }
 
-        return if (anyFailed) Result.retry() else Result.success()
+        return if (anyFailed || anyStale) Result.retry() else Result.success()
     }
 
     companion object {
