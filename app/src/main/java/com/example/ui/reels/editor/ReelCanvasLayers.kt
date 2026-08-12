@@ -1,14 +1,21 @@
 package com.example.ui.reels.editor
 
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.MaterialTheme
@@ -18,6 +25,8 @@ import com.example.ui.reels.editor.model.ReelLayerContent
 import com.example.ui.reels.editor.model.ReelProject
 import com.example.ui.reels.editor.model.ReelTrack
 import com.example.ui.reels.editor.model.ReelTrackType
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
 @Composable
@@ -61,9 +70,10 @@ private fun CanvasLayerItem(
     onPan: (Float, Float) -> Unit,
     onTransform: (Float, Float) -> Unit
 ) {
+    val context = LocalContext.current
     val label = when (val content = layer.content) {
         is ReelLayerContent.Text -> content.value
-        is ReelLayerContent.Sticker -> "😀"
+        is ReelLayerContent.Sticker -> null
         else -> return
     }
 
@@ -86,19 +96,32 @@ private fun CanvasLayerItem(
                 rotationZ = layer.rotationDegrees
             }
     ) {
-        Text(
-            text = label,
-            modifier = Modifier
-                .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else Color.Transparent)
-                .padding(horizontal = 10.dp, vertical = 6.dp),
-            color = Color.White,
-            style = MaterialTheme.typography.headlineSmall
-        )
-        if (selected) {
-            ReelTransformOverlay(
-                visible = true,
-                modifier = Modifier.matchParentSize()
+        if (label != null) {
+            Text(
+                text = label,
+                modifier = Modifier
+                    .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else Color.Transparent)
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                color = Color.White,
+                style = MaterialTheme.typography.headlineSmall
             )
+        } else {
+            val bitmap by produceState<android.graphics.Bitmap?>(initialValue = null, key1 = layer.id, key2 = layer.content) {
+                val uri = (layer.content as? ReelLayerContent.Sticker)?.uri ?: return@produceState
+                value = withContext(Dispatchers.IO) {
+                    context.contentResolver.openInputStream(android.net.Uri.parse(uri))?.use(BitmapFactory::decodeStream)
+                }
+            }
+            if (bitmap != null) {
+                Image(
+                    bitmap = bitmap!!.asImageBitmap(),
+                    contentDescription = "Sticker",
+                    contentScale = ContentScale.Fit
+                )
+            }
+        }
+        if (selected) {
+            ReelTransformOverlay(visible = true, modifier = Modifier.matchParentSize())
         }
     }
 }
