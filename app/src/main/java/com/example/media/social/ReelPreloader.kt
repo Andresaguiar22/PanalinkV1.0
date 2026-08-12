@@ -9,7 +9,6 @@ import com.example.media.storage.MediaStorageManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import java.net.URI
 
 object ReelPreloader {
     private const val TAG = "ReelPreloader"
@@ -56,15 +55,5 @@ object ReelPreloader {
                 }
             }
         }
-    }
-
-    private fun logicalPath(url: String): String {
-        return runCatching {
-            val uri = URI(url)
-            buildString {
-                append(uri.path ?: url)
-                uri.query?.let { append('?').append(it) }
-            }
-        }.getOrElse { url }
     }
 }
