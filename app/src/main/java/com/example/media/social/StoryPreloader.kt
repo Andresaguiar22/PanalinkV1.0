@@ -9,9 +9,20 @@ import com.example.media.storage.MediaStorageManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import java.net.URI
 
 object StoryPreloader {
     private const val TAG = "StoryPreloader"
+    private const val LOOKAHEAD_GROUPS = 3
+
+    private fun stableMediaId(state: UserState, remoteUrl: String): String {
+        val path = runCatching { URI(remoteUrl).path }
+            .getOrNull()
+            ?.trim('/')
+            ?.takeIf { it.isNotBlank() }
+            ?: remoteUrl.substringAfter("?", remoteUrl)
+        return "story_${state.id}_${path.hashCode().toUInt().toString(16)}"
+    }
 
     fun preloadStories(
         context: Context,
@@ -20,38 +31,33 @@ object StoryPreloader {
         currentStoryIndex: Int,
         scope: CoroutineScope
     ) {
-        if (userStates.isEmpty() || currentUserIndex < 0 || currentUserIndex >= userStates.size) return
+        if (userStates.isEmpty() || currentUserIndex !in userStates.indices) return
 
         val appCtx = context.applicationContext
         scope.launch(Dispatchers.IO) {
             val repository = MediaRepository(appCtx, MediaStorageManager(appCtx))
-
-            val currentGroup = userStates.getOrNull(currentUserIndex)
-            val nextGroup = userStates.getOrNull(currentUserIndex + 1)
-
-            val targets = mutableListOf<UserState>()
-
-            // Current user story
-            currentGroup?.state?.let { state ->
-                targets.add(state)
-            }
-
-            // Next user story
-            nextGroup?.state?.let { state ->
-                targets.add(state)
-            }
+            val targets = buildList {
+                userStates.getOrNull(currentUserIndex)?.state?.let(::add)
+                for (offset in 1..LOOKAHEAD_GROUPS) {
+                    userStates.getOrNull(currentUserIndex + offset)?.state?.let(::add)
+                }
+            }.distinctBy { it.id }
 
             for (target in targets) {
                 val remoteUrl = com.example.data.repository.CdnManager.resolveMediaUrlSync(target.mediaUrl) ?: continue
-                if (remoteUrl.startsWith("http://") || remoteUrl.startsWith("https://")) {
-                    val mediaId = "story_${target.id}_${kotlin.math.abs(remoteUrl.hashCode())}"
-                    val type = if (target.mediaType == "video" || remoteUrl.endsWith(".mp4")) "video" else "image"
-                    try {
-                        Log.i(TAG, "Preloading story: $mediaId")
-                        repository.syncManager.syncMedia(mediaId, remoteUrl, type, target.userId)
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Preload story failed for $mediaId", e)
-                    }
+                if (!remoteUrl.startsWith("http://") && !remoteUrl.startsWith("https://")) continue
+
+                val mediaId = stableMediaId(target, remoteUrl)
+                val type = if (
+                    target.mediaType.equals("video", ignoreCase = true) ||
+                    remoteUrl.substringBefore('?').lowercase().endsWith(".mp4")
+                ) "video" else "image"
+
+                try {
+                    Log.i(TAG, "Preloading story: $mediaId")
+                    repository.syncManager.syncMedia(mediaId, remoteUrl, type, target.userId)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Preload story failed for $mediaId", e)
                 }
             }
         }
