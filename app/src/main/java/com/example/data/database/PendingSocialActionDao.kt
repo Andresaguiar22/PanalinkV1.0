@@ -18,9 +18,8 @@ interface PendingSocialActionDao {
 
     /**
      * Atomically replaces the desired state for one logical interaction family.
-     * Declarative actions (LIKE/FAVORITE) must use this method instead of
-     * insertAction(), so rapid toggles collapse into a single pending row while
-     * preserving the existing localActionId and advancing its local revision.
+     * The row identity is preserved when the family already exists, while the
+     * revision changes so an in-flight Worker snapshot becomes stale.
      */
     @Transaction
     suspend fun replaceDesiredState(action: PendingSocialActionEntity) {
@@ -73,9 +72,8 @@ interface PendingSocialActionDao {
     ): Int
 
     /**
-     * Deletes a declarative action only when the Worker is still holding the
-     * exact version it originally read. A newer intent, including one that
-     * returns to the same desiredState, therefore survives the delete.
+     * Deletes a declarative action only if the exact Worker snapshot is still
+     * current. This protects even A -> B -> A transitions from stale deletes.
      */
     @Query("""
         DELETE FROM pending_social_actions
@@ -89,6 +87,27 @@ interface PendingSocialActionDao {
         family: String,
         desiredState: Boolean,
         revision: Long
+    ): Int
+
+    /**
+     * Marks a declarative action pending only when the Worker is still operating
+     * on the same snapshot. A stale RPC cannot mutate a newer user intent.
+     */
+    @Query("""
+        UPDATE pending_social_actions
+        SET retryCount = retryCount + 1,
+            status = :status
+        WHERE localActionId = :id
+          AND actionFamily = :family
+          AND desiredState = :desiredState
+          AND revision = :revision
+    """)
+    suspend fun updateStatusIfStillCurrent(
+        id: String,
+        family: String,
+        desiredState: Boolean,
+        revision: Long,
+        status: String
     ): Int
 
     @Query("UPDATE pending_social_actions SET retryCount = retryCount + 1, status = :status WHERE localActionId = :id")
