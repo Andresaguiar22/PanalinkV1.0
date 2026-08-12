@@ -169,7 +169,12 @@ fun TikTokVideoFeedScreen(
 
     val videoStates = remember(reelsState, searchQuery, selectedFilter) {
         if (reelsState is StatesUiState.Success) {
-            var allVideos = (reelsState as StatesUiState.Success).states.filter { it.state.mediaType == "video" }
+            var allVideos = (reelsState as StatesUiState.Success).states.filter { 
+                it.state.mediaType.equals("video", ignoreCase = true) || 
+                it.state.mediaType.contains("video", ignoreCase = true) || 
+                it.state.isReel || 
+                it.state.type.equals("reel", ignoreCase = true)
+            }
             
             // Apply Search
             if (searchQuery.isNotBlank()) {

@@ -64,6 +64,16 @@ fun isAudioUrl(url: String): Boolean {
     return lower.contains(".mp3") || lower.contains(".wav") || lower.contains(".ogg") || lower.contains(".m4a") || lower.contains("audio")
 }
 
+fun isDocumentUrl(url: String): Boolean {
+    if (url.isBlank()) return false
+    val lower = url.lowercase()
+    return lower.contains(".pdf") || lower.contains(".doc") || lower.contains(".docx") ||
+           lower.contains(".xls") || lower.contains(".xlsx") || lower.contains(".ppt") ||
+           lower.contains(".pptx") || lower.contains(".zip") || lower.contains(".rar") ||
+           lower.contains(".txt") || lower.contains(".csv") || lower.contains(".json") ||
+           lower.contains("document") || lower.contains("application/") || lower.contains("file/")
+}
+
 @Composable
 fun FeedPostCard(
     post: PostDto,
@@ -243,7 +253,10 @@ fun FeedPostCard(
             // 2. Media Content
             val allMediaList = (post.mediaUrls ?: emptyList()).filter { it.isNotBlank() }
             val mediaImagesAndVideos = remember(allMediaList) {
-                allMediaList.filter { !isAudioUrl(it) }
+                allMediaList.filter { !isAudioUrl(it) && !isDocumentUrl(it) }
+            }
+            val mediaDocuments = remember(allMediaList) {
+                allMediaList.filter { isDocumentUrl(it) }
             }
             val voiceAudioUrl = remember(post.audioUrl, allMediaList) {
                 post.audioUrl ?: allMediaList.firstOrNull { isAudioUrl(it) }
@@ -383,6 +396,32 @@ fun FeedPostCard(
                      // Just add some bottom padding.
                      Spacer(modifier = Modifier.height(4.dp))
                 }
+            }
+
+            if (mediaDocuments.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    mediaDocuments.forEach { docUrl ->
+                        val resolvedDocUrl = remember(docUrl) {
+                            com.example.data.repository.CdnManager.resolveMediaUrlSync(docUrl)
+                        }
+                        com.example.ui.components.chat.media.DocumentPreviewCard(
+                            docUrl = resolvedDocUrl,
+                            mediaSize = null,
+                            bubbleColor = Color(0xFF2A2A30),
+                            isSender = false,
+                            senderAvatarUrl = null,
+                            messageStatus = "sent",
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
             }
 
             // Action Bar (Social)

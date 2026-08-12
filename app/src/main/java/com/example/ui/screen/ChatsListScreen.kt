@@ -2436,7 +2436,7 @@ fun EstadosTabContent(
                                 // For Thumbnail First logic: fetch a frame if it's a video to serve as a high-fidelity local fallback
                                 var videoBitmap by remember(state.mediaUrl) { mutableStateOf<Bitmap?>(null) }
                                 LaunchedEffect(state.mediaUrl) {
-                                    if (state.mediaType == "video") {
+                                    if (state.mediaType.equals("video", ignoreCase = true) || state.mediaType.contains("video", ignoreCase = true) || state.isReel) {
                                         val videoUrl = state.mediaUrl ?: ""
                                         val cached: Bitmap? = null // Dummy cache
                                         if (cached != null) {
@@ -2546,7 +2546,7 @@ fun EstadosTabContent(
                                                     modifier = Modifier.padding(8.dp)
                                                 )
                                             }
-                                        } else if (state.mediaType == "video") {
+                                        } else if (state.mediaType.equals("video", ignoreCase = true) || state.mediaType.contains("video", ignoreCase = true) || state.isReel) {
                                             Box(modifier = Modifier.fillMaxSize()) {
                                                 val currentBitmap = videoBitmap
                                                 if (currentBitmap != null) {
@@ -2685,7 +2685,12 @@ fun EstadosTabContent(
         when (statesState) {
             is StatesUiState.Success -> {
                 val list = statesState.states
-                val videoStates = list.filter { it.state.mediaType == "video" }
+                val videoStates = list.filter { 
+                    it.state.mediaType.equals("video", ignoreCase = true) || 
+                    it.state.mediaType.contains("video", ignoreCase = true) || 
+                    it.state.isReel || 
+                    it.state.type.equals("reel", ignoreCase = true)
+                }
 
                 if (videoStates.isEmpty()) {
                     item {
@@ -2739,7 +2744,7 @@ fun EstadosTabContent(
                                         .clickable { onNavigateToTikTok(videoState.state.id) }
                                 ) {
                                     // Visual card design
-                                    if (videoState.state.mediaType == "video") {
+                                    if (videoState.state.mediaType.equals("video", ignoreCase = true) || videoState.state.mediaType.contains("video", ignoreCase = true) || videoState.state.isReel) {
                                         Box(
                                             modifier = Modifier.fillMaxSize().background(Color.Black),
                                             contentAlignment = Alignment.Center

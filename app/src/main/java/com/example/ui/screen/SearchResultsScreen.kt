@@ -33,7 +33,12 @@ fun SearchResultsScreen(
     
     val filteredVideos = remember(reelsState, tag) {
         if (reelsState is StatesUiState.Success) {
-            val allVideos = (reelsState as StatesUiState.Success).states.filter { it.state.mediaType == "video" }
+            val allVideos = (reelsState as StatesUiState.Success).states.filter { 
+                it.state.mediaType.equals("video", ignoreCase = true) || 
+                it.state.mediaType.contains("video", ignoreCase = true) || 
+                it.state.isReel || 
+                it.state.type.equals("reel", ignoreCase = true)
+            }
             allVideos.filter { it.state.caption?.contains("#$tag", ignoreCase = true) == true }
         } else {
             emptyList()
