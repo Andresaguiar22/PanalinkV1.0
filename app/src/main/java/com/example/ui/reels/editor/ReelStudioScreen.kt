@@ -14,6 +14,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -48,9 +49,9 @@ fun ReelStudioScreen(modifier: Modifier = Modifier, viewModel: ReelEditorViewMod
                 onTrimLayer = { trackId, layerId, startMs, endMs ->
                     val track = project.timeline.tracks.firstOrNull { it.id == trackId } ?: return@TimelinePanel
                     val layer = track.layers.firstOrNull { it.id == layerId } ?: return@TimelinePanel
-                    val start = startMs.coerceIn(0L, (layer.endTimeMs - 1L).coerceAtLeast(0L))
-                    val end = endMs.coerceIn(start + 1L, project.durationMs.coerceAtLeast(start + 1L))
-                    viewModel.onEvent(ReelEditorEvent.UpdateLayer(trackId, layer.copy(startTimeMs = start, endTimeMs = end)))
+                    val safeStart = startMs.coerceIn(0L, (layer.endTimeMs - 1L).coerceAtLeast(0L))
+                    val safeEnd = endMs.coerceIn(safeStart + 1L, project.durationMs.coerceAtLeast(safeStart + 1L))
+                    viewModel.onEvent(ReelEditorEvent.UpdateLayer(trackId, layer.copy(startTimeMs = safeStart, endTimeMs = safeEnd)))
                 }
             )
             selected?.let { (track, layer) ->
@@ -121,7 +122,9 @@ fun ReelStudioScreen(modifier: Modifier = Modifier, viewModel: ReelEditorViewMod
     layer: ReelLayer, durationMs: Long, timelineWidth: Dp, selected: Boolean,
     onSelect: () -> Unit, onMove: (Long) -> Unit, onTrim: (Long, Long) -> Unit
 ) {
-    val pxPerMs = timelineWidth.value / durationMs.toFloat()
+    val density = LocalDensity.current
+    val timelineWidthPx = with(density) { timelineWidth.toPx() }
+    val pxPerMs = timelineWidthPx / durationMs.toFloat()
     val startFraction = (layer.startTimeMs.toFloat() / durationMs).coerceIn(0f, 1f)
     val widthFraction = ((layer.endTimeMs - layer.startTimeMs).toFloat() / durationMs).coerceIn(0.02f, (1f - startFraction).coerceAtLeast(0.02f))
     Box(
@@ -136,16 +139,20 @@ fun ReelStudioScreen(modifier: Modifier = Modifier, viewModel: ReelEditorViewMod
             .clickable(onClick = onSelect)
     ) {
         Row(Modifier.fillMaxSize(), Alignment.CenterVertically) {
-            if (selected) TrimHandle { delta -> onTrim(layer.startTimeMs + delta, layer.endTimeMs) }
+            if (selected) TrimHandle { deltaPx ->
+                onTrim(layer.startTimeMs + (deltaPx / pxPerMs).roundToLong(), layer.endTimeMs)
+            }
             Text(layer.type.name.lowercase().replaceFirstChar { it.uppercase() }, Modifier.weight(1f).padding(horizontal = 4.dp), style = MaterialTheme.typography.labelSmall)
-            if (selected) TrimHandle { delta -> onTrim(layer.startTimeMs, layer.endTimeMs + delta) }
+            if (selected) TrimHandle { deltaPx ->
+                onTrim(layer.startTimeMs, layer.endTimeMs + (deltaPx / pxPerMs).roundToLong())
+            }
         }
     }
 }
 
-@Composable private fun TrimHandle(onDelta: (Long) -> Unit) {
+@Composable private fun TrimHandle(onDeltaPx: (Float) -> Unit) {
     Box(Modifier.width(10.dp).fillMaxHeight().background(MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.35f)).pointerInput(Unit) {
-        detectDragGestures { change, dragAmount -> change.consume(); onDelta((dragAmount.x * 12f).roundToLong()) }
+        detectDragGestures { change, dragAmount -> change.consume(); onDeltaPx(dragAmount.x) }
     })
 }
 
