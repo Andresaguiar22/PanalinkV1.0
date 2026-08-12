@@ -5,6 +5,7 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -28,12 +29,8 @@ fun ReelCanvasLayers(
     onSelect: (String) -> Unit,
     onMove: (ReelTrack, ReelLayer, Float, Float) -> Unit
 ) {
-    val visibleLayers = project.timeline.tracks
-        .flatMap { track -> track.layers.map { track to it } }
-        .filter { (_, layer) ->
-            layer.visible && project.timeline.currentTimeMs in layer.startTimeMs..layer.endTimeMs &&
-                layer.type in setOf(ReelTrackType.TEXT, ReelTrackType.STICKER)
-        }
+    val visibleLayers = project.timeline.tracks.flatMap { track -> track.layers.map { track to it } }
+        .filter { (_, layer) -> layer.visible && project.timeline.currentTimeMs in layer.startTimeMs..layer.endTimeMs && layer.type in setOf(ReelTrackType.TEXT, ReelTrackType.STICKER) }
         .sortedBy { (_, layer) -> layer.zIndex }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -63,26 +60,19 @@ private fun CanvasLayerItem(
         is ReelLayerContent.Sticker -> "😀"
         else -> return
     }
-
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .pointerInput(layer.id, layer.x, layer.y) {
-                detectDragGestures(onDragStart = { onSelect(layer.id) }) { change, dragAmount ->
-                    change.consume()
-                    onDrag(dragAmount.x, dragAmount.y)
-                }
+        modifier = Modifier.fillMaxSize().pointerInput(layer.id, layer.x, layer.y) {
+            detectDragGestures(onDragStart = { onSelect(layer.id) }) { change, dragAmount ->
+                change.consume()
+                onDrag(dragAmount.x, dragAmount.y)
             }
+        }
     ) {
         Text(
             text = label,
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .offset {
-                    IntOffset((layer.x.coerceIn(0f, 1f) * widthPx).roundToInt(), (layer.y.coerceIn(0f, 1f) * heightPx).roundToInt())
-                }
-                .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else Color.Transparent)
-                .padding(horizontal = 10.dp, vertical = 6.dp),
+            modifier = Modifier.align(Alignment.TopStart).offset {
+                IntOffset((layer.x.coerceIn(0f, 1f) * widthPx).roundToInt(), (layer.y.coerceIn(0f, 1f) * heightPx).roundToInt())
+            }.background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else Color.Transparent).padding(horizontal = 10.dp, vertical = 6.dp),
             color = Color.White,
             style = MaterialTheme.typography.headlineSmall
         )
