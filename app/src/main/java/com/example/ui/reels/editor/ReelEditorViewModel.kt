@@ -26,6 +26,8 @@ class ReelEditorViewModel : ViewModel() {
             is ReelEditorEvent.SelectLayer -> _uiState.update { it.copy(project = it.project.copy(selectedLayerId = event.layerId)) }
             is ReelEditorEvent.AddTrack -> addTrack(event.type, event.name)
             is ReelEditorEvent.AddTextLayer -> addTextLayer(event.text)
+            is ReelEditorEvent.UpdateTextStyle -> updateTextStyle(event)
+            is ReelEditorEvent.TransformLayer -> transformLayer(event)
             is ReelEditorEvent.AddStickerLayer -> addStickerLayer(event.stickerUri)
             is ReelEditorEvent.RemoveTrack -> removeTrack(event.trackId)
             is ReelEditorEvent.AddLayer -> _uiState.update { state -> state.copy(project = state.project.copy(timeline = ReelTimelineOperations.addLayer(state.project.timeline, event.trackId, event.layer))) }
@@ -54,15 +56,45 @@ class ReelEditorViewModel : ViewModel() {
 
     private fun addTextLayer(text: String) {
         addOverlayTrack(ReelTrackType.TEXT, "Texto") { start, end ->
-            ReelLayer("text_${System.nanoTime()}", ReelTrackType.TEXT, start, end, zIndex = 100,
-                x = 0.5f, y = 0.5f, content = ReelLayerContent.Text(text = text.ifBlank { "Escribe aquí" }))
+            ReelLayer("text_${System.nanoTime()}", ReelTrackType.TEXT, start, end, zIndex = 100, x = 0.5f, y = 0.5f,
+                content = ReelLayerContent.Text(value = text.ifBlank { "Escribe aquí" }))
         }
     }
 
     private fun addStickerLayer(stickerUri: String) {
         addOverlayTrack(ReelTrackType.STICKER, "Stickers") { start, end ->
-            ReelLayer("sticker_${System.nanoTime()}", ReelTrackType.STICKER, start, end, zIndex = 110,
-                x = 0.5f, y = 0.5f, content = ReelLayerContent.Sticker(stickerUri))
+            ReelLayer("sticker_${System.nanoTime()}", ReelTrackType.STICKER, start, end, zIndex = 110, x = 0.5f, y = 0.5f,
+                content = ReelLayerContent.Sticker(stickerUri))
+        }
+    }
+
+    private fun updateTextStyle(event: ReelEditorEvent.UpdateTextStyle) {
+        updateSelectedLayer(event.layerId) { layer ->
+            val content = layer.content as? ReelLayerContent.Text ?: return@updateSelectedLayer layer
+            layer.copy(content = content.copy(
+                fontSizeSp = (event.fontSizeSp ?: content.fontSizeSp).coerceIn(8f, 160f),
+                colorArgb = event.colorArgb ?: content.colorArgb,
+                backgroundColorArgb = event.backgroundColorArgb ?: content.backgroundColorArgb
+            ))
+        }
+    }
+
+    private fun transformLayer(event: ReelEditorEvent.TransformLayer) {
+        updateSelectedLayer(event.layerId) { layer ->
+            layer.copy(
+                scale = (event.scale ?: layer.scale).coerceIn(0.1f, 8f),
+                rotationDegrees = event.rotationDegrees ?: layer.rotationDegrees
+            )
+        }
+    }
+
+    private fun updateSelectedLayer(layerId: String, transform: (ReelLayer) -> ReelLayer) {
+        _uiState.update { state ->
+            val track = state.project.timeline.tracks.firstOrNull { track -> track.layers.any { it.id == layerId } }
+                ?: return@update state
+            val layer = track.layers.first { it.id == layerId }
+            val updated = transform(layer)
+            state.copy(project = state.project.copy(timeline = ReelTimelineOperations.updateLayer(state.project.timeline, track.id, updated), selectedLayerId = layerId))
         }
     }
 
@@ -75,8 +107,9 @@ class ReelEditorViewModel : ViewModel() {
             val start = timeline.currentTimeMs.coerceIn(0L, (baseEnd - 500L).coerceAtLeast(0L))
             val end = (start + 5000L).coerceAtMost(baseEnd).coerceAtLeast(start + 1L)
             var updated = if (timeline.tracks.none { it.id == track.id }) ReelTimelineOperations.addTrack(timeline, track) else timeline
-            updated = ReelTimelineOperations.addLayer(updated, track.id, createLayer(start, end))
-            state.copy(project = state.project.copy(timeline = updated, selectedLayerId = updated.tracks.first { it.id == track.id }.layers.last().id))
+            val layer = createLayer(start, end)
+            updated = ReelTimelineOperations.addLayer(updated, track.id, layer)
+            state.copy(project = state.project.copy(timeline = updated, selectedLayerId = layer.id))
         }
     }
 
