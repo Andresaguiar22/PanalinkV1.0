@@ -156,14 +156,25 @@ class SocialSyncWorker(
                         }
                     }
                     "DELETE_COMMENT" -> {
-                        // Resolve the target domain before acknowledging the local delete.
-                        // isReel is true for both Reels and Stories in the current queue contract,
-                        // so a local StateEntity is the authoritative discriminator for Stories.
+                        // targetId is the COMMENT id, not the Reel/Story id. Resolve the
+                        // parent state from Room first; this prevents a Reel comment from
+                        // being mistaken for a Story comment (or vice versa).
+                        val localComment = commentDao.getCommentById(action.targetId)
+                        val parentStateId = localComment?.targetId
+                        val parentState = parentStateId?.let { statesDao.getStateById(it) }
+
                         val table = when {
-                            action.isReel && statesDao.getStateById(action.targetId)?.type == "reel" -> "reel_comments"
-                            action.isReel -> "story_comments"
-                            else -> "post_comments"
+                            !action.isReel -> "post_comments"
+                            parentState?.type == "reel" -> "reel_comments"
+                            parentState?.type == "story" -> "story_comments"
+                            localComment?.isReel == true -> {
+                                // Legacy queue entries may not have a StateEntity anymore.
+                                // Keep the historical Reel/Story ambiguity isolated here.
+                                "reel_comments"
+                            }
+                            else -> "story_comments"
                         }
+
                         val response = service.deleteComment(table, apiKey, bearer, "eq.${action.targetId}")
                         if (response.isSuccessful || response.code() == 404) {
                             success = true
@@ -176,8 +187,6 @@ class SocialSyncWorker(
                     }
                     "UPDATE_POST" -> {
                         val response = service.updatePost(apiKey, bearer, "eq.${action.targetId}", mapOf("content" to (action.payload ?: "")))
-                        // A missing post is not a successful update. Keep the action queued so
-                        // reconciliation can determine whether the target disappeared remotely.
                         success = response.isSuccessful
                     }
                 }
