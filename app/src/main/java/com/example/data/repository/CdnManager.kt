@@ -7,9 +7,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
@@ -26,8 +27,6 @@ import java.util.concurrent.atomic.AtomicBoolean
  * CDN, which is essential because the CDN endpoint may change dynamically.
  *
  * URL classification is based on origin/host, never on media directory names.
- * This prevents a new server path such as /media/reels/ from bypassing the
- * resolver simply because it does not contain /video/, /images/, etc.
  */
 object CdnManager {
     private const val TAG = "CdnManager"
@@ -36,6 +35,24 @@ object CdnManager {
 
     @Volatile
     private var cachedCdnUrl: String? = null
+
+    @Volatile
+    private var lastSupabaseCandidate: String? = null
+
+    @Volatile
+    private var lastRealtimeCandidate: String? = null
+
+    @Volatile
+    private var lastHealthUrl: String? = null
+
+    @Volatile
+    private var lastHealthCode: Int? = null
+
+    @Volatile
+    private var lastHealthOk: Boolean? = null
+
+    @Volatile
+    private var lastRefreshSource: String? = null
 
     private var context: Context? = null
     private val cdnMutex = Mutex()
@@ -64,17 +81,19 @@ object CdnManager {
 
             if (!stored.isNullOrEmpty() && isValidCdnBase(stored)) {
                 cachedCdnUrl = stored
-                Log.i(TAG, "Restored cached CDN URL: $stored")
+                Log.i(TAG, "CDN_DIAGNOSTIC cached=$stored")
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error restoring CDN URL", e)
+            Log.e(TAG, "CDN_DIAGNOSTIC failed to restore cache", e)
         }
+
+        Log.i(TAG, "CDN_DIAGNOSTIC init supabase=${SupabaseClient.supabaseUrl.trim().removeSuffix("/")}")
 
         if (isStartupRefreshStarted.compareAndSet(false, true)) {
             scope.launch {
                 delay(500)
                 runCatching { getCDNUrl(forceRefresh = true) }
-                    .onFailure { Log.w(TAG, "Startup CDN refresh failed: ${it.message}") }
+                    .onFailure { Log.w(TAG, "CDN_DIAGNOSTIC startup refresh failed: ${it.message}") }
             }
         }
     }
@@ -97,16 +116,23 @@ object CdnManager {
                 ?.putString(KEY_CACHED_CDN_URL, cdnUrl)
                 ?.apply()
         } catch (e: Exception) {
-            Log.e(TAG, "Error saving CDN URL", e)
+            Log.e(TAG, "CDN_DIAGNOSTIC failed to persist CDN", e)
         }
     }
 
     /** /health must return an actual successful 2xx response. */
     private fun isCdnReachable(cdnUrl: String): Boolean {
         val base = normalizeBase(cdnUrl)
-        if (!isValidCdnBase(base)) return false
+        if (!isValidCdnBase(base)) {
+            Log.w(TAG, "CDN_DIAGNOSTIC health skipped invalid_base=$base")
+            return false
+        }
 
         val healthUrl = "$base/health"
+        lastHealthUrl = healthUrl
+        lastHealthCode = null
+        lastHealthOk = false
+
         return try {
             val request = Request.Builder()
                 .url(healthUrl)
@@ -116,15 +142,19 @@ object CdnManager {
 
             client.newCall(request).execute().use { response ->
                 val ok = response.code in 200..299
+                lastHealthCode = response.code
+                lastHealthOk = ok
                 if (ok) {
-                    Log.i(TAG, "CDN health OK: $healthUrl (${response.code})")
+                    Log.i(TAG, "CDN_DIAGNOSTIC health=OK url=$healthUrl code=${response.code}")
                 } else {
-                    Log.w(TAG, "CDN health FAILED: $healthUrl (${response.code})")
+                    Log.w(TAG, "CDN_DIAGNOSTIC health=FAILED url=$healthUrl code=${response.code}")
                 }
                 ok
             }
         } catch (e: Exception) {
-            Log.w(TAG, "CDN health FAILED: $healthUrl - ${e.message}")
+            lastHealthCode = null
+            lastHealthOk = false
+            Log.w(TAG, "CDN_DIAGNOSTIC health=EXCEPTION url=$healthUrl error=${e.javaClass.simpleName}:${e.message}")
             false
         }
     }
@@ -133,23 +163,27 @@ object CdnManager {
     private fun startRealtimeListener() {
         if (!isListenerStarted.compareAndSet(false, true)) return
 
+        Log.i(TAG, "CDN_DIAGNOSTIC realtime=STARTING table=global_server_config")
         scope.launch {
             try {
                 SupabaseClient.globalServerConfigUpdates.collect { newUrl ->
                     val candidate = newUrl?.trim()?.removeSuffix("/")
+                    lastRealtimeCandidate = candidate
+                    Log.i(TAG, "CDN_DIAGNOSTIC realtime=UPDATE candidate=$candidate")
+
                     if (candidate.isNullOrBlank() || !isValidCdnBase(candidate)) {
-                        Log.w(TAG, "Ignoring invalid CDN URL from Realtime: '$newUrl'")
+                        Log.w(TAG, "CDN_DIAGNOSTIC realtime=REJECT invalid_candidate=$newUrl")
                         return@collect
                     }
 
                     if (isCdnReachable(candidate)) {
                         promoteCdn(candidate, "Realtime")
                     } else {
-                        Log.w(TAG, "Ignoring unreachable CDN from Realtime; preserving current CDN")
+                        Log.w(TAG, "CDN_DIAGNOSTIC realtime=REJECT health_failed candidate=$candidate")
                     }
                 }
             } catch (t: Throwable) {
-                Log.e(TAG, "Dynamic CDN Realtime listener stopped unexpectedly", t)
+                Log.e(TAG, "CDN_DIAGNOSTIC realtime=STOPPED error=${t.message}", t)
                 isListenerStarted.set(false)
             }
         }
@@ -158,18 +192,26 @@ object CdnManager {
     private fun promoteCdn(candidate: String, source: String) {
         val clean = normalizeBase(candidate)
         val previous = cachedCdnUrl
-        if (previous == clean) return
+        lastRefreshSource = source
+
+        if (previous == clean) {
+            Log.i(TAG, "CDN_DIAGNOSTIC active=UNCHANGED source=$source url=$clean")
+            return
+        }
 
         cachedCdnUrl = clean
         saveToPrefs(clean)
-        Log.i(TAG, "CDN promoted from $source: $clean")
+        Log.i(TAG, "CDN_DIAGNOSTIC active=PROMOTED source=$source previous=$previous new=$clean")
     }
 
     suspend fun getCDNUrl(forceRefresh: Boolean = false): String = cdnMutex.withLock {
         startRealtimeListener()
 
+        Log.i(TAG, "CDN_DIAGNOSTIC refresh=start force=$forceRefresh cached=${cachedCdnUrl.orEmpty()}")
+
         if (!forceRefresh) {
             cachedCdnUrl?.takeIf { isValidCdnBase(it) }?.let {
+                Log.i(TAG, "CDN_DIAGNOSTIC refresh=cache_hit active=$it")
                 return@withLock it
             }
         }
@@ -177,7 +219,7 @@ object CdnManager {
         val supabaseUrl = SupabaseClient.supabaseUrl.trim().removeSuffix("/")
         val anonKey = SupabaseClient.supabaseAnonKey
         if (supabaseUrl.isBlank() || anonKey.isBlank()) {
-            Log.e(TAG, "Supabase configuration is incomplete; preserving cached CDN")
+            Log.e(TAG, "CDN_DIAGNOSTIC supabase_config=INCOMPLETE preserving=${cachedCdnUrl.orEmpty()}")
             return@withLock cachedCdnUrl.orEmpty()
         }
 
@@ -195,10 +237,13 @@ object CdnManager {
                     .header("Cache-Control", "no-cache")
                     .build()
 
+                Log.i(TAG, "CDN_DIAGNOSTIC supabase=REQUEST endpoint=$endpoint attempt=${3 - attempts}")
                 client.newCall(request).execute().use { response ->
                     val body = response.body?.string()?.trim().orEmpty()
+                    Log.i(TAG, "CDN_DIAGNOSTIC supabase=RESPONSE http=${response.code} bodyPresent=${body.isNotEmpty()}")
+
                     if (!response.isSuccessful || body.isEmpty()) {
-                        Log.w(TAG, "Supabase CDN config failed: HTTP ${response.code}")
+                        Log.w(TAG, "CDN_DIAGNOSTIC supabase=FAILED http=${response.code}")
                     } else {
                         val json = when {
                             body.startsWith("[") -> JSONArray(body).let { if (it.length() > 0) it.getJSONObject(0) else null }
@@ -207,32 +252,60 @@ object CdnManager {
                         }
 
                         if (json == null) {
-                            Log.w(TAG, "Supabase CDN config returned invalid JSON")
+                            Log.w(TAG, "CDN_DIAGNOSTIC supabase=INVALID_JSON")
                         } else {
                             val active = json.optBoolean("active", false)
                             val candidate = normalizeBase(json.optString("cdn_url", ""))
+                            lastSupabaseCandidate = candidate.takeIf { it.isNotBlank() }
+                            Log.i(TAG, "CDN_DIAGNOSTIC supabase=CONFIG active=$active candidate=$candidate cached=${cachedCdnUrl.orEmpty()}")
 
                             if (!active) {
-                                Log.w(TAG, "Supabase reports CDN inactive; preserving known-good CDN")
+                                Log.w(TAG, "CDN_DIAGNOSTIC supabase=INACTIVE preserving=${cachedCdnUrl.orEmpty()}")
                             } else if (!isValidCdnBase(candidate)) {
-                                Log.w(TAG, "Supabase returned invalid CDN URL: '$candidate'")
+                                Log.w(TAG, "CDN_DIAGNOSTIC supabase=INVALID_URL candidate=$candidate")
                             } else if (isCdnReachable(candidate)) {
                                 promoteCdn(candidate, "Supabase")
+                                Log.i(TAG, "CDN_DIAGNOSTIC flow=SUPABASE->HEALTH->ACTIVE success=true")
                                 return@withLock candidate
                             } else {
-                                Log.w(TAG, "Supabase CDN candidate is unreachable; preserving known-good CDN")
+                                Log.w(TAG, "CDN_DIAGNOSTIC flow=SUPABASE->HEALTH->ACTIVE success=false preserving=${cachedCdnUrl.orEmpty()}")
                             }
                         }
                     }
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "Error refreshing CDN from Supabase: ${e.message}")
+                Log.w(TAG, "CDN_DIAGNOSTIC supabase=EXCEPTION error=${e.javaClass.simpleName}:${e.message}")
             }
 
             if (attempts > 0) delay(1000)
         }
 
+        Log.w(TAG, "CDN_DIAGNOSTIC refresh=END active=${cachedCdnUrl.orEmpty()} supabaseCandidate=${lastSupabaseCandidate.orEmpty()}")
         return@withLock cachedCdnUrl.orEmpty()
+    }
+
+    /**
+     * Snapshot for diagnostics/UI tests. It performs no network operation.
+     */
+    fun diagnosticSnapshot(): String {
+        return buildString {
+            append("supabase=")
+            append(SupabaseClient.supabaseUrl.trim().removeSuffix("/"))
+            append("\ncached=")
+            append(cachedCdnUrl.orEmpty())
+            append("\nsupabaseCandidate=")
+            append(lastSupabaseCandidate.orEmpty())
+            append("\nrealtimeCandidate=")
+            append(lastRealtimeCandidate.orEmpty())
+            append("\nhealthUrl=")
+            append(lastHealthUrl.orEmpty())
+            append("\nhealthCode=")
+            append(lastHealthCode?.toString().orEmpty())
+            append("\nhealthOk=")
+            append(lastHealthOk?.toString().orEmpty())
+            append("\nlastSource=")
+            append(lastRefreshSource.orEmpty())
+        }
     }
 
     fun clearCache() {
@@ -241,6 +314,7 @@ object CdnManager {
             context?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 ?.edit()?.remove(KEY_CACHED_CDN_URL)?.apply()
         } catch (_: Exception) { }
+        Log.i(TAG, "CDN_DIAGNOSTIC cache=CLEARED")
     }
 
     fun resolveAvatarUrl(rawUrl: String?): String? {
@@ -282,10 +356,6 @@ object CdnManager {
         return hostOf(SupabaseClient.supabaseUrl)
     }
 
-    /**
-     * Explicit origin classification. Directory names are deliberately ignored.
-     * The only dynamic legacy patterns are infrastructure domains, not media paths.
-     */
     private fun isKnownCdnHost(host: String): Boolean {
         if (host.isBlank()) return false
 
@@ -301,10 +371,6 @@ object CdnManager {
             host.endsWith(".trycloudflare.com")
     }
 
-    /**
-     * True only when the URL originates from the configured CDN/infrastructure.
-     * Supabase Storage and arbitrary external hosts are never rewritten here.
-     */
     fun isCdnRelated(originalUrl: String): Boolean {
         if (originalUrl.isBlank()) return false
 
@@ -327,7 +393,6 @@ object CdnManager {
         }
     }
 
-    /** Non-blocking resolver for UI; uses only the last known-good CDN. */
     fun resolveMediaUrlSync(originalUrl: String?): String {
         if (originalUrl.isNullOrBlank()) return ""
         if (originalUrl.startsWith("content://") || originalUrl.startsWith("file://") ||
