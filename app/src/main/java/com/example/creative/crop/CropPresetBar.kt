@@ -7,6 +7,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 
 /** Reusable preset selector; intentionally has no dependency on ReelEditorScreen. */
 @Composable
@@ -15,8 +17,8 @@ fun CropPresetBar(
     onSelected: (CropAspectRatio) -> Unit
 ) {
     Row(
-        modifier = androidx.compose.ui.Modifier.horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(androidx.compose.ui.unit.dp(8f))
+        modifier = Modifier.horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         CropAspectRatio.entries.forEach { preset ->
             FilterChip(
