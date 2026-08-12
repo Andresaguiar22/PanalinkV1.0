@@ -14,7 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.dp
+import androidx.compose.ui.unit.dp
 import com.example.ui.reels.editor.model.ReelLayer
 import com.example.ui.reels.editor.model.ReelLayerContent
 import com.example.ui.reels.editor.model.ReelProject
