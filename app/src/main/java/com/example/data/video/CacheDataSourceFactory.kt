@@ -9,22 +9,37 @@ import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.FileDataSource
 import androidx.media3.datasource.cache.CacheDataSink
 import androidx.media3.datasource.cache.CacheDataSource
+import androidx.media3.datasource.cache.CacheKeyFactory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-
 import androidx.media3.common.util.UnstableApi
 
 @UnstableApi
 object CacheDataSourceFactory {
     private const val TAG = "CacheDataSourceFactory"
+    private const val PREFETCH_BYTES = 5 * 1024 * 1024L
+
+    /**
+     * CDN-independent cache key. A Cloudflare quick tunnel can change host while the
+     * logical media path stays the same, so the host must never become part of the
+     * Media3 cache identity.
+     */
+    private val logicalMediaCacheKeyFactory = CacheKeyFactory { dataSpec ->
+        runCatching {
+            val uri = Uri.parse(dataSpec.uri.toString())
+            buildString {
+                append(uri.path ?: uri.toString())
+                uri.query?.let { append('?').append(it) }
+            }
+        }.getOrElse { dataSpec.uri.toString() }
+    }
 
     fun getCacheDataSourceFactory(context: Context): DataSource.Factory {
-        // DefaultHttpDataSource setup with snappy timeouts optimized for quick loading and robust user-agent to bypass CDN blocks
         val httpDataSourceFactory = DefaultHttpDataSource.Factory()
-            .setUserAgent("Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36 Panalink/1.0")
-            .setConnectTimeoutMs(15000) // 15s connect timeout
-            .setReadTimeoutMs(15000)    // 15s read timeout
+            .setUserAgent("Panalink/1.0 Android Media3")
+            .setConnectTimeoutMs(8000)
+            .setReadTimeoutMs(12000)
             .setAllowCrossProtocolRedirects(true)
 
         return try {
@@ -32,10 +47,14 @@ object CacheDataSourceFactory {
             if (simpleCache != null) {
                 CacheDataSource.Factory()
                     .setCache(simpleCache)
+                    .setCacheKeyFactory(logicalMediaCacheKeyFactory)
                     .setUpstreamDataSourceFactory(httpDataSourceFactory)
                     .setCacheReadDataSourceFactory(FileDataSource.Factory())
-                    .setCacheWriteDataSinkFactory(CacheDataSink.Factory().setCache(simpleCache))
-                    .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+                    .setCacheWriteDataSinkFactory(
+                        CacheDataSink.Factory()
+                            .setCache(simpleCache)
+                            .setFragmentSize(5 * 1024 * 1024L)
+                    )
             } else {
                 httpDataSourceFactory
             }
@@ -46,32 +65,34 @@ object CacheDataSourceFactory {
     }
 
     /**
-     * Pre-fetches the first 5MB of a video URL into the shared SimpleCache in the background.
-     * When ExoPlayer plays this video later, it starts instantly from local cache.
+     * Caches the beginning of a video so playback can start quickly while the full
+     * persistent reel download continues independently.
      */
     fun prefetchVideo(context: Context, url: String?) {
         if (url.isNullOrBlank() || !url.startsWith("http")) return
         CoroutineScope(Dispatchers.IO).launch {
+            val dataSource = try {
+                getCacheDataSourceFactory(context).createDataSource()
+            } catch (e: Exception) {
+                Log.w(TAG, "Unable to create prefetch data source", e)
+                return@launch
+            }
+
             try {
-                val dataSource = getCacheDataSourceFactory(context).createDataSource()
-                // Fetch first 5 megabytes for smoother initial playback
-                val prefetchBytes = 5 * 1024 * 1024L
-                val dataSpec = DataSpec(Uri.parse(url), 0, prefetchBytes)
-                val buffer = ByteArray(65536) // Larger buffer for faster copy
-                
-                Log.d(TAG, "Aggressive pre-fetching starting for: $url")
+                val dataSpec = DataSpec(Uri.parse(url), 0, PREFETCH_BYTES)
+                val buffer = ByteArray(64 * 1024)
                 dataSource.open(dataSpec)
                 var bytesRead = 0L
-                
-                while (bytesRead < prefetchBytes) {
+                while (bytesRead < PREFETCH_BYTES) {
                     val read = dataSource.read(buffer, 0, buffer.size)
                     if (read == -1) break
                     bytesRead += read
                 }
-                dataSource.close()
-                Log.d(TAG, "Successfully pre-fetched ${bytesRead / 1024} KB for video: $url")
+                Log.d(TAG, "Prefetched ${bytesRead / 1024} KB: $url")
             } catch (e: Exception) {
-                Log.w(TAG, "Pre-fetch cancelled or failed for $url: ${e.localizedMessage}")
+                Log.w(TAG, "Prefetch failed/cancelled: $url", e)
+            } finally {
+                runCatching { dataSource.close() }
             }
         }
     }
