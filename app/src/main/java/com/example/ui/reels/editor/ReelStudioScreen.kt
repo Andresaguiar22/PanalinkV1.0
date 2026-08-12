@@ -41,6 +41,15 @@ fun ReelStudioScreen(modifier: Modifier = Modifier, viewModel: ReelEditorViewMod
                         y = (layer.y + dy).coerceIn(0f, 1f)
                     )
                     viewModel.onEvent(ReelEditorEvent.UpdateLayer(track.id, updated))
+                },
+                onTransformLayer = { track, layer, zoom, rotationDelta ->
+                    viewModel.onEvent(
+                        ReelEditorEvent.TransformLayer(
+                            layerId = layer.id,
+                            scale = (layer.scale * zoom).coerceIn(0.1f, 8f),
+                            rotationDegrees = layer.rotationDegrees + rotationDelta
+                        )
+                    )
                 }
             )
             TimelinePanel(
@@ -92,12 +101,18 @@ fun ReelStudioScreen(modifier: Modifier = Modifier, viewModel: ReelEditorViewMod
     modifier: Modifier,
     project: ReelProject,
     onSelectLayer: (String) -> Unit,
-    onMoveLayer: (ReelTrack, ReelLayer, Float, Float) -> Unit
+    onMoveLayer: (ReelTrack, ReelLayer, Float, Float) -> Unit,
+    onTransformLayer: (ReelTrack, ReelLayer, Float, Float) -> Unit
 ) {
     Box(modifier.padding(horizontal = 12.dp).background(Color.Black), contentAlignment = Alignment.Center) {
         if (project.timeline.tracks.any { it.layers.isNotEmpty() }) {
             ReelTimelinePreviewSurface(project, Modifier.fillMaxSize())
-            ReelCanvasLayers(project, onSelectLayer, onMoveLayer)
+            ReelCanvasLayers(
+                project = project,
+                onSelect = onSelectLayer,
+                onMove = onMoveLayer,
+                onTransform = onTransformLayer
+            )
         } else Text("Agrega un vídeo o una foto para comenzar", color = Color.White, style = MaterialTheme.typography.titleMedium)
     }
 }
