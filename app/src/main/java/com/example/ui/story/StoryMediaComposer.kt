@@ -26,8 +26,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 /**
  * Converts a Story Studio draft into one MP4 file.
  * Images become timed video clips, slides are concatenated and the optional
- * soundtrack is mixed as a second sequence. The resulting file is suitable
- * for the existing single-media CDN/Stories pipeline.
+ * soundtrack is mixed as a second audio-only sequence.
  */
 @OptIn(UnstableApi::class)
 class StoryMediaComposer(private val context: Context) {
@@ -44,15 +43,24 @@ class StoryMediaComposer(private val context: Context) {
         onProgress: (Int) -> Unit = {}
     ): File {
         require(draft.slides.isNotEmpty()) { "La historia no contiene contenido" }
-        require(draft.slides.size <= StoryStudioDraft.MAX_SLIDES) { "Máximo ${StoryStudioDraft.MAX_SLIDES} elementos" }
+        require(draft.slides.size <= StoryStudioDraft.MAX_SLIDES) {
+            "Máximo ${StoryStudioDraft.MAX_SLIDES} elementos"
+        }
 
         val durationMs = draft.durationMs()
-        require(durationMs in 1..MAX_DURATION_MS) { "La historia debe durar entre 1 segundo y 2 minutos" }
+        require(durationMs in 1..MAX_DURATION_MS) {
+            "La historia debe durar entre 1 segundo y 2 minutos"
+        }
+
         draft.slides.forEach { slide ->
             require(!slide.uri.isNullOrBlank()) { "La historia contiene un recurso inválido" }
-            require(File(requireNotNull(slide.uri)).exists()) { "No se encontró ${slide.uri}" }
+            require(File(requireNotNull(slide.uri)).exists()) {
+                "No se encontró ${slide.uri}"
+            }
         }
-        draft.audioUri?.let { require(File(it).exists()) { "No se encontró el audio" } }
+        draft.audioUri?.let { audioPath ->
+            require(File(audioPath).exists()) { "No se encontró el audio" }
+        }
 
         outputFile.parentFile?.mkdirs()
         if (outputFile.exists()) outputFile.delete()
@@ -62,7 +70,9 @@ class StoryMediaComposer(private val context: Context) {
                 .setUri(requireNotNull(slide.uri))
                 .apply {
                     if (slide.kind != StoryStudioKind.VIDEO) {
-                        setImageDurationMs((slide.durationMs.takeIf { it > 0 } ?: DEFAULT_PHOTO_MS))
+                        setImageDurationMs(
+                            slide.durationMs.takeIf { it > 0 } ?: DEFAULT_PHOTO_MS
+                        )
                     }
                 }
                 .build()
@@ -73,12 +83,16 @@ class StoryMediaComposer(private val context: Context) {
                         listOf(
                             TextOverlay.createStaticTextOverlay(
                                 SpannableString(slide.text),
-                                StaticOverlaySettings.Builder().setAlphaScale(1f).build()
+                                StaticOverlaySettings.Builder()
+                                    .setAlphaScale(1f)
+                                    .build()
                             )
                         )
                     )
                 )
-            } else emptyList()
+            } else {
+                emptyList()
+            }
 
             EditedMediaItem.Builder(source)
                 .apply {
@@ -96,18 +110,24 @@ class StoryMediaComposer(private val context: Context) {
         val sequences = mutableListOf(videoSequence)
 
         draft.audioUri?.let { audioPath ->
-            val audioItem = MediaItem.Builder()
+            val audioMediaItem = MediaItem.Builder()
                 .setUri(audioPath)
                 .setClippingConfiguration(
                     MediaItem.ClippingConfiguration.Builder()
                         .setStartPositionMs(draft.audioStartMs.coerceAtLeast(0L))
-                        .setEndPositionMs((draft.audioStartMs + durationMs).coerceAtLeast(1L))
+                        .setEndPositionMs(draft.audioStartMs + durationMs)
                         .build()
                 )
                 .build()
-            sequences += EditedMediaItemSequence.Builder(audioItem)
+
+            val audioEditedItem = EditedMediaItem.Builder(audioMediaItem).build()
+            val audioSequence = EditedMediaItemSequence
+                .withAudioFrom(listOf(audioEditedItem))
+                .buildUpon()
                 .setIsLooping(true)
                 .build()
+
+            sequences += audioSequence
         }
 
         val composition = Composition.Builder(sequences).build()
@@ -115,8 +135,12 @@ class StoryMediaComposer(private val context: Context) {
 
         return suspendCancellableCoroutine { continuation ->
             lateinit var transformer: Transformer
+
             val listener = object : Transformer.Listener {
-                override fun onCompleted(composition: Composition, result: ExportResult) {
+                override fun onCompleted(
+                    composition: Composition,
+                    result: ExportResult
+                ) {
                     onProgress(100)
                     if (continuation.isActive) continuation.resume(outputFile)
                 }
@@ -126,7 +150,9 @@ class StoryMediaComposer(private val context: Context) {
                     result: ExportResult,
                     exportException: ExportException
                 ) {
-                    if (continuation.isActive) continuation.resumeWithException(exportException)
+                    if (continuation.isActive) {
+                        continuation.resumeWithException(exportException)
+                    }
                 }
             }
 
@@ -138,8 +164,10 @@ class StoryMediaComposer(private val context: Context) {
             val progressRunnable = object : Runnable {
                 override fun run() {
                     if (!continuation.isActive) return
-                    val state = transformer.getProgress(progressHolder)
-                    if (state == Transformer.PROGRESS_STATE_AVAILABLE) {
+
+                    if (transformer.getProgress(progressHolder) ==
+                        Transformer.PROGRESS_STATE_AVAILABLE
+                    ) {
                         onProgress(progressHolder.progress.coerceIn(0, 99))
                     }
                     mainHandler.postDelayed(this, POLL_MS)
@@ -157,7 +185,9 @@ class StoryMediaComposer(private val context: Context) {
                     mainHandler.post(progressRunnable)
                 } catch (t: Throwable) {
                     mainHandler.removeCallbacks(progressRunnable)
-                    if (continuation.isActive) continuation.resumeWithException(t)
+                    if (continuation.isActive) {
+                        continuation.resumeWithException(t)
+                    }
                 }
             }
         }
