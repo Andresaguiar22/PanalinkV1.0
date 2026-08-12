@@ -26,5 +26,7 @@ data class PendingSocialActionEntity(
     // Declarative state family. Null for imperative/event actions.
     val actionFamily: String? = null,
     // Desired state for declarative actions. Null for imperative/event actions.
-    val desiredState: Boolean? = null
+    val desiredState: Boolean? = null,
+    // Local optimistic-concurrency version. Event rows remain at 0.
+    val revision: Long = 0L
 )
