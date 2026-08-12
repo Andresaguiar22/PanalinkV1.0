@@ -163,8 +163,8 @@ class SocialSyncWorker(
 
                         val table = when {
                             !action.isReel -> "post_comments"
-                            parentState?.type == "reel" -> "reel_comments"
-                            parentState?.type == "story" -> "story_comments"
+                            parentState?.isReel == true -> "reel_comments"
+                            parentState != null -> "story_comments"
                             localComment?.isReel == true -> "reel_comments"
                             else -> "story_comments"
                         }
@@ -194,8 +194,6 @@ class SocialSyncWorker(
                             revision = action.revision
                         )
                         if (deleted == 0) {
-                            // The RPC succeeded for an obsolete snapshot. Do not
-                            // delete the newer intention; request another pass.
                             anyStale = true
                             Log.d(
                                 "SocialSyncWorker",
