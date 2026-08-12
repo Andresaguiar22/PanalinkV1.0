@@ -1,9 +1,9 @@
 # PanaLink — TURBO MODE
 
-Rama de trabajo: `audit/full-app-2026-08-11`
+Rama de trabajo: `refactor/full-app-turbo`
 
 ## Objetivo
-Convertir la rama de auditoría en una versión consolidada, robusta y medible de PanaLink sin tocar `main` hasta que los cambios estén verificados.
+Convertir la rama de trabajo en una versión consolidada, robusta y medible de PanaLink sin tocar `main` hasta que los cambios estén verificados.
 
 ## Prioridades
 
@@ -47,7 +47,7 @@ Convertir la rama de auditoría en una versión consolidada, robusta y medible d
 ## Reglas de ejecución
 
 1. `main` permanece intacta.
-2. Cambios únicamente en esta rama hasta revisión.
+2. Cambios únicamente en `refactor/full-app-turbo` hasta revisión.
 3. Preferir cambios pequeños, reversibles y verificables.
 4. No sustituir una arquitectura existente por otra sin evidencia de mejora.
 5. No modificar CDN, autenticación, mensajería o RLS sensible sin cruzar todas sus dependencias.
