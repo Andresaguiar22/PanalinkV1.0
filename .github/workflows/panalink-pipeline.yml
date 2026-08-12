@@ -2,7 +2,7 @@ name: PanaLink V2.0 Unified Pipeline
 
 on:
   push:
-    branches: [ "main", "master", "develop" ]
+    branches: [ "main", "master", "develop", "refactor/full-app-turbo", "audit/full-app-2026-08-11" ]
     tags:
       - 'v*'
   workflow_dispatch:
