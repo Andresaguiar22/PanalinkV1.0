@@ -8,6 +8,7 @@ import com.example.media.model.MediaResource
 import com.example.media.repository.MediaRepository
 import com.example.media.storage.MediaStorageManager
 import java.io.File
+import java.net.URI
 
 object PostMediaResolver {
 
@@ -27,23 +28,19 @@ object PostMediaResolver {
         return mediaUrls.map { remoteUrl ->
             if (remoteUrl.startsWith("file://") || remoteUrl.startsWith("/")) {
                 val file = File(remoteUrl.replace("file://", ""))
-                if (file.exists()) {
+                if (file.exists() && file.length() > 0) {
                     MediaResource.Local(file.absolutePath)
                 } else {
                     MediaResource.Missing
                 }
             } else {
-                val mediaId = remember(remoteUrl) {
-                    "media_${kotlin.math.abs(remoteUrl.hashCode())}"
-                }
+                // Cache identity is based on the logical media path, not the CDN host.
+                // A Cloudflare/bore URL rotation therefore keeps the same local file.
+                val mediaId = remember(remoteUrl) { stableMediaId(remoteUrl) }
 
                 val mediaState by repository.observeMedia(mediaId)
                     .collectAsStateWithLifecycle(initialValue = null)
 
-                // Resolve the current Supabase CDN candidate before exposing the
-                // URL to Coil/Media3. This state is refreshed after the CDN
-                // manager has revalidated the current endpoint, so a changed
-                // Cloudflare URL can propagate without recreating the screen.
                 val resolvedRemoteUrl by produceState(
                     initialValue = CdnManager.resolveMediaUrlSync(remoteUrl),
                     key1 = remoteUrl
@@ -52,7 +49,7 @@ object PostMediaResolver {
                     value = CdnManager.resolveMediaUrlSync(remoteUrl).ifBlank { remoteUrl }
                 }
 
-                LaunchedEffect(remoteUrl) {
+                LaunchedEffect(remoteUrl, mediaId) {
                     repository.syncManager.syncMedia(
                         mediaId,
                         remoteUrl,
@@ -78,8 +75,21 @@ object PostMediaResolver {
         }
     }
 
+    private fun stableMediaId(url: String): String {
+        return runCatching {
+            val uri = URI(url)
+            val logicalKey = buildString {
+                append(uri.path ?: url)
+                uri.query?.let { append('?').append(it) }
+            }
+            "media_${kotlin.math.abs(logicalKey.hashCode())}"
+        }.getOrElse {
+            "media_${kotlin.math.abs(url.hashCode())}"
+        }
+    }
+
     private fun typeFor(url: String): String {
-        val normalized = url.lowercase()
+        val normalized = url.lowercase().substringBefore('#').substringBefore('?')
         return if (
             normalized.contains("/videos/") ||
             normalized.endsWith(".mp4") ||
@@ -87,6 +97,6 @@ object PostMediaResolver {
             normalized.endsWith(".mov") ||
             normalized.endsWith(".m4v") ||
             normalized.contains("video")
-        ) "video" else "image"
+        ) "POST_VIDEO" else "POST_IMAGE"
     }
 }
