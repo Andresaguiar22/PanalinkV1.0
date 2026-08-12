@@ -1,12 +1,41 @@
 package com.example
 
+import android.content.Context
+import androidx.room.Room
+import androidx.test.core.app.ApplicationProvider
+import com.example.data.database.PanalinkDatabase
 import com.example.data.database.PendingSocialActionEntity
+import com.example.data.database.PendingSocialActionDao
 import com.example.util.LogSanitizer
+import kotlinx.coroutines.test.runTest
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Before
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
 
+@RunWith(RobolectricTestRunner::class)
 class ConsolidationDataTest {
+
+    private lateinit var db: PanalinkDatabase
+    private lateinit var dao: PendingSocialActionDao
+
+    @Before
+    fun setupRoom() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        db = Room.inMemoryDatabaseBuilder(
+            context,
+            PanalinkDatabase::class.java
+        ).allowMainThreadQueries().build()
+        dao = db.pendingSocialActionDao()
+    }
+
+    @After
+    fun tearDownRoom() {
+        db.close()
+    }
 
     @Test
     fun testLogSanitizerRedactsBearerAndJwt() {
@@ -39,22 +68,21 @@ class ConsolidationDataTest {
         isReel = isReel
     )
 
-    // Regression contract for the v42 queue: this intentionally fails until
-    // LIKE/UNLIKE is converted from event persistence to desired-state persistence.
+    // Regression contract: LIKE/UNLIKE is expected to collapse to one
+    // logical desired-state intent after the v43 refactor. Against v42,
+    // each action has a distinct localActionId and therefore persists as
+    // its own row; this test must fail with Expected: 1, Actual: 4.
     @Test
-    fun current_behavior_does_not_collapse_interactions() {
+    fun current_behavior_does_not_collapse_interactions() = runTest {
         val targetId = "reel_A"
 
-        val actions = listOf(
-            action("1", targetId, "LIKE"),
-            action("2", targetId, "UNLIKE"),
-            action("3", targetId, "LIKE"),
-            action("4", targetId, "UNLIKE")
-        )
+        dao.insertAction(action("1", targetId, "LIKE"))
+        dao.insertAction(action("2", targetId, "UNLIKE"))
+        dao.insertAction(action("3", targetId, "LIKE"))
+        dao.insertAction(action("4", targetId, "UNLIKE"))
 
-        // The v42 DAO currently persists each action as a distinct row because
-        // localActionId is the primary key. The desired post-refactor contract
-        // is one logical LIKE-family intent for this target.
-        assertEquals(1, actions.size)
+        val pending = dao.getPendingActions()
+
+        assertEquals(1, pending.size)
     }
 }
