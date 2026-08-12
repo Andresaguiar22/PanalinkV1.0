@@ -20,7 +20,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.creative.animation.CreativeKeyframe
 import com.example.creative.animation.EasingType
 import com.example.creative.core.CreativeLayer
 import com.example.creative.timeline.CreativeTrack
@@ -43,18 +42,15 @@ fun PropertyInspector(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var activeTab by remember { mutableStateOf("transform") } // "transform", "style", "animation", "audio", "fx"
+    var activeTab by remember { mutableStateOf("transform") }
 
     Card(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(12.dp),
+        modifier = modifier.fillMaxWidth().padding(12.dp),
         colors = CardDefaults.cardColors(containerColor = Color(0xFF16161E)),
         shape = RoundedCornerShape(20.dp),
         border = BorderStroke(1.dp, Color(0xFF00E5FF))
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            // Header Row
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -64,6 +60,7 @@ fun PropertyInspector(
                     text = when {
                         selectedLayer is CreativeLayer.Text -> "Inspector de Texto 🔤"
                         selectedLayer is CreativeLayer.Sticker -> "Inspector de Sticker 🎨"
+                        selectedLayer is CreativeLayer.Image -> "Inspector de Imagen 🖼️"
                         selectedLayer is CreativeLayer.Drawing -> "Inspector de Dibujo ✏️"
                         selectedLayer is CreativeLayer.Filter -> "Inspector de Filtro 🔮"
                         selectedLayer is CreativeLayer.Audio -> "Inspector de Audio 🎵"
@@ -75,7 +72,6 @@ fun PropertyInspector(
                     fontWeight = FontWeight.Bold,
                     fontSize = 16.sp
                 )
-
                 IconButton(onClick = onDismiss) {
                     Icon(Icons.Default.Close, contentDescription = "Cerrar Inspector", tint = Color.White)
                 }
@@ -83,7 +79,6 @@ fun PropertyInspector(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Navigation Tabs
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -118,7 +113,6 @@ fun PropertyInspector(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Content Panel based on Active Tab
             when (activeTab) {
                 "transform" -> TransformInspectorPanel(selectedLayer, onUpdateLayer)
                 "style" -> StyleInspectorPanel(selectedLayer, onUpdateLayer)
@@ -130,131 +124,134 @@ fun PropertyInspector(
 }
 
 @Composable
-private fun TransformInspectorPanel(
-    layer: CreativeLayer?,
-    onUpdateLayer: (CreativeLayer) -> Unit
-) {
+private fun TransformInspectorPanel(layer: CreativeLayer?, onUpdateLayer: (CreativeLayer) -> Unit) {
     if (layer == null) return
-
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text("Escala: ${(layer.scale * 100).toInt()}%", color = Color.White, fontSize = 12.sp)
         Slider(
             value = layer.scale,
-            onValueChange = { newScale ->
-                when (layer) {
-                    is CreativeLayer.Text -> onUpdateLayer(layer.copy(scale = newScale))
-                    is CreativeLayer.Sticker -> onUpdateLayer(layer.copy(scale = newScale))
-                    is CreativeLayer.Drawing -> onUpdateLayer(layer.copy(scale = newScale))
-                    is CreativeLayer.Filter -> onUpdateLayer(layer.copy(scale = newScale))
-                    is CreativeLayer.Audio -> onUpdateLayer(layer.copy(scale = newScale))
-                    is CreativeLayer.Interactive -> onUpdateLayer(layer.copy(scale = newScale))
-                    is CreativeLayer.Group -> onUpdateLayer(layer.copy(scale = newScale))
-                    is CreativeLayer.Image -> onUpdateLayer(layer.copy(scale = newScale))
-                    is CreativeLayer.Video -> onUpdateLayer(layer.copy(scale = newScale))
-                }
-            },
+            onValueChange = { newScale -> updateLayerTransform(layer, onUpdateLayer, scale = newScale) },
             valueRange = 0.2f..3.5f,
             colors = SliderDefaults.colors(thumbColor = Color(0xFF00E5FF), activeTrackColor = Color(0xFF00E5FF))
         )
-
         Text("Rotación: ${layer.rotation.toInt()}°", color = Color.White, fontSize = 12.sp)
         Slider(
             value = layer.rotation,
-            onValueChange = { newRot ->
-                when (layer) {
-                    is CreativeLayer.Text -> onUpdateLayer(layer.copy(rotation = newRot))
-                    is CreativeLayer.Sticker -> onUpdateLayer(layer.copy(rotation = newRot))
-                    is CreativeLayer.Drawing -> onUpdateLayer(layer.copy(rotation = newRot))
-                    is CreativeLayer.Filter -> onUpdateLayer(layer.copy(rotation = newRot))
-                    is CreativeLayer.Audio -> onUpdateLayer(layer.copy(rotation = newRot))
-                    is CreativeLayer.Interactive -> onUpdateLayer(layer.copy(rotation = newRot))
-                    is CreativeLayer.Group -> onUpdateLayer(layer.copy(rotation = newRot))
-                    is CreativeLayer.Image -> onUpdateLayer(layer.copy(rotation = newRot))
-                    is CreativeLayer.Video -> onUpdateLayer(layer.copy(rotation = newRot))
-                }
-            },
+            onValueChange = { newRotation -> updateLayerTransform(layer, onUpdateLayer, rotation = newRotation) },
             valueRange = -180f..180f,
             colors = SliderDefaults.colors(thumbColor = Color(0xFF00E5FF), activeTrackColor = Color(0xFF00E5FF))
         )
-
         Text("Opacidad: ${(layer.opacity * 100).toInt()}%", color = Color.White, fontSize = 12.sp)
         Slider(
             value = layer.opacity,
-            onValueChange = { newOpacity ->
-                when (layer) {
-                    is CreativeLayer.Text -> onUpdateLayer(layer.copy(opacity = newOpacity))
-                    is CreativeLayer.Sticker -> onUpdateLayer(layer.copy(opacity = newOpacity))
-                    is CreativeLayer.Drawing -> onUpdateLayer(layer.copy(opacity = newOpacity))
-                    is CreativeLayer.Filter -> onUpdateLayer(layer.copy(opacity = newOpacity))
-                    is CreativeLayer.Audio -> onUpdateLayer(layer.copy(opacity = newOpacity))
-                    is CreativeLayer.Interactive -> onUpdateLayer(layer.copy(opacity = newOpacity))
-                    is CreativeLayer.Group -> onUpdateLayer(layer.copy(opacity = newOpacity))
-                    is CreativeLayer.Image -> onUpdateLayer(layer.copy(opacity = newOpacity))
-                    is CreativeLayer.Video -> onUpdateLayer(layer.copy(opacity = newOpacity))
-                }
-            },
+            onValueChange = { newOpacity -> updateLayerTransform(layer, onUpdateLayer, opacity = newOpacity) },
             valueRange = 0f..1f,
             colors = SliderDefaults.colors(thumbColor = Color(0xFF00E5FF), activeTrackColor = Color(0xFF00E5FF))
         )
     }
 }
 
-@Composable
-private fun StyleInspectorPanel(
-    layer: CreativeLayer?,
-    onUpdateLayer: (CreativeLayer) -> Unit
+private fun updateLayerTransform(
+    layer: CreativeLayer,
+    onUpdateLayer: (CreativeLayer) -> Unit,
+    scale: Float = layer.scale,
+    rotation: Float = layer.rotation,
+    opacity: Float = layer.opacity
 ) {
-    if (layer is CreativeLayer.Text) {
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Tipografía:", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-            val fonts = listOf("SansSerif", "Serif", "Monospace", "Cursive")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                fonts.forEach { font ->
-                    FilterChip(
-                        selected = layer.fontFamily == font,
-                        onClick = { onUpdateLayer(layer.copy(fontFamily = font)) },
-                        label = { Text(font, fontSize = 11.sp, color = if (layer.fontFamily == font) Color.Black else Color.White) },
-                        colors = FilterChipDefaults.filterChipColors(selectedContainerColor = Color(0xFF00E5FF))
-                    )
-                }
-            }
+    when (layer) {
+        is CreativeLayer.Text -> onUpdateLayer(layer.copy(scale = scale, rotation = rotation, opacity = opacity))
+        is CreativeLayer.Sticker -> onUpdateLayer(layer.copy(scale = scale, rotation = rotation, opacity = opacity))
+        is CreativeLayer.Drawing -> onUpdateLayer(layer.copy(scale = scale, rotation = rotation, opacity = opacity))
+        is CreativeLayer.Filter -> onUpdateLayer(layer.copy(scale = scale, rotation = rotation, opacity = opacity))
+        is CreativeLayer.Audio -> onUpdateLayer(layer.copy(scale = scale, rotation = rotation, opacity = opacity))
+        is CreativeLayer.Interactive -> onUpdateLayer(layer.copy(scale = scale, rotation = rotation, opacity = opacity))
+        is CreativeLayer.Group -> onUpdateLayer(layer.copy(scale = scale, rotation = rotation, opacity = opacity))
+        is CreativeLayer.Image -> onUpdateLayer(layer.copy(scale = scale, rotation = rotation, opacity = opacity))
+        is CreativeLayer.Video -> onUpdateLayer(layer.copy(scale = scale, rotation = rotation, opacity = opacity))
+    }
+}
 
-            Text("Color del Texto:", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-            val colors = listOf("#FFFFFF", "#00E5FF", "#FF4081", "#FFD54F", "#00FF85", "#E040FB", "#000000")
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(colors) { hex ->
-                    val colorInt = android.graphics.Color.parseColor(hex)
-                    Box(
-                        modifier = Modifier
-                            .size(32.dp)
-                            .clip(CircleShape)
-                            .background(Color(colorInt))
-                            .border(
-                                width = if (layer.colorHex == hex) 2.dp else 0.dp,
-                                color = Color.White,
-                                shape = CircleShape
-                            )
-                            .clickable { onUpdateLayer(layer.copy(colorHex = hex)) }
-                    )
-                }
-            }
+@Composable
+private fun StyleInspectorPanel(layer: CreativeLayer?, onUpdateLayer: (CreativeLayer) -> Unit) {
+    when (layer) {
+        is CreativeLayer.Text -> TextStyleControls(layer, onUpdateLayer)
+        is CreativeLayer.Image -> ImageStyleControls(layer, onUpdateLayer)
+        else -> Text("No hay opciones avanzadas de estilo para este tipo de capa.", color = Color.Gray, fontSize = 12.sp)
+    }
+}
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("Sombra de Texto", color = Color.White, fontSize = 12.sp)
-                Switch(
-                    checked = layer.hasShadow,
-                    onCheckedChange = { onUpdateLayer(layer.copy(hasShadow = it)) },
-                    colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFF00E5FF))
+@Composable
+private fun TextStyleControls(layer: CreativeLayer.Text, onUpdateLayer: (CreativeLayer) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("Tipografía:", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        val fonts = listOf("SansSerif", "Serif", "Monospace", "Cursive")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            fonts.forEach { font ->
+                FilterChip(
+                    selected = layer.fontFamily == font,
+                    onClick = { onUpdateLayer(layer.copy(fontFamily = font)) },
+                    label = { Text(font, fontSize = 11.sp, color = if (layer.fontFamily == font) Color.Black else Color.White) },
+                    colors = FilterChipDefaults.filterChipColors(selectedContainerColor = Color(0xFF00E5FF))
                 )
             }
         }
-    } else {
-        Text("No hay opciones avanzadas de estilo para este tipo de capa.", color = Color.Gray, fontSize = 12.sp)
+        Text("Color del Texto:", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        val colors = listOf("#FFFFFF", "#00E5FF", "#FF4081", "#FFD54F", "#00FF85", "#E040FB", "#000000")
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(colors) { hex ->
+                val colorInt = android.graphics.Color.parseColor(hex)
+                Box(
+                    modifier = Modifier.size(32.dp).clip(CircleShape).background(Color(colorInt)).border(
+                        width = if (layer.colorHex == hex) 2.dp else 0.dp,
+                        color = Color.White,
+                        shape = CircleShape
+                    ).clickable { onUpdateLayer(layer.copy(colorHex = hex)) }
+                )
+            }
+        }
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text("Sombra de Texto", color = Color.White, fontSize = 12.sp)
+            Switch(
+                checked = layer.hasShadow,
+                onCheckedChange = { onUpdateLayer(layer.copy(hasShadow = it)) },
+                colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFF00E5FF))
+            )
+        }
     }
+}
+
+@Composable
+private fun ImageStyleControls(layer: CreativeLayer.Image, onUpdateLayer: (CreativeLayer) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Ajustes de imagen 🖼️", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+        AdjustmentSlider("Brillo", layer.brightness, -1f..1f) { onUpdateLayer(layer.copy(brightness = it)) }
+        AdjustmentSlider("Contraste", layer.contrast, -1f..1f) { onUpdateLayer(layer.copy(contrast = it)) }
+        AdjustmentSlider("Saturación", layer.saturation, 0f..2f) { onUpdateLayer(layer.copy(saturation = it)) }
+
+        Text("Filtro", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        val filters = listOf("none", "warm", "cool", "mono", "vintage", "vivid")
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            items(filters) { filter ->
+                FilterChip(
+                    selected = layer.filterName == filter,
+                    onClick = { onUpdateLayer(layer.copy(filterName = filter)) },
+                    label = { Text(filter, fontSize = 10.sp, color = if (layer.filterName == filter) Color.Black else Color.White) },
+                    colors = FilterChipDefaults.filterChipColors(selectedContainerColor = Color(0xFF00E5FF))
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AdjustmentSlider(label: String, value: Float, range: ClosedFloatingPointRange<Float>, onValueChange: (Float) -> Unit) {
+    Text("$label: ${"%.2f".format(value)}", color = Color.White, fontSize = 11.sp)
+    Slider(
+        value = value,
+        onValueChange = onValueChange,
+        valueRange = range,
+        colors = SliderDefaults.colors(thumbColor = Color(0xFF00E5FF), activeTrackColor = Color(0xFF00E5FF))
+    )
 }
 
 @Composable
@@ -265,13 +262,10 @@ private fun KeyframeAnimationPanel(
     onRemoveKeyframe: (layerId: String, propertyName: String, timeMs: Long) -> Unit
 ) {
     if (layer == null) return
-
     var selectedProperty by remember { mutableStateOf("scale") }
     var selectedEasing by remember { mutableStateOf(EasingType.EASE_IN_OUT) }
-
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text("Pistas de Propiedad (Keyframes):", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             listOf("scale" to "Escala", "rotation" to "Rotación", "opacity" to "Opacidad").forEach { (prop, label) ->
                 FilterChip(
@@ -282,21 +276,16 @@ private fun KeyframeAnimationPanel(
                 )
             }
         }
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Button(
                 onClick = {
-                    val valToSave = when (selectedProperty) {
+                    val value = when (selectedProperty) {
                         "scale" -> layer.scale
                         "rotation" -> layer.rotation
                         "opacity" -> layer.opacity
                         else -> 1f
                     }
-                    onAddKeyframe(layer.id, selectedProperty, valToSave, selectedEasing)
+                    onAddKeyframe(layer.id, selectedProperty, value, selectedEasing)
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00E5FF))
             ) {
@@ -304,7 +293,6 @@ private fun KeyframeAnimationPanel(
                 Spacer(modifier = Modifier.width(4.dp))
                 Text("Insertar Keyframe ($currentTimeMs ms)", color = Color.Black, fontSize = 12.sp, fontWeight = FontWeight.Bold)
             }
-
             IconButton(onClick = { onRemoveKeyframe(layer.id, selectedProperty, currentTimeMs) }) {
                 Icon(Icons.Default.Delete, contentDescription = "Eliminar Keyframe", tint = Color(0xFFFF5252))
             }
@@ -321,31 +309,18 @@ private fun AudioControlPanel(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text("Controles de Audio Profesional 🎧", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-
         if (layer is CreativeLayer.Audio) {
             Text("Volumen: ${(layer.volume * 100).toInt()}%", color = Color.White, fontSize = 12.sp)
-            Slider(
-                value = layer.volume,
-                onValueChange = { onUpdateLayer(layer.copy(volume = it)) },
-                valueRange = 0f..2f,
-                colors = SliderDefaults.colors(thumbColor = Color(0xFF00E5FF), activeTrackColor = Color(0xFF00E5FF))
-            )
+            Slider(value = layer.volume, onValueChange = { onUpdateLayer(layer.copy(volume = it)) }, valueRange = 0f..2f,
+                colors = SliderDefaults.colors(thumbColor = Color(0xFF00E5FF), activeTrackColor = Color(0xFF00E5FF)))
         } else if (track is CreativeTrack.AudioTrack) {
             Text("Volumen de Música: ${(track.volume * 100).toInt()}%", color = Color.White, fontSize = 12.sp)
-            Slider(
-                value = track.volume,
-                onValueChange = { onUpdateTrack(track.copy(volume = it)) },
-                valueRange = 0f..2f,
-                colors = SliderDefaults.colors(thumbColor = Color(0xFF00E5FF), activeTrackColor = Color(0xFF00E5FF))
-            )
+            Slider(value = track.volume, onValueChange = { onUpdateTrack(track.copy(volume = it)) }, valueRange = 0f..2f,
+                colors = SliderDefaults.colors(thumbColor = Color(0xFF00E5FF), activeTrackColor = Color(0xFF00E5FF)))
         } else if (track is CreativeTrack.VideoTrack) {
             Text("Volumen del Video Original: ${(track.volume * 100).toInt()}%", color = Color.White, fontSize = 12.sp)
-            Slider(
-                value = track.volume,
-                onValueChange = { onUpdateTrack(track.copy(volume = it)) },
-                valueRange = 0f..2f,
-                colors = SliderDefaults.colors(thumbColor = Color(0xFF00E5FF), activeTrackColor = Color(0xFF00E5FF))
-            )
+            Slider(value = track.volume, onValueChange = { onUpdateTrack(track.copy(volume = it)) }, valueRange = 0f..2f,
+                colors = SliderDefaults.colors(thumbColor = Color(0xFF00E5FF), activeTrackColor = Color(0xFF00E5FF)))
         }
     }
 }
