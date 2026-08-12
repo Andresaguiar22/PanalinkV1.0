@@ -13,13 +13,53 @@ interface PendingSocialActionDao {
     @Query("SELECT * FROM pending_social_actions WHERE userId = :userId AND targetId = :targetId AND actionType = :actionType")
     suspend fun getExistingAction(userId: String, targetId: String, actionType: String): PendingSocialActionEntity?
 
+    /** Raw persistence primitive used for imperative events and by replaceDesiredState. */
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertAction(action: PendingSocialActionEntity)
+    suspend fun insertRawAction(action: PendingSocialActionEntity)
+
+    /**
+     * Compatibility entry point for existing Repository call sites.
+     * LIKE/UNLIKE and FAVORITE/UNFAVORITE are transparently promoted to
+     * declarative state actions. SHARE/COMMENT/etc. remain ordinary events.
+     */
+    @Transaction
+    suspend fun insertAction(action: PendingSocialActionEntity) {
+        val declarative = action.actionFamily != null || action.actionType in setOf(
+            "LIKE", "UNLIKE", "FAVORITE", "UNFAVORITE"
+        )
+
+        if (!declarative) {
+            insertRawAction(action)
+            return
+        }
+
+        val family = action.actionFamily ?: when (action.actionType) {
+            "LIKE", "UNLIKE" -> "LIKE"
+            "FAVORITE", "UNFAVORITE" -> "FAVORITE"
+            else -> error("Unsupported declarative action type: ${action.actionType}")
+        }
+        val desiredState = action.desiredState ?: when (action.actionType) {
+            "LIKE", "FAVORITE" -> true
+            "UNLIKE", "UNFAVORITE" -> false
+            else -> error("Unsupported declarative action type: ${action.actionType}")
+        }
+
+        replaceDesiredState(
+            action.copy(
+                actionFamily = family,
+                desiredState = desiredState,
+                actionType = if (family == "LIKE") {
+                    if (desiredState) "LIKE" else "UNLIKE"
+                } else {
+                    if (desiredState) "FAVORITE" else "UNFAVORITE"
+                }
+            )
+        )
+    }
 
     /**
      * Atomically replaces the desired state for one logical interaction family.
-     * The row identity is preserved when the family already exists, while the
-     * revision changes so an in-flight Worker snapshot becomes stale.
+     * Existing localActionId is preserved and revision is advanced.
      */
     @Transaction
     suspend fun replaceDesiredState(action: PendingSocialActionEntity) {
@@ -30,18 +70,28 @@ interface PendingSocialActionDao {
             "replaceDesiredState requires a non-null desiredState"
         }
 
+        val normalizedActionType = if (family == "LIKE") {
+            if (desiredState) "LIKE" else "UNLIKE"
+        } else if (family == "FAVORITE") {
+            if (desiredState) "FAVORITE" else "UNFAVORITE"
+        } else {
+            action.actionType
+        }
+
         val updatedRows = updateActionFamilyState(
             userId = action.userId,
             targetId = action.targetId,
             isReel = action.isReel,
             actionFamily = family,
             desiredState = desiredState,
+            actionType = normalizedActionType,
             createdAt = action.createdAt
         )
 
         if (updatedRows == 0) {
-            insertAction(
+            insertRawAction(
                 action.copy(
+                    actionType = normalizedActionType,
                     status = "pending",
                     retryCount = 0,
                     revision = 1L
@@ -52,7 +102,8 @@ interface PendingSocialActionDao {
 
     @Query("""
         UPDATE pending_social_actions
-        SET desiredState = :desiredState,
+        SET actionType = :actionType,
+            desiredState = :desiredState,
             createdAt = :createdAt,
             retryCount = 0,
             status = 'pending',
@@ -68,6 +119,7 @@ interface PendingSocialActionDao {
         isReel: Boolean,
         actionFamily: String,
         desiredState: Boolean,
+        actionType: String,
         createdAt: Long
     ): Int
 
@@ -91,7 +143,7 @@ interface PendingSocialActionDao {
 
     /**
      * Marks a declarative action pending only when the Worker is still operating
-     * on the same snapshot. A stale RPC cannot mutate a newer user intent.
+     * on the same snapshot.
      */
     @Query("""
         UPDATE pending_social_actions
@@ -116,10 +168,12 @@ interface PendingSocialActionDao {
     @Query("DELETE FROM pending_social_actions WHERE localActionId = :id")
     suspend fun deleteActionById(id: String)
 
-    @Query("DELETE FROM pending_social_actions WHERE userId = :userId AND targetId = :targetId AND actionType IN ('LIKE', 'UNLIKE')")
+    // Legacy Repository calls are retained, but they must never delete the
+    // new declarative rows. Declarative rows are collapsed by insertAction().
+    @Query("DELETE FROM pending_social_actions WHERE userId = :userId AND targetId = :targetId AND actionFamily IS NULL AND actionType IN ('LIKE', 'UNLIKE')")
     suspend fun deleteLikeActionsForTarget(userId: String, targetId: String)
 
-    @Query("DELETE FROM pending_social_actions WHERE userId = :userId AND targetId = :targetId AND actionType IN ('FAVORITE', 'UNFAVORITE')")
+    @Query("DELETE FROM pending_social_actions WHERE userId = :userId AND targetId = :targetId AND actionFamily IS NULL AND actionType IN ('FAVORITE', 'UNFAVORITE')")
     suspend fun deleteFavoriteActionsForTarget(userId: String, targetId: String)
 
     @Query("DELETE FROM pending_social_actions")
