@@ -19,6 +19,7 @@ import kotlinx.coroutines.*
 class PanalinkRealtimeService : Service() {
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var messageCollectionJob: Job? = null
+    private val socialInteractionRealtimeBridge = SocialInteractionRealtimeBridge()
 
     companion object {
         private const val TAG = "PanalinkRealtime"
@@ -55,6 +56,7 @@ class PanalinkRealtimeService : Service() {
 
         startListeningToAllRealtimeEvents()
         SupabaseClient.connectRealtime()
+        socialInteractionRealtimeBridge.start()
 
         return START_STICKY
     }
@@ -274,6 +276,7 @@ class PanalinkRealtimeService : Service() {
         Log.d(TAG, "PanalinkRealtimeService Destroyed")
         messageCollectionJob?.cancel()
         allRealtimeJobs?.cancel()
+        socialInteractionRealtimeBridge.stop()
         serviceScope.cancel()
     }
 }
