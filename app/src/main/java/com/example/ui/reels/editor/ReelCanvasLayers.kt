@@ -3,17 +3,16 @@ package com.example.ui.reels.editor
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import com.example.ui.reels.editor.model.ReelLayer
 import com.example.ui.reels.editor.model.ReelLayerContent
 import com.example.ui.reels.editor.model.ReelProject
@@ -30,27 +29,24 @@ fun ReelCanvasLayers(
 ) {
     val visibleLayers = project.timeline.tracks.flatMap { track -> track.layers.map { track to it } }
         .filter { (_, layer) ->
-            layer.visible &&
-                project.timeline.currentTimeMs in layer.startTimeMs..layer.endTimeMs &&
+            layer.visible && project.timeline.currentTimeMs in layer.startTimeMs..layer.endTimeMs &&
                 layer.type in setOf(ReelTrackType.TEXT, ReelTrackType.STICKER)
         }
         .sortedBy { (_, layer) -> layer.zIndex }
 
-    BoxWithConstraints(Modifier.fillMaxSize()) {
+    BoxWithConstraints(Modifier) {
         val widthPx = constraints.maxWidth.toFloat().coerceAtLeast(1f)
         val heightPx = constraints.maxHeight.toFloat().coerceAtLeast(1f)
-        Box(Modifier.fillMaxSize()) {
-            visibleLayers.forEach { (track, layer) ->
-                CanvasLayerItem(
-                    layer = layer,
-                    selected = layer.id == project.selectedLayerId,
-                    widthPx = widthPx,
-                    heightPx = heightPx,
-                    onSelect = onSelect,
-                    onPan = { dx, dy -> onMove(track, layer, dx / widthPx, dy / heightPx) },
-                    onTransform = { zoom, rotation -> onTransform(track, layer, zoom, rotation) }
-                )
-            }
+        visibleLayers.forEach { (track, layer) ->
+            CanvasLayerItem(
+                layer = layer,
+                selected = layer.id == project.selectedLayerId,
+                widthPx = widthPx,
+                heightPx = heightPx,
+                onSelect = onSelect,
+                onPan = { dx, dy -> onMove(track, layer, dx / widthPx, dy / heightPx) },
+                onTransform = { zoom, rotation -> onTransform(track, layer, zoom, rotation) }
+            )
         }
     }
 }
@@ -73,30 +69,36 @@ private fun CanvasLayerItem(
 
     Box(
         modifier = Modifier
-            .fillMaxSize()
+            .offset {
+                IntOffset(
+                    (layer.x.coerceIn(0f, 1f) * widthPx).roundToInt(),
+                    (layer.y.coerceIn(0f, 1f) * heightPx).roundToInt()
+                )
+            }
             .reelTransformGestures(
                 onPan = { onSelect(layer.id); onPan(it.x, it.y) },
                 onZoom = { onSelect(layer.id); onTransform(it, 0f) },
                 onRotate = { onSelect(layer.id); onTransform(1f, it) }
             )
+            .graphicsLayer {
+                scaleX = layer.scale.coerceIn(0.1f, 8f)
+                scaleY = layer.scale.coerceIn(0.1f, 8f)
+                rotationZ = layer.rotationDegrees
+            }
     ) {
         Text(
             text = label,
             modifier = Modifier
-                .align(Alignment.TopStart)
-                .offset {
-                    IntOffset(
-                        (layer.x.coerceIn(0f, 1f) * widthPx).roundToInt(),
-                        (layer.y.coerceIn(0f, 1f) * heightPx).roundToInt()
-                    )
-                }
-                .background(
-                    if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
-                    else Color.Transparent
-                )
+                .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else Color.Transparent)
                 .padding(horizontal = 10.dp, vertical = 6.dp),
             color = Color.White,
             style = MaterialTheme.typography.headlineSmall
         )
+        if (selected) {
+            ReelTransformOverlay(
+                visible = true,
+                modifier = Modifier.matchParentSize()
+            )
+        }
     }
 }
