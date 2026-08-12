@@ -40,18 +40,25 @@ object PostMediaResolver {
                 val mediaState by repository.observeMedia(mediaId)
                     .collectAsStateWithLifecycle(initialValue = null)
 
-                // Always resolve legacy/dynamic CDN URLs before downloading.
-                // Supabase Storage and unrelated external URLs are left untouched
-                // by CdnManager; only known CDN origins are rewritten.
-                val resolvedRemoteUrl = remember(remoteUrl) {
-                    CdnManager.resolveMediaUrlSync(remoteUrl).ifBlank { remoteUrl }
+                // Resolve the current Supabase CDN candidate before exposing the
+                // URL to Coil/Media3. This state is refreshed after the CDN
+                // manager has revalidated the current endpoint, so a changed
+                // Cloudflare URL can propagate without recreating the screen.
+                val resolvedRemoteUrl by produceState(
+                    initialValue = CdnManager.resolveMediaUrlSync(remoteUrl),
+                    key1 = remoteUrl
+                ) {
+                    runCatching { CdnManager.getCDNUrl(forceRefresh = false) }
+                    value = CdnManager.resolveMediaUrlSync(remoteUrl).ifBlank { remoteUrl }
                 }
 
                 LaunchedEffect(remoteUrl) {
-                    // Ensure the current Supabase CDN candidate has a chance to
-                    // become active before syncing a legacy CDN URL.
-                    runCatching { CdnManager.getCDNUrl(forceRefresh = false) }
-                    repository.syncManager.syncMedia(mediaId, remoteUrl, typeFor(remoteUrl), ownerId)
+                    repository.syncManager.syncMedia(
+                        mediaId,
+                        remoteUrl,
+                        typeFor(remoteUrl),
+                        ownerId
+                    )
                 }
 
                 remember(mediaState, remoteUrl, resolvedRemoteUrl) {
@@ -64,8 +71,6 @@ object PostMediaResolver {
                             MediaResource.Remote(resolvedRemoteUrl)
                         }
                     } else {
-                        // The remote fallback must also use the active CDN so a
-                        // changed Cloudflare URL is immediately consumable by UI.
                         MediaResource.Remote(resolvedRemoteUrl)
                     }
                 }
