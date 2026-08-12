@@ -3,6 +3,7 @@ package com.example.ui.reels.editor
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
@@ -13,11 +14,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.dp
 import com.example.ui.reels.editor.model.ReelLayer
 import com.example.ui.reels.editor.model.ReelLayerContent
 import com.example.ui.reels.editor.model.ReelProject
 import com.example.ui.reels.editor.model.ReelTrack
+import com.example.ui.reels.editor.model.ReelTrackType
 import kotlin.math.roundToInt
 
 @Composable
@@ -28,14 +30,19 @@ fun ReelCanvasLayers(
 ) {
     val visibleLayers = project.timeline.tracks
         .flatMap { track -> track.layers.map { track to it } }
-        .filter { (_, layer) -> layer.visible }
+        .filter { (_, layer) ->
+            layer.visible && project.timeline.currentTimeMs in layer.startTimeMs..layer.endTimeMs &&
+                layer.type in setOf(ReelTrackType.TEXT, ReelTrackType.STICKER)
+        }
         .sortedBy { (_, layer) -> layer.zIndex }
 
-    Box(Modifier.fillMaxSize()) {
-        visibleLayers.forEach { (track, layer) ->
-            if (layer.type == com.example.ui.reels.editor.model.ReelTrackType.TEXT || layer.type == com.example.ui.reels.editor.model.ReelTrackType.STICKER) {
-                CanvasLayerItem(layer, layer.id == project.selectedLayerId, onSelect) { dx, dy ->
-                    onMove(track, layer, dx, dy)
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val widthPx = constraints.maxWidth.toFloat().coerceAtLeast(1f)
+        val heightPx = constraints.maxHeight.toFloat().coerceAtLeast(1f)
+        Box(Modifier.fillMaxSize()) {
+            visibleLayers.forEach { (track, layer) ->
+                CanvasLayerItem(layer, layer.id == project.selectedLayerId, widthPx, heightPx, onSelect) { dx, dy ->
+                    onMove(track, layer, dx / widthPx, dy / heightPx)
                 }
             }
         }
@@ -46,11 +53,12 @@ fun ReelCanvasLayers(
 private fun CanvasLayerItem(
     layer: ReelLayer,
     selected: Boolean,
+    widthPx: Float,
+    heightPx: Float,
     onSelect: (String) -> Unit,
     onDrag: (Float, Float) -> Unit
 ) {
-    val content = layer.content
-    val label = when (content) {
+    val label = when (val content = layer.content) {
         is ReelLayerContent.Text -> content.value
         is ReelLayerContent.Sticker -> "😀"
         else -> return
@@ -60,9 +68,7 @@ private fun CanvasLayerItem(
         modifier = Modifier
             .fillMaxSize()
             .pointerInput(layer.id, layer.x, layer.y) {
-                detectDragGestures(
-                    onDragStart = { onSelect(layer.id) }
-                ) { change, dragAmount ->
+                detectDragGestures(onDragStart = { onSelect(layer.id) }) { change, dragAmount ->
                     change.consume()
                     onDrag(dragAmount.x, dragAmount.y)
                 }
@@ -72,17 +78,13 @@ private fun CanvasLayerItem(
             text = label,
             modifier = Modifier
                 .align(Alignment.TopStart)
-                .offsetFraction(layer.x, layer.y)
-                .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.25f) else Color.Transparent)
+                .offset {
+                    IntOffset((layer.x.coerceIn(0f, 1f) * widthPx).roundToInt(), (layer.y.coerceIn(0f, 1f) * heightPx).roundToInt())
+                }
+                .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else Color.Transparent)
                 .padding(horizontal = 10.dp, vertical = 6.dp),
-            color = if (selected) Color.White else Color.White,
+            color = Color.White,
             style = MaterialTheme.typography.headlineSmall
         )
     }
 }
-
-private fun Modifier.offsetFraction(x: Float, y: Float): Modifier = this.then(
-    Modifier.offset {
-        IntOffset((x.coerceIn(0f, 1f) * 1080f).roundToInt(), (y.coerceIn(0f, 1f) * 1920f).roundToInt())
-    }
-)
