@@ -1729,6 +1729,7 @@ fun VideoPlayer(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     var exoPlayerRef by remember { mutableStateOf<androidx.media3.exoplayer.ExoPlayer?>(null) }
     var hasError by remember { mutableStateOf(false) }
     var isBuffering by remember { mutableStateOf(true) }
@@ -1851,11 +1852,24 @@ fun VideoPlayer(
                 Text("Error al reproducir video", color = Color.White, fontWeight = FontWeight.Bold)
                 Spacer(modifier = Modifier.height(8.dp))
                 Button(onClick = {
-                    com.example.data.repository.CdnManager.clearCache()
-                    hasError = false
-                    isBuffering = true
-                    exoPlayerRef?.prepare()
-                    exoPlayerRef?.play()
+                    coroutineScope.launch {
+                        hasError = false
+                        isBuffering = true
+                        
+                        // forceRefresh CDN
+                        com.example.data.repository.CdnManager.getCDNUrl(forceRefresh = true)
+                        
+                        // resolveMediaUrl actualizado
+                        val newUrl = com.example.data.repository.CdnManager.resolveMediaUrlSync(videoUrl)
+                        
+                        // crear nuevo MediaItem y reemplazar en el player
+                        exoPlayerRef?.let { player ->
+                            val mediaItem = androidx.media3.common.MediaItem.fromUri(newUrl)
+                            player.setMediaItem(mediaItem)
+                            player.prepare()
+                            player.play()
+                        }
+                    }
                 }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00FF85))) {
                     Text("Reintentar", color = Color.Black)
                 }

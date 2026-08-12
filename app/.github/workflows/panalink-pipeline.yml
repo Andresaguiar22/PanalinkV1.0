@@ -3,8 +3,8 @@ name: PanaLink V2.0 Unified Pipeline
 on:
   push:
     branches: [ "main", "master", "develop" ]
-  tags:
-    - 'v*'
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
       changelog:
@@ -51,13 +51,6 @@ jobs:
           echo "Using Android Build Tools: $BUILD_TOOLS_VERSION"
           echo "$ANDROID_SDK_ROOT/build-tools/$BUILD_TOOLS_VERSION" >> $GITHUB_PATH
 
-      - name: Prepare Secrets Configuration
-        run: |
-          touch secrets.properties
-          touch secrets.defaults.properties
-          touch app/secrets.properties
-          touch app/secrets.defaults.properties
-
       - name: Inyectar Google Services JSON
         env:
           GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
@@ -70,7 +63,7 @@ jobs:
             exit 1
           fi
 
-      - name: Decode Keystore
+      - name: Decode Keystore & Write Properties
         run: |
           if [ -z "${{ secrets.KEYSTORE_BASE64 }}" ]; then
             echo "::error::KEYSTORE_BASE64 secret is missing! Build will likely fail."
@@ -80,6 +73,13 @@ jobs:
           ${{ secrets.KEYSTORE_BASE64 }}
           EOF
           base64 --decode --ignore-garbage base64_temp.txt > app/release-key.jks
+          cp app/release-key.jks release-key.jks
+
+          # Escribir las propiedades requeridas por el build.gradle.kts en app/secrets.properties
+          echo "KEYSTORE_FILE=release-key.jks" > app/secrets.properties
+          echo "KEYSTORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }}" >> app/secrets.properties
+          echo "KEY_ALIAS=${{ secrets.KEY_ALIAS }}" >> app/secrets.properties
+          echo "KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}" >> app/secrets.properties
 
       - name: Test Keystore Integrity & Fingerprint
         run: |
@@ -87,7 +87,7 @@ jobs:
           echo "¡BOVEDA ABIERTA CON ÉXITO!"
 
       - name: Build Release APK
-        run: ./gradlew assembleRelease --no-daemon
+        run: gradle assembleRelease --no-daemon
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
@@ -97,4 +97,4 @@ jobs:
 
       - name: Clean up Keystore
         if: always()
-        run: rm -f app/release-key.jks base64_temp.txt
+        run: rm -f app/release-key.jks release-key.jks base64_temp.txt app/secrets.properties

@@ -179,9 +179,13 @@ object CdnManager {
                                             return@withLock cdnUrl
                                         } else {
                                             Log.w(TAG, "CDN_UNREACHABLE: URL '$cdnUrl' configurada en Supabase no respondió a health check")
-                                            cachedCdnUrl = cdnUrl // Save anyway as fallback
-                                            saveToPrefs(cdnUrl)
-                                            return@withLock cdnUrl
+                                            if (!cachedCdnUrl.isNullOrEmpty()) {
+                                                Log.i(TAG, "🟢 Conservando URL anterior funcional: '$cachedCdnUrl'")
+                                                return@withLock cachedCdnUrl!!
+                                            } else {
+                                                Log.w(TAG, "No hay URL anterior funcional. Devolviendo '$cdnUrl' como último recurso sin guardar.")
+                                                return@withLock cdnUrl
+                                            }
                                         }
                                     }
                                 } else {

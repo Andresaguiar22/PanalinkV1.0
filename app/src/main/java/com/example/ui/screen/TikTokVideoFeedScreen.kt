@@ -944,12 +944,22 @@ fun TikTokPageItem(
                         avatarUrl = safeAvatarUrl,
                         displayName = safeDisplayName ?: "",
                         onRetry = {
-                            CdnManager.clearCache()
-                            hasError = false
-                            isBuffering = true
-                            exoPlayerRef?.apply {
-                                prepare()
-                                play()
+                            coroutineScope.launch {
+                                hasError = false
+                                isBuffering = true
+                                com.example.data.repository.CdnManager.getCDNUrl(forceRefresh = true)
+                                val newUrl = com.example.data.repository.CdnManager.resolveMediaUrlSync(state.mediaUrl)
+                                exoPlayerRef?.let { player ->
+                                    val videoUrl = if (!state.localVideoPath.isNullOrEmpty() && java.io.File(state.localVideoPath).exists()) {
+                                        state.localVideoPath
+                                    } else {
+                                        newUrl ?: ""
+                                    }
+                                    val mediaItem = androidx.media3.common.MediaItem.fromUri(videoUrl)
+                                    player.setMediaItem(mediaItem)
+                                    player.prepare()
+                                    player.play()
+                                }
                             }
                         }
                     )
