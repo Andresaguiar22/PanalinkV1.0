@@ -21,12 +21,9 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * Single source of truth for Panalink's dynamic media CDN.
  *
- * Rules:
- *  - Supabase remains the source of truth for the current CDN candidate.
- *  - A candidate is promoted only after a successful health check.
- *  - A failed refresh NEVER replaces a known-good CDN.
- *  - Realtime updates are validated before being cached.
- *  - UI/media consumers can safely use resolveMediaUrlSync() without doing network I/O.
+ * Supabase is the source of truth, but a candidate is promoted only after a
+ * successful health check. A failed refresh never destroys the last known-good
+ * CDN, which is essential because the CDN endpoint may change dynamically.
  */
 object CdnManager {
     private const val TAG = "CdnManager"
@@ -40,6 +37,7 @@ object CdnManager {
     private val cdnMutex = Mutex()
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val isListenerStarted = AtomicBoolean(false)
+    private val isStartupRefreshStarted = AtomicBoolean(false)
 
     private val client: OkHttpClient by lazy {
         OkHttpClient.Builder()
@@ -67,6 +65,16 @@ object CdnManager {
         } catch (e: Exception) {
             Log.e(TAG, "Error restoring CDN URL", e)
         }
+
+        // Do not block application startup. The cached CDN can serve immediately
+        // while this background refresh reconciles it with Supabase.
+        if (isStartupRefreshStarted.compareAndSet(false, true)) {
+            scope.launch {
+                delay(500)
+                runCatching { getCDNUrl(forceRefresh = true) }
+                    .onFailure { Log.w(TAG, "Startup CDN refresh failed: ${it.message}") }
+            }
+        }
     }
 
     private fun normalizeBase(url: String): String = url.trim().removeSuffix("/")
@@ -91,10 +99,7 @@ object CdnManager {
         }
     }
 
-    /**
-     * Validates the CDN itself, not merely DNS/connectivity.
-     * /health must return a successful 2xx response.
-     */
+    /** /health must return an actual successful 2xx response. */
     private fun isCdnReachable(cdnUrl: String): Boolean {
         val base = normalizeBase(cdnUrl)
         if (!isValidCdnBase(base)) return false
@@ -122,9 +127,7 @@ object CdnManager {
         }
     }
 
-    /**
-     * Realtime is advisory. Never promote a URL received from Realtime without validation.
-     */
+    /** Realtime is advisory; never promote an unvalidated URL. */
     private fun startRealtimeListener() {
         if (!isListenerStarted.compareAndSet(false, true)) return
 
@@ -160,10 +163,6 @@ object CdnManager {
         Log.i(TAG, "CDN promoted from $source: $clean")
     }
 
-    /**
-     * Gets the active CDN from local cache or Supabase.
-     * A failed Supabase refresh keeps the last known-good CDN.
-     */
     suspend fun getCDNUrl(forceRefresh: Boolean = false): String = cdnMutex.withLock {
         startRealtimeListener()
 
@@ -250,10 +249,21 @@ object CdnManager {
             trimmed.startsWith("android.resource://") || trimmed.startsWith("preset:")) return trimmed
 
         val supabase = SupabaseClient.supabaseUrl.trim().removeSuffix("/")
+        val supabaseHost = try { URI(supabase).host.orEmpty() } catch (_: Exception) { "" }
         val storage = "$supabase/storage/v1/object/public"
         val absolute = when {
-            trimmed.startsWith("http://") || trimmed.startsWith("https://") ->
-                if (trimmed.startsWith("http://") && trimmed.contains(URI(supabase).host ?: "supabase.co")) trimmed.replaceFirst("http://", "https://") else trimmed
+            trimmed.startsWith("http://") || trimmed.startsWith("https://") -> {
+                try {
+                    val host = URI(trimmed).host.orEmpty()
+                    if (trimmed.startsWith("http://") && supabaseHost.isNotBlank() && host.equals(supabaseHost, true)) {
+                        trimmed.replaceFirst("http://", "https://")
+                    } else {
+                        trimmed
+                    }
+                } catch (_: Exception) {
+                    trimmed
+                }
+            }
             trimmed.startsWith("/storage/v1/object/public/") -> "$supabase$trimmed"
             trimmed.startsWith("storage/v1/object/public/") -> "$supabase/$trimmed"
             trimmed.startsWith("avatars/") || trimmed.startsWith("/avatars/") -> "$storage/${trimmed.removePrefix("/")}"
@@ -264,10 +274,20 @@ object CdnManager {
 
     fun isCdnRelated(originalUrl: String): Boolean {
         if (originalUrl.isBlank()) return false
-        val supabaseHost = try { URI(SupabaseClient.supabaseUrl).host.orEmpty() } catch (_: Exception) { "" }
-        if (supabaseHost.isNotBlank() && originalUrl.contains(supabaseHost, ignoreCase = true)) return false
 
         val lower = originalUrl.lowercase()
+        val supabaseHost = try { URI(SupabaseClient.supabaseUrl).host.orEmpty() } catch (_: Exception) { "" }
+        val originalHost = try { URI(originalUrl).host.orEmpty() } catch (_: Exception) { "" }
+
+        if (supabaseHost.isNotBlank() && originalHost.equals(supabaseHost, true)) return false
+
+        // If the URL points to the currently cached CDN host, it is always CDN-related,
+        // even if the dynamic tunnel domain is not one of the known patterns below.
+        val cachedHost = cachedCdnUrl?.let {
+            runCatching { URI(it).host.orEmpty() }.getOrNull().orEmpty()
+        }
+        if (cachedHost.isNotBlank() && originalHost.equals(cachedHost, true)) return true
+
         return lower.contains("bore.pub") ||
             lower.contains("trycloudflare") ||
             lower.contains("10.0.2.2") ||
@@ -287,14 +307,13 @@ object CdnManager {
             val path = uri.rawPath?.takeIf { it.isNotBlank() } ?: "/"
             path + (uri.rawQuery?.let { "?$it" } ?: "")
         } catch (_: Exception) {
-            originalUrl.substringAfter("://", originalUrl).let { "/${it.substringAfter('/', "")}" }
+            val withoutScheme = originalUrl.substringAfter("://", originalUrl)
+            val slash = withoutScheme.indexOf('/')
+            if (slash >= 0) withoutScheme.substring(slash) else "/"
         }
     }
 
-    /**
-     * Non-blocking resolver for UI. It only uses the last known-good CDN.
-     * Network refresh must be done by getCDNUrl()/resolveMediaUrl().
-     */
+    /** Non-blocking resolver for UI; uses only the last known-good CDN. */
     fun resolveMediaUrlSync(originalUrl: String?): String {
         if (originalUrl.isNullOrBlank()) return ""
         if (originalUrl.startsWith("content://") || originalUrl.startsWith("file://") ||
