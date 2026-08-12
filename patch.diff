@@ -1,0 +1,23 @@
+--- app/src/main/java/com/example/ui/screen/TikTokVideoFeedScreen.kt
++++ app/src/main/java/com/example/ui/screen/TikTokVideoFeedScreen.kt
+@@ -831,10 +831,11 @@
+     if (isActivePage) {
+         DisposableEffect(state.id) {
++            val resolvedMediaUrl = com.example.data.repository.CdnManager.resolveMediaUrlSync(state.mediaUrl)
+             val videoUrl = if (!state.localVideoPath.isNullOrEmpty() && java.io.File(state.localVideoPath).exists()) {
+                 state.localVideoPath
+             } else {
+-                state.mediaUrl ?: ""
++                resolvedMediaUrl ?: ""
+             }
+             val player = com.example.util.AppFloatingPlayerManager.acquirePlayer(
+                 context = context,
+@@ -852,7 +853,7 @@
+                     isBuffering = (playbackState == Player.STATE_BUFFERING || playbackState == Player.STATE_IDLE)
+                 }
+                 override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+-                    android.util.Log.e("TikTokVideoFeedScreen", "ExoPlayer error on url ${state.mediaUrl}: code ${error.errorCode}, message ${error.message}", error)
++                    android.util.Log.e("TikTokVideoFeedScreen", "ExoPlayer error on url ${resolvedMediaUrl}: code ${error.errorCode}, message ${error.message}", error)
+                     hasError = true
+                     isBuffering = false
+                 }

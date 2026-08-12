@@ -118,7 +118,6 @@ object CdnManager {
             }
         } else {
             Log.d(TAG, "Petición de refresco forzado del CDN. Ignorando caché.")
-            cachedCdnUrl = null
         }
 
         val supabaseUrl = SupabaseClient.supabaseUrl.trim().removeSuffix("/")

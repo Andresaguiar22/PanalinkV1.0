@@ -287,7 +287,7 @@ fun TikTokVideoFeedScreen(
                                     }
                             ) {
                                 AsyncImage(
-                                    model = item.state.mediaUrl,
+                                    model = com.example.data.repository.CdnManager.resolveMediaUrlSync(item.state.mediaUrl),
                                     contentDescription = null,
                                     modifier = Modifier.fillMaxSize(),
                                     contentScale = ContentScale.Crop
@@ -319,7 +319,7 @@ fun TikTokVideoFeedScreen(
                 
                 preloadIndices.forEach { index ->
                     if (index >= 0 && index < videoStates.size) {
-                        val url = videoStates[index].state.mediaUrl
+                        val url = com.example.data.repository.CdnManager.resolveMediaUrlSync(videoStates[index].state.mediaUrl)
                         if (!url.isNullOrEmpty()) {
                             com.example.data.video.CacheDataSourceFactory.prefetchVideo(context, url)
                         }
@@ -797,7 +797,7 @@ fun TikTokPageItem(
     var forceRotationDegrees by remember(state.id) { mutableStateOf(0f) }
 
     LaunchedEffect(state.id, state.mediaUrl) {
-        val url = state.mediaUrl ?: return@LaunchedEffect
+        val url = com.example.data.repository.CdnManager.resolveMediaUrlSync(state.mediaUrl) ?: return@LaunchedEffect
         if (url.isNotEmpty() && url.startsWith("http")) {
             withContext(Dispatchers.IO) {
                 var retriever: android.media.MediaMetadataRetriever? = null
@@ -830,10 +830,11 @@ fun TikTokPageItem(
 
     if (isActivePage) {
         DisposableEffect(state.id) {
+            val resolvedMediaUrl = com.example.data.repository.CdnManager.resolveMediaUrlSync(state.mediaUrl)
             val videoUrl = if (!state.localVideoPath.isNullOrEmpty() && java.io.File(state.localVideoPath).exists()) {
                 state.localVideoPath
             } else {
-                state.mediaUrl ?: ""
+                resolvedMediaUrl ?: ""
             }
 
             val player = com.example.util.AppFloatingPlayerManager.acquirePlayer(
@@ -852,7 +853,7 @@ fun TikTokPageItem(
                     isBuffering = (playbackState == Player.STATE_BUFFERING || playbackState == Player.STATE_IDLE)
                 }
                 override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                    android.util.Log.e("TikTokVideoFeedScreen", "ExoPlayer error on url ${state.mediaUrl}: code ${error.errorCode}, message ${error.message}", error)
+                    android.util.Log.e("TikTokVideoFeedScreen", "ExoPlayer error on url ${resolvedMediaUrl}: code ${error.errorCode}, message ${error.message}", error)
                     hasError = true
                     isBuffering = false
                 }
@@ -1213,7 +1214,7 @@ fun TikTokPageItem(
                         .size(44.dp)
                         .background(Color.Black.copy(alpha = 0.45f), CircleShape)
                         .clickable {
-                            val shareText = "Mira este reel de pana en Panalink: ${state.caption ?: ""} - ${state.mediaUrl ?: ""}"
+                            val shareText = "Mira este reel de pana en Panalink: ${state.caption ?: ""} - ${com.example.data.repository.CdnManager.resolveMediaUrlSync(state.mediaUrl) ?: ""}"
                             val sendIntent = android.content.Intent().apply {
                                 action = android.content.Intent.ACTION_SEND
                                 putExtra(android.content.Intent.EXTRA_TEXT, shareText)
@@ -1306,7 +1307,7 @@ fun TikTokPageItem(
                         DropdownMenuItem(
                             text = { Text("Descargar vídeo", color = Color.White, fontSize = 14.sp) },
                             onClick = {
-                                downloadVideo(context, state.mediaUrl ?: "", state.caption ?: "Vídeo de Panalink")
+                                downloadVideo(context, com.example.data.repository.CdnManager.resolveMediaUrlSync(state.mediaUrl) ?: "", state.caption ?: "Vídeo de Panalink")
                                 showActionMoreMenu = false
                             }
                         )

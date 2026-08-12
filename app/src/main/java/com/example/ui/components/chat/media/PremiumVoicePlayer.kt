@@ -41,6 +41,7 @@ fun PremiumVoicePlayer(
     isLoading: Boolean = false,
     isError: Boolean = false,
     messageStatus: String? = "sent",
+    isSending: Boolean = false,
     isVoiceNote: Boolean = true,
     modifier: Modifier = Modifier
 ) {
@@ -77,7 +78,7 @@ fun PremiumVoicePlayer(
         remember { mutableStateOf(1.0f) }
     }
 
-    val isSending = messageStatus == "sending" || messageStatus == "pending" || messageStatus == "pending_media"
+    val effectiveIsSending = isSending || messageStatus == "sending" || messageStatus == "pending" || messageStatus == "pending_media"
     val isFailed = messageStatus == "failed"
     val bubbleBgColor = if (isSender) Color(0xFFE7FFDB) else Color(0xFFFFFFFF)
     val playedColor = if (isSender) Color(0xFF1EBE71) else Color(0xFF00A3DA)
@@ -148,10 +149,10 @@ fun PremiumVoicePlayer(
                 modifier = Modifier
                     .size(42.dp)
                     .clip(CircleShape)
-                    .clickable(enabled = !isLoading && !isSending) { onPlayPauseClick() },
+                    .clickable(enabled = !isLoading && !effectiveIsSending) { onPlayPauseClick() },
                 contentAlignment = Alignment.Center
             ) {
-                if (isSending || isLoading) {
+                if (effectiveIsSending || isLoading) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(24.dp),
                         color = playedColor,
@@ -240,7 +241,7 @@ fun PremiumVoicePlayer(
                 }
                 
                 // Small progress bar for uploading - "Minucioso"
-                if (isSending) {
+                if (effectiveIsSending) {
                     LinearProgressIndicator(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -259,7 +260,7 @@ fun PremiumVoicePlayer(
                     Text(
                         text = when {
                             isFailed -> "Error de envío"
-                            isSending -> "Subiendo..."
+                            effectiveIsSending -> "Subiendo..."
                             isError -> "Error de descarga"
                             else -> durationLabel
                         },

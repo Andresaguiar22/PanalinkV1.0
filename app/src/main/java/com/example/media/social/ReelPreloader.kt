@@ -28,7 +28,7 @@ object ReelPreloader {
             val repository = MediaRepository(appCtx, MediaStorageManager(appCtx))
 
             val nextReel = reels.getOrNull(nextIndex) ?: return@launch
-            val remoteUrl = nextReel.mediaUrl ?: return@launch
+            val remoteUrl = com.example.data.repository.CdnManager.resolveMediaUrlSync(nextReel.mediaUrl) ?: return@launch
 
             if (remoteUrl.startsWith("http://") || remoteUrl.startsWith("https://")) {
                 val mediaId = "reel_${nextReel.id}_${kotlin.math.abs(remoteUrl.hashCode())}"

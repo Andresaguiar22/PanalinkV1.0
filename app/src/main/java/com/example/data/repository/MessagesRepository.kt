@@ -865,14 +865,21 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
         if (pending.isEmpty()) return@withContext true
         Log.i(TAG, "Syncing ${pending.size} pending offline messages...")
 
-                val parseMessage = { jsonStr: String? ->
+                val parseMessage = { jsonStr: String?, isDm: Boolean ->
             if (jsonStr.isNullOrEmpty()) null
             else {
                 try {
-                    val listType = com.squareup.moshi.Types.newParameterizedType(List::class.java, com.example.data.model.Message::class.java)
-                    val adapter = SupabaseClient.moshi.adapter<List<com.example.data.model.Message>>(listType)
-                    val msgs = adapter.fromJson(jsonStr)
-                    msgs?.firstOrNull()
+                    if (isDm) {
+                        val listType = com.squareup.moshi.Types.newParameterizedType(List::class.java, com.example.data.model.ThreadMessage::class.java)
+                        val adapter = SupabaseClient.moshi.adapter<List<com.example.data.model.ThreadMessage>>(listType)
+                        val msgs = adapter.fromJson(jsonStr)
+                        msgs?.firstOrNull()?.toMessage()
+                    } else {
+                        val listType = com.squareup.moshi.Types.newParameterizedType(List::class.java, com.example.data.model.Message::class.java)
+                        val adapter = SupabaseClient.moshi.adapter<List<com.example.data.model.Message>>(listType)
+                        val msgs = adapter.fromJson(jsonStr)
+                        msgs?.firstOrNull()
+                    }
                 } catch (e: Exception) {
                     null
                 }
@@ -1172,13 +1179,14 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
                     }
                     if (legacyResponse != null && legacyResponse.isSuccessful) {
                         successful = true
+                        respBody = legacyResponse.body()?.string()
                     } else {
                         allSuccessful = false
                     }
                 }
 
                 if (successful) {
-                    val serverMsg = parseMessage(respBody)
+                    val serverMsg = parseMessage(respBody, isDmSync)
                     if (serverMsg != null) {
                         val finalMsgRaw = serverMsg
                         val finalMsg = com.example.util.CryptoManager.decryptMessageIfNeeded(finalMsgRaw).copy(

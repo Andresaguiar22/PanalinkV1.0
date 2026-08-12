@@ -713,7 +713,7 @@ fun UserStoryViewer(
                     contentAlignment = Alignment.Center
                 ) {
                     VideoPlayer(
-                        videoUrl = state.mediaUrl ?: "",
+                        videoUrl = com.example.data.repository.CdnManager.resolveMediaUrlSync(state.mediaUrl) ?: "",
                         isMuted = isMuted,
                         isPaused = isPaused,
                         onDurationReady = { durationMs ->
@@ -1730,6 +1730,8 @@ fun VideoPlayer(
 ) {
     val context = LocalContext.current
     var exoPlayerRef by remember { mutableStateOf<androidx.media3.exoplayer.ExoPlayer?>(null) }
+    var hasError by remember { mutableStateOf(false) }
+    var isBuffering by remember { mutableStateOf(true) }
 
     DisposableEffect(videoUrl, videoTrim) {
         val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
@@ -1761,6 +1763,7 @@ fun VideoPlayer(
         
         val listener = object : androidx.media3.common.Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
+                isBuffering = (playbackState == androidx.media3.common.Player.STATE_BUFFERING || playbackState == androidx.media3.common.Player.STATE_IDLE)
                 if (playbackState == androidx.media3.common.Player.STATE_READY) {
                     val duration = if (videoTrim != null) {
                         ((videoTrim.second - videoTrim.first) * 1000).toInt()
@@ -1777,6 +1780,8 @@ fun VideoPlayer(
             }
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                 android.util.Log.e("ViewStateScreen", "ExoPlayer error on url $videoUrl: code ${error.errorCode}, message ${error.message}", error)
+                hasError = true
+                isBuffering = false
             }
         }
         player.addListener(listener)
@@ -1814,17 +1819,47 @@ fun VideoPlayer(
         exoPlayerRef?.playWhenReady = !isPaused
     }
 
-    AndroidView(
-        factory = { ctx ->
-            androidx.media3.ui.PlayerView(ctx).apply {
-                useController = false
-                resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
-                player = exoPlayerRef
+    Box(modifier = modifier) {
+        AndroidView(
+            factory = { ctx ->
+                androidx.media3.ui.PlayerView(ctx).apply {
+                    useController = false
+                    resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+                    player = exoPlayerRef
+                }
+            },
+            update = { playerView ->
+                playerView.player = exoPlayerRef
+            },
+            modifier = Modifier.fillMaxSize()
+        )
+        
+        if (isBuffering && !hasError) {
+            CircularProgressIndicator(
+                color = Color.White,
+                modifier = Modifier.align(Alignment.Center)
+            )
+        }
+        
+        if (hasError) {
+            Column(
+                modifier = Modifier.align(Alignment.Center).background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(8.dp)).padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Icon(Icons.Default.Close, contentDescription = null, tint = Color.White, modifier = Modifier.size(48.dp))
+                Spacer(modifier = Modifier.height(8.dp))
+                Text("Error al reproducir video", color = Color.White, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(onClick = {
+                    com.example.data.repository.CdnManager.clearCache()
+                    hasError = false
+                    isBuffering = true
+                    exoPlayerRef?.prepare()
+                    exoPlayerRef?.play()
+                }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00FF85))) {
+                    Text("Reintentar", color = Color.Black)
+                }
             }
-        },
-        update = { playerView ->
-            playerView.player = exoPlayerRef
-        },
-        modifier = modifier
-    )
+        }
+    }
 }

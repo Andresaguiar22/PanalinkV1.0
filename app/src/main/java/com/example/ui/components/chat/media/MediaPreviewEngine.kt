@@ -72,6 +72,7 @@ fun MediaPreviewEngine(
                 senderAvatarUrl = senderAvatarUrl,
                 isSender = message.senderId == com.example.data.supabase.SupabaseClient.currentUser?.id,
                 messageStatus = message.status,
+                isSending = isUploading,
                 isVoiceNote = isVoiceNoteMsg,
                 onPlayPauseClick = onPlayPauseClick,
                 onSeek = onSeek,

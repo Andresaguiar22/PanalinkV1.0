@@ -42,7 +42,7 @@ object StoryPreloader {
             }
 
             for (target in targets) {
-                val remoteUrl = target.mediaUrl ?: continue
+                val remoteUrl = com.example.data.repository.CdnManager.resolveMediaUrlSync(target.mediaUrl) ?: continue
                 if (remoteUrl.startsWith("http://") || remoteUrl.startsWith("https://")) {
                     val mediaId = "story_${target.id}_${kotlin.math.abs(remoteUrl.hashCode())}"
                     val type = if (target.mediaType == "video" || remoteUrl.endsWith(".mp4")) "video" else "image"
