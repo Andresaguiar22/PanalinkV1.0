@@ -12,6 +12,9 @@ val MIGRATION_42_43 = object : Migration(42, 43) {
             "ALTER TABLE `pending_social_actions` ADD COLUMN `desiredState` INTEGER"
         )
         db.execSQL(
+            "ALTER TABLE `pending_social_actions` ADD COLUMN `revision` INTEGER NOT NULL DEFAULT 0"
+        )
+        db.execSQL(
             """
             CREATE UNIQUE INDEX IF NOT EXISTS
             `index_pending_social_actions_userId_targetId_isReel_actionFamily`
