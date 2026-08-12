@@ -4,7 +4,7 @@ import com.example.ui.reels.editor.model.ReelLayer
 import com.example.ui.reels.editor.model.ReelProject
 import com.example.ui.reels.editor.model.ReelTrackType
 
-/** UI-facing state. Rendering/exporting is intentionally kept out of this model. */
+/** UI-facing state. Rendering/exporting remains outside the state model. */
 data class ReelEditorUiState(
     val project: ReelProject = ReelProject(id = "draft_${System.currentTimeMillis()}"),
     val isExporting: Boolean = false,
@@ -19,6 +19,8 @@ sealed interface ReelEditorEvent {
     data class ZoomChanged(val zoom: Float) : ReelEditorEvent
     data class SelectLayer(val layerId: String?) : ReelEditorEvent
     data class AddTrack(val type: ReelTrackType, val name: String) : ReelEditorEvent
+    data class AddTextLayer(val text: String = "Escribe aquí") : ReelEditorEvent
+    data class AddStickerLayer(val stickerUri: String) : ReelEditorEvent
     data class RemoveTrack(val trackId: String) : ReelEditorEvent
     data class AddLayer(val trackId: String, val layer: ReelLayer) : ReelEditorEvent
     data class UpdateLayer(val trackId: String, val layer: ReelLayer) : ReelEditorEvent
