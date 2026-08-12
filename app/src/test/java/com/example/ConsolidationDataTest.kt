@@ -11,6 +11,8 @@ import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -68,12 +70,8 @@ class ConsolidationDataTest {
         isReel = isReel
     )
 
-    // Regression contract: LIKE/UNLIKE is expected to collapse to one
-    // logical desired-state intent after the v43 refactor. Against v42,
-    // each action has a distinct localActionId and therefore persists as
-    // its own row; this test must fail with Expected: 1, Actual: 4.
     @Test
-    fun current_behavior_does_not_collapse_interactions() = runTest {
+    fun smartMerge_likeUnlikeLikeUnlike_leavesOneFinalIntent() = runTest {
         val targetId = "reel_A"
 
         dao.insertAction(action("1", targetId, "LIKE"))
@@ -84,5 +82,68 @@ class ConsolidationDataTest {
         val pending = dao.getPendingActions()
 
         assertEquals(1, pending.size)
+        assertEquals("LIKE", pending.single().actionFamily)
+        assertFalse(pending.single().desiredState!!)
+        assertEquals("UNLIKE", pending.single().actionType)
+        assertEquals("1", pending.single().localActionId)
+        assertEquals(4L, pending.single().revision)
+    }
+
+    @Test
+    fun smartMerge_preservesIdentity_andAdvancesRevision() = runTest {
+        val targetId = "reel_identity"
+
+        dao.insertAction(action("original", targetId, "LIKE"))
+        val first = dao.getPendingActions().single()
+
+        dao.insertAction(action("ignored-new-id", targetId, "UNLIKE"))
+        val second = dao.getPendingActions().single()
+
+        assertEquals("original", second.localActionId)
+        assertNotEquals(first.revision, second.revision)
+        assertEquals(first.revision + 1, second.revision)
+        assertEquals(false, second.desiredState)
+    }
+
+    @Test
+    fun staleSnapshot_cannotDelete_newerSameStateIntent() = runTest {
+        val targetId = "reel_occ"
+
+        dao.insertAction(action("worker", targetId, "LIKE"))
+        val stale = dao.getPendingActions().single()
+
+        // New user intent returns to the same state. desiredState alone would
+        // be insufficient; revision must distinguish the two snapshots.
+        dao.insertAction(action("new-intent", targetId, "UNLIKE"))
+        dao.insertAction(action("newer-intent", targetId, "LIKE"))
+        val current = dao.getPendingActions().single()
+
+        val deleted = dao.deleteIfStillCurrent(
+            id = stale.localActionId,
+            family = stale.actionFamily!!,
+            desiredState = stale.desiredState!!,
+            revision = stale.revision
+        )
+
+        assertEquals(0, deleted)
+        assertTrue(current.revision > stale.revision)
+        assertEquals(1, dao.getPendingActions().size)
+        assertEquals(true, dao.getPendingActions().single().desiredState)
+    }
+
+    @Test
+    fun hybridQueue_collapsesState_butPreservesEvents() = runTest {
+        val targetId = "reel_hybrid"
+
+        dao.insertAction(action("like-1", targetId, "LIKE"))
+        dao.insertAction(action("like-2", targetId, "UNLIKE"))
+        dao.insertAction(action("share-1", targetId, "SHARE"))
+        dao.insertAction(action("share-2", targetId, "SHARE"))
+
+        val pending = dao.getPendingActions()
+
+        assertEquals(3, pending.size)
+        assertEquals(1, pending.count { it.actionFamily == "LIKE" })
+        assertEquals(2, pending.count { it.actionType == "SHARE" })
     }
 }
