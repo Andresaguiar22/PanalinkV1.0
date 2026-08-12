@@ -103,10 +103,35 @@ class SocialSyncWorker(
                         }
                     }
                     "SHARE" -> {
-                        val shareDto = com.example.data.model.PostShareDto(postId = action.targetId, userId = action.userId)
-                        val response = service.addShare(apiKey, bearer, shareDto)
-                        if (response.isSuccessful || response.code() == 409) {
-                            success = true
+                        if (action.isReel) {
+                            val bodyMap = mapOf(
+                                "reel_id" to action.targetId,
+                                "user_id" to action.userId,
+                                "created_at" to com.example.data.supabase.SupabaseClient.getNowIsoString()
+                            )
+                            val response = service.shareState("reel_shares", apiKey, bearer, bodyMap)
+                            if (response.isSuccessful || response.code() == 409) {
+                                success = true
+                            }
+                        } else {
+                            val isStory = statesDao.getStateById(action.targetId) != null
+                            if (isStory) {
+                                val bodyMap = mapOf(
+                                    "story_id" to action.targetId,
+                                    "user_id" to action.userId,
+                                    "created_at" to com.example.data.supabase.SupabaseClient.getNowIsoString()
+                                )
+                                val response = service.shareState("story_shares", apiKey, bearer, bodyMap)
+                                if (response.isSuccessful || response.code() == 409) {
+                                    success = true
+                                }
+                            } else {
+                                val shareDto = com.example.data.model.PostShareDto(postId = action.targetId, userId = action.userId)
+                                val response = service.addShare(apiKey, bearer, shareDto)
+                                if (response.isSuccessful || response.code() == 409) {
+                                    success = true
+                                }
+                            }
                         }
                     }
                     "UNLIKE" -> {

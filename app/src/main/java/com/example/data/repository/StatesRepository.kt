@@ -604,33 +604,30 @@ class StatesRepository {
 
     suspend fun incrementShare(stateId: String, isReel: Boolean): Result<Unit> = withContext(Dispatchers.IO) {
         val currentUid = SupabaseClient.currentUser?.id ?: return@withContext Result.failure(Exception("Not authenticated"))
-        try {
-            val service = SupabaseClient.apiService ?: return@withContext Result.failure(Exception("Supabase not configured"))
-            val token = SupabaseClient.currentToken ?: return@withContext Result.failure(Exception("Session expired"))
-            val apiKey = SupabaseClient.supabaseAnonKey
-            val bearer = "Bearer $token"
-
-            val tableName = if (isReel) "reel_shares" else "story_shares"
-            val idColumn = if (isReel) "reel_id" else "story_id"
-            val bodyMap = mapOf(
-                idColumn to stateId,
-                "user_id" to currentUid,
-                "created_at" to SupabaseClient.getNowIsoString()
-            )
-            Log.d("AUDIT_SHARE", "Proceeding to SHARE. POST /rest/v1/$tableName with body: $bodyMap")
-            val response = service.shareState(tableName, apiKey, bearer, bodyMap)
-            Log.d("AUDIT_SHARE", "SHARE Response: HTTP ${response.code()} ${response.message()}")
-            if (response.isSuccessful) {
-                Result.success(Unit)
-            } else {
-                val errorStr = response.errorBody()?.string()
-                Log.e("AUDIT_SHARE", "SHARE Error Body: $errorStr")
-                Result.failure(Exception(SupabaseClient.parseSupabaseError(errorStr, "Error incrementing share")))
-            }
-        } catch (e: Exception) {
-            Log.e("AUDIT_SHARE", "Exception in incrementShare", e)
-            Result.failure(e)
+        
+        // 1. Update local Room state immediately
+        val existing = statesDao.getStateById(stateId)
+        if (existing != null) {
+            val newSharesCount = existing.sharesCount + 1
+            statesDao.insertState(existing.copy(sharesCount = newSharesCount))
         }
+
+        // 2. Queue the action locally
+        val pendingDao = db.pendingSocialActionDao()
+        val action = com.example.data.database.PendingSocialActionEntity(
+            localActionId = java.util.UUID.randomUUID().toString(),
+            userId = currentUid,
+            targetId = stateId,
+            actionType = "SHARE",
+            payload = null,
+            isReel = isReel
+        )
+        pendingDao.insertAction(action)
+
+        // 3. Enqueue Background Sync
+        com.example.worker.SocialSyncWorker.enqueue(com.example.PanaApplication.instance)
+
+        Result.success(Unit)
     }
 
     fun getCommentsFlow(stateId: String, isReel: Boolean): Flow<List<Comment>> {

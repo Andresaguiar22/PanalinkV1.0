@@ -613,14 +613,14 @@ object SupabaseClient {
                                             _realtimeMessageDeletions.emit(deletedId)
                                         }
                                     } else if (table.contains("likes") && (table.contains("reel") || table.contains("story"))) {
-                                        val statusId = record.optString("status_id", "")
+                                        val statusId = record.optString("reel_id", record.optString("story_id", record.optString("status_id", "")))
                                         if (statusId.isNotEmpty()) {
                                             clientScope.launch {
                                                 _realtimeLikes.emit(SocialInteractionUpdate(statusId, table.contains("reel"), eventType, deletedId, record))
                                             }
                                         }
                                     } else if (table.contains("comments") && (table.contains("reel") || table.contains("story"))) {
-                                        val statusId = record.optString("status_id", "")
+                                        val statusId = record.optString("reel_id", record.optString("story_id", record.optString("status_id", "")))
                                         if (statusId.isNotEmpty()) {
                                             clientScope.launch {
                                                 _realtimeComments.emit(SocialInteractionUpdate(statusId, table.contains("reel"), eventType, deletedId, record))
@@ -657,7 +657,7 @@ object SupabaseClient {
                                 Log.d(TAG, "Parsed separated status successfully from $table: $statusObj")
                                 emitRealtimeStatus(statusObj)
                             } else if (table.contains("likes") && (table.contains("reel") || table.contains("story"))) {
-                                val statusId = record.optString("status_id", "")
+                                val statusId = record.optString("reel_id", record.optString("story_id", record.optString("status_id", "")))
                                 val recordId = record.optString("id", "")
                                 if (statusId.isNotEmpty()) {
                                     Log.d(TAG, "Like changed for status: $statusId in $table")
@@ -666,7 +666,7 @@ object SupabaseClient {
                                     }
                                 }
                             } else if (table.contains("comments") && (table.contains("reel") || table.contains("story"))) {
-                                val statusId = record.optString("status_id", "")
+                                val statusId = record.optString("reel_id", record.optString("story_id", record.optString("status_id", "")))
                                 val recordId = record.optString("id", "")
                                 if (statusId.isNotEmpty()) {
                                     Log.d(TAG, "Comment changed for status: $statusId in $table")
