@@ -37,6 +37,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.ui.reels.editor.model.ReelLayer
 import com.example.ui.reels.editor.model.ReelTrack
 import com.example.ui.reels.editor.model.ReelTrackType
+import com.example.ui.reels.editor.playback.ReelTimelinePreviewSurface
 
 @Composable
 fun ReelStudioScreen(
@@ -54,8 +55,7 @@ fun ReelStudioScreen(
             )
             PreviewPanel(
                 modifier = Modifier.fillMaxWidth().weight(1f),
-                currentTimeMs = project.timeline.currentTimeMs,
-                durationMs = project.durationMs
+                project = project
             )
             TimelinePanel(
                 tracks = project.timeline.tracks,
@@ -86,16 +86,23 @@ private fun StudioTopBar(durationMs: Long, onAddTrack: (ReelTrackType) -> Unit) 
 }
 
 @Composable
-private fun PreviewPanel(modifier: Modifier, currentTimeMs: Long, durationMs: Long) {
+private fun PreviewPanel(
+    modifier: Modifier,
+    project: com.example.ui.reels.editor.model.ReelProject
+) {
     Box(
         modifier = modifier.padding(horizontal = 12.dp).background(Color.Black),
         contentAlignment = Alignment.Center
     ) {
-        Text(
-            text = "Vista previa\n${formatTime(currentTimeMs)} / ${formatTime(durationMs)}",
-            color = Color.White,
-            style = MaterialTheme.typography.titleMedium
-        )
+        if (project.timeline.tracks.any { it.layers.isNotEmpty() }) {
+            ReelTimelinePreviewSurface(project = project, modifier = Modifier.fillMaxSize())
+        } else {
+            Text(
+                text = "Agrega un vídeo o una foto para comenzar",
+                color = Color.White,
+                style = MaterialTheme.typography.titleMedium
+            )
+        }
     }
 }
 
