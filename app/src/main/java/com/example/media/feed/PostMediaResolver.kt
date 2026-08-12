@@ -1,9 +1,9 @@
 package com.example.media.feed
 
-import android.content.Context
 import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.data.repository.CdnManager
 import com.example.media.model.MediaResource
 import com.example.media.repository.MediaRepository
 import com.example.media.storage.MediaStorageManager
@@ -40,29 +40,48 @@ object PostMediaResolver {
                 val mediaState by repository.observeMedia(mediaId)
                     .collectAsStateWithLifecycle(initialValue = null)
 
-                LaunchedEffect(remoteUrl) {
-                    if (mediaState == null || mediaState?.localPath.isNullOrBlank() || !File(mediaState?.localPath ?: "").exists()) {
-                        val type = if (remoteUrl.endsWith(".mp4") || remoteUrl.contains("video")) "video" else "image"
-                        repository.syncManager.syncMedia(mediaId, remoteUrl, type, ownerId)
-                    }
+                // Always resolve legacy/dynamic CDN URLs before downloading.
+                // Supabase Storage and unrelated external URLs are left untouched
+                // by CdnManager; only known CDN origins are rewritten.
+                val resolvedRemoteUrl = remember(remoteUrl) {
+                    CdnManager.resolveMediaUrlSync(remoteUrl).ifBlank { remoteUrl }
                 }
 
-                remember(mediaState, remoteUrl) {
+                LaunchedEffect(remoteUrl) {
+                    // Ensure the current Supabase CDN candidate has a chance to
+                    // become active before syncing a legacy CDN URL.
+                    runCatching { CdnManager.getCDNUrl(forceRefresh = false) }
+                    repository.syncManager.syncMedia(mediaId, remoteUrl, typeFor(remoteUrl), ownerId)
+                }
+
+                remember(mediaState, remoteUrl, resolvedRemoteUrl) {
                     val localPath = mediaState?.localPath
                     if (!localPath.isNullOrBlank()) {
                         val file = File(localPath)
                         if (file.exists() && file.length() > 0) {
                             MediaResource.Local(file.absolutePath)
                         } else {
-                            MediaResource.Remote(remoteUrl)
+                            MediaResource.Remote(resolvedRemoteUrl)
                         }
-                    } else if (mediaState?.syncState == "FAILED") {
-                        MediaResource.Remote(remoteUrl)
                     } else {
-                        MediaResource.Remote(remoteUrl)
+                        // The remote fallback must also use the active CDN so a
+                        // changed Cloudflare URL is immediately consumable by UI.
+                        MediaResource.Remote(resolvedRemoteUrl)
                     }
                 }
             }
         }
+    }
+
+    private fun typeFor(url: String): String {
+        val normalized = url.lowercase()
+        return if (
+            normalized.contains("/videos/") ||
+            normalized.endsWith(".mp4") ||
+            normalized.endsWith(".webm") ||
+            normalized.endsWith(".mov") ||
+            normalized.endsWith(".m4v") ||
+            normalized.contains("video")
+        ) "video" else "image"
     }
 }
