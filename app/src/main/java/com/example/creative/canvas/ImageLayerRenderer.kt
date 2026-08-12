@@ -11,7 +11,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
@@ -30,50 +34,50 @@ fun ImageLayerRenderer(
     var currentScale = remember(layer.id) { mutableFloatStateOf(layer.scale) }
     var currentRotation = remember(layer.id) { mutableFloatStateOf(layer.rotation) }
 
+    val colorMatrix = ColorMatrix().apply {
+        val brightness = layer.brightness.coerceIn(-1f, 1f)
+        val contrast = layer.contrast.coerceAtLeast(0f)
+        val saturation = layer.saturation.coerceAtLeast(0f)
+        val translate = (1f - contrast) * 128f + brightness * 255f
+        setTo(
+            contrast, 0f, 0f, 0f, translate,
+            0f, contrast, 0f, 0f, translate,
+            0f, 0f, contrast, 0f, translate,
+            0f, 0f, 0f, 1f, 0f
+        )
+        setSaturation(saturation)
+    }
+
     Box(
         modifier = Modifier
             .size(180.dp)
             .graphicsLayer(alpha = layer.opacity)
-            .pointerInput(layer.id) { detectTransformGestures { _, pan, zoom, rotation ->
-                if (layer.isLocked) return@detectTransformGestures
-                offsetX.floatValue += pan.x / size.width.toFloat()
-                offsetY.floatValue += pan.y / size.height.toFloat()
-                currentScale.floatValue = (currentScale.floatValue * zoom).coerceIn(0.2f, 5f)
-                currentRotation.floatValue += rotation
-                onLayerTransformed(offsetX.floatValue, offsetY.floatValue, currentScale.floatValue, currentRotation.floatValue)
-            } }
+            .scale(currentScale.floatValue)
+            .rotate(currentRotation.floatValue)
             .clip(RoundedCornerShape(6.dp))
-            .then(if (isSelected) Modifier.border(1.5.dp, Color(0xFF00E5FF), RoundedCornerShape(6.dp)) else Modifier),
+            .then(if (isSelected) Modifier.border(1.5.dp, Color(0xFF00E5FF), RoundedCornerShape(6.dp)) else Modifier)
+            .pointerInput(layer.id) {
+                detectTransformGestures { _, pan, zoom, rotation ->
+                    if (layer.isLocked) return@detectTransformGestures
+                    offsetX.floatValue += pan.x / size.width.toFloat()
+                    offsetY.floatValue += pan.y / size.height.toFloat()
+                    currentScale.floatValue = (currentScale.floatValue * zoom).coerceIn(0.2f, 5f)
+                    currentRotation.floatValue += rotation
+                    onLayerTransformed(
+                        offsetX.floatValue,
+                        offsetY.floatValue,
+                        currentScale.floatValue,
+                        currentRotation.floatValue
+                    )
+                }
+            },
         contentAlignment = Alignment.Center
     ) {
         AsyncImage(
             model = layer.imageUriOrPath,
             contentDescription = "Imagen de Reel",
             modifier = Modifier.size(180.dp),
-            colorFilter = androidx.compose.ui.graphics.ColorFilter.colorMatrix(
-                androidx.compose.ui.graphics.ColorMatrix().apply {
-                    val brightness = layer.brightness.coerceIn(-1f, 1f)
-                    val contrast = layer.contrast.coerceAtLeast(0f)
-                    val saturation = layer.saturation.coerceAtLeast(0f)
-                    val scale = 1f + brightness
-                    val translate = (1f - contrast) * 128f
-                    setTo(
-                        contrast, 0f, 0f, 0f, translate * (1f - contrast),
-                        0f, contrast, 0f, 0f, translate * (1f - contrast),
-                        0f, 0f, contrast, 0f, translate * (1f - contrast),
-                        0f, 0f, 0f, 1f, 0f
-                    )
-                    if (scale != 1f) {
-                        setTo(
-                            contrast * scale, 0f, 0f, 0f, translate,
-                            0f, contrast * scale, 0f, 0f, translate,
-                            0f, 0f, contrast * scale, 0f, translate,
-                            0f, 0f, 0f, 1f, 0f
-                        )
-                    }
-                    setSaturation(saturation)
-                }
-            )
+            colorFilter = ColorFilter.colorMatrix(colorMatrix)
         )
     }
 }
