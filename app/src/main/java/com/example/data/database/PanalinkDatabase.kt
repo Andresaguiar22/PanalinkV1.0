@@ -31,7 +31,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         PendingSocialActionEntity::class,
         LocalNotificationEntity::class
     ],
-    version = 42,
+    version = 43,
     exportSchema = true
 )
 abstract class PanalinkDatabase : RoomDatabase() {
@@ -286,17 +286,11 @@ abstract class PanalinkDatabase : RoomDatabase() {
 
         val MIGRATION_30_31 = object : Migration(30, 31) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                // Update Playlists table
                 db.execSQL("ALTER TABLE `playlists` ADD COLUMN `updatedAt` INTEGER NOT NULL DEFAULT 0")
                 db.execSQL("ALTER TABLE `playlists` ADD COLUMN `isCollaborative` INTEGER NOT NULL DEFAULT 0")
-                
-                // Rename coverImage to coverPath if it exists (SQLITE ALTER RENAME is limited, so we add and copy if needed, or just add if it's new)
-                // Since 29_30 added coverImage, we'll try to keep it simple.
-                // SQLite 3.25.0+ supports RENAME COLUMN.
                 try {
                     db.execSQL("ALTER TABLE `playlists` RENAME COLUMN `coverImage` TO `coverPath`")
                 } catch (e: Exception) {
-                    // Fallback: add coverPath if rename fails
                     db.execSQL("ALTER TABLE `playlists` ADD COLUMN `coverPath` TEXT")
                 }
             }
@@ -344,64 +338,20 @@ abstract class PanalinkDatabase : RoomDatabase() {
 
         val MIGRATION_33_34 = object : Migration(33, 34) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                // 1. Add missing column 'musicPlaylistId' to 'local_messages'
-                try {
-                    db.execSQL("ALTER TABLE `local_messages` ADD COLUMN `musicPlaylistId` TEXT")
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
-
-                // 2. Add missing column 'isDirty' to 'playlist_songs'
-                try {
-                    db.execSQL("ALTER TABLE `playlist_songs` ADD COLUMN `isDirty` INTEGER NOT NULL DEFAULT 0")
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
-
-                // 3. Add missing columns to 'audio_tracks' (genre, remoteId, lastSyncAt, isDirty)
-                try {
-                    db.execSQL("ALTER TABLE `audio_tracks` ADD COLUMN `genre` TEXT NOT NULL DEFAULT 'Desconocido'")
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
-                try {
-                    db.execSQL("ALTER TABLE `audio_tracks` ADD COLUMN `remoteId` TEXT")
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
-                try {
-                    db.execSQL("ALTER TABLE `audio_tracks` ADD COLUMN `lastSyncAt` INTEGER")
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
-                try {
-                    db.execSQL("ALTER TABLE `audio_tracks` ADD COLUMN `isDirty` INTEGER NOT NULL DEFAULT 0")
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
-
-                // 4. Add missing columns to 'playlists' (remoteId, lastSyncAt, isDirty)
-                try {
-                    db.execSQL("ALTER TABLE `playlists` ADD COLUMN `remoteId` TEXT")
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
-                try {
-                    db.execSQL("ALTER TABLE `playlists` ADD COLUMN `lastSyncAt` INTEGER")
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
-                try {
-                    db.execSQL("ALTER TABLE `playlists` ADD COLUMN `isDirty` INTEGER NOT NULL DEFAULT 0")
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
+                try { db.execSQL("ALTER TABLE `local_messages` ADD COLUMN `musicPlaylistId` TEXT") } catch (e: Exception) { e.printStackTrace() }
+                try { db.execSQL("ALTER TABLE `playlist_songs` ADD COLUMN `isDirty` INTEGER NOT NULL DEFAULT 0") } catch (e: Exception) { e.printStackTrace() }
+                try { db.execSQL("ALTER TABLE `audio_tracks` ADD COLUMN `genre` TEXT NOT NULL DEFAULT 'Desconocido'") } catch (e: Exception) { e.printStackTrace() }
+                try { db.execSQL("ALTER TABLE `audio_tracks` ADD COLUMN `remoteId` TEXT") } catch (e: Exception) { e.printStackTrace() }
+                try { db.execSQL("ALTER TABLE `audio_tracks` ADD COLUMN `lastSyncAt` INTEGER") } catch (e: Exception) { e.printStackTrace() }
+                try { db.execSQL("ALTER TABLE `audio_tracks` ADD COLUMN `isDirty` INTEGER NOT NULL DEFAULT 0") } catch (e: Exception) { e.printStackTrace() }
+                try { db.execSQL("ALTER TABLE `playlists` ADD COLUMN `remoteId` TEXT") } catch (e: Exception) { e.printStackTrace() }
+                try { db.execSQL("ALTER TABLE `playlists` ADD COLUMN `lastSyncAt` INTEGER") } catch (e: Exception) { e.printStackTrace() }
+                try { db.execSQL("ALTER TABLE `playlists` ADD COLUMN `isDirty` INTEGER NOT NULL DEFAULT 0") } catch (e: Exception) { e.printStackTrace() }
             }
         }
 
         val MIGRATION_34_35 = object : Migration(34, 35) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                // 1. Create the new table with the exact schema Room expects
                 db.execSQL("""
                     CREATE TABLE IF NOT EXISTS `playlist_songs_new` (
                         `id` TEXT NOT NULL,
@@ -415,21 +365,13 @@ abstract class PanalinkDatabase : RoomDatabase() {
                         FOREIGN KEY(`trackId`) REFERENCES `audio_tracks`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE
                     )
                 """.trimIndent())
-
-                // 2. Copy the data from the old table
                 db.execSQL("""
                     INSERT INTO `playlist_songs_new` (`id`, `playlistId`, `trackId`, `orderIndex`, `addedAt`, `isDirty`)
                     SELECT `id`, `playlistId`, `trackId`, `orderIndex`, `addedAt`, IFNULL(`isDirty`, 0)
                     FROM `playlist_songs`
                 """.trimIndent())
-
-                // 3. Drop the old table
                 db.execSQL("DROP TABLE `playlist_songs`")
-
-                // 4. Rename the new table
                 db.execSQL("ALTER TABLE `playlist_songs_new` RENAME TO `playlist_songs`")
-
-                // 5. Create indices
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_playlist_songs_playlistId` ON `playlist_songs` (`playlistId`)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_playlist_songs_trackId` ON `playlist_songs` (`trackId`)")
             }
@@ -568,7 +510,7 @@ abstract class PanalinkDatabase : RoomDatabase() {
                     MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33,
                     MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36, MIGRATION_36_37,
                     MIGRATION_37_38, MIGRATION_38_39, MIGRATION_39_40, MIGRATION_40_41,
-                    MIGRATION_41_42
+                    MIGRATION_41_42, MIGRATION_42_43
                 )
                 .build()
                 INSTANCE = instance
