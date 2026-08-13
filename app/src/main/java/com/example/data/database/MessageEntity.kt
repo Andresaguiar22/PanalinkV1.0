@@ -18,10 +18,10 @@ data class MessageEntity(
     val receiverId: String? = null,
     val content: String? = null,
     val createdAt: String,
-    val status: String? = "sent", // sending, sent, delivered, read, failed
+    val status: String? = "pending",
     val replyToMessageId: String? = null,
     val clientMessageUuid: String? = null,
-    val reactionsJson: String = "{}", // JSON string mapping userId -> emoji reaction
+    val reactionsJson: String = "{}",
     val deliveredAt: String? = null,
     val seenAt: String? = null,
     val thumbnailUrl: String? = null,
@@ -45,80 +45,79 @@ data class MessageEntity(
     val deletePending: Boolean = false,
     val musicPlaylistId: String? = null
 ) {
-    fun toMessage(): Message {
-        return Message(
-            id = id,
-            chatId = chatId,
-            senderId = senderId,
-            receiverId = receiverId,
-            content = content ?: "",
-            createdAt = createdAt,
-            status = resolveStatus(status, deliveredAt, seenAt),
-            replyToMessageId = replyToMessageId,
-            clientMessageUuid = clientMessageUuid ?: "",
-            deliveredAt = deliveredAt,
-            seenAt = seenAt,
-            thumbnailUrl = thumbnailUrl ?: localThumbnailUri,
-            mediaUrl = mediaUrl ?: localMediaUri,
-            mediaMime = mediaMime,
-            mediaSize = mediaSize,
-            duration = mediaDuration,
-            width = mediaWidth,
-            height = mediaHeight,
-            messageType = messageType ?: "text",
-            isFavorited = isFavorited,
-            isEdited = isEdited,
-            deletedAt = deletedAt,
-            isGhost = isGhost || content?.startsWith("[Ghost]") == true || messageType == "ghost",
-            ghostOpenedAt = ghostOpenedAt,
-            updatedAt = updatedAt,
-            musicPlaylistId = musicPlaylistId
-        )
-    }
+    fun toMessage(): Message = Message(
+        id = id,
+        chatId = chatId,
+        senderId = senderId,
+        receiverId = receiverId,
+        content = content ?: "",
+        createdAt = createdAt,
+        status = resolveStatus(status, deliveredAt, seenAt),
+        replyToMessageId = replyToMessageId,
+        clientMessageUuid = clientMessageUuid ?: "",
+        deliveredAt = deliveredAt,
+        seenAt = seenAt,
+        thumbnailUrl = thumbnailUrl ?: localThumbnailUri,
+        mediaUrl = mediaUrl ?: localMediaUri,
+        mediaMime = mediaMime,
+        mediaSize = mediaSize,
+        duration = mediaDuration,
+        width = mediaWidth,
+        height = mediaHeight,
+        messageType = messageType ?: "text",
+        isFavorited = isFavorited,
+        isEdited = isEdited,
+        deletedAt = deletedAt,
+        isGhost = isGhost || content?.startsWith("[Ghost]") == true || messageType == "ghost",
+        ghostOpenedAt = ghostOpenedAt,
+        updatedAt = updatedAt,
+        musicPlaylistId = musicPlaylistId
+    )
 
     companion object {
-        fun fromMessage(msg: Message, reactions: String = "{}"): MessageEntity {
-            return MessageEntity(
-                id = msg.id,
-                chatId = msg.chatId,
-                senderId = msg.senderId,
-                receiverId = msg.receiverId,
-                content = msg.content,
-                createdAt = msg.createdAt,
-                status = resolveStatus(msg.status, msg.deliveredAt, msg.seenAt),
-                replyToMessageId = msg.replyToMessageId,
-                clientMessageUuid = msg.clientMessageUuid.takeIf { it.isNotBlank() },
-                reactionsJson = reactions,
-                deliveredAt = msg.deliveredAt,
-                seenAt = msg.seenAt,
-                thumbnailUrl = msg.thumbnailUrl,
-                mediaUrl = msg.mediaUrl,
-                mediaMime = msg.mediaMime,
-                mediaSize = msg.mediaSize,
-                mediaDuration = msg.duration,
-                mediaWidth = msg.width,
-                mediaHeight = msg.height,
-                messageType = msg.messageType ?: "text",
-                isFavorited = msg.isFavorited,
-                isEdited = msg.isEdited,
-                deletedAt = msg.deletedAt,
-                isGhost = msg.isGhost || msg.content?.startsWith("[Ghost]") == true || msg.messageType == "ghost",
-                ghostOpenedAt = msg.ghostOpenedAt,
-                updatedAt = msg.updatedAt,
-                musicPlaylistId = msg.musicPlaylistId
-            )
-        }
+        fun fromMessage(msg: Message, reactions: String = "{}"): MessageEntity = MessageEntity(
+            id = msg.id,
+            chatId = msg.chatId,
+            senderId = msg.senderId,
+            receiverId = msg.receiverId,
+            content = msg.content,
+            createdAt = msg.createdAt,
+            status = resolveStatus(msg.status, msg.deliveredAt, msg.seenAt),
+            replyToMessageId = msg.replyToMessageId,
+            clientMessageUuid = msg.clientMessageUuid.takeIf { it.isNotBlank() },
+            reactionsJson = reactions,
+            deliveredAt = msg.deliveredAt,
+            seenAt = msg.seenAt,
+            thumbnailUrl = msg.thumbnailUrl,
+            mediaUrl = msg.mediaUrl,
+            mediaMime = msg.mediaMime,
+            mediaSize = msg.mediaSize,
+            mediaDuration = msg.duration,
+            mediaWidth = msg.width,
+            mediaHeight = msg.height,
+            messageType = msg.messageType ?: "text",
+            isFavorited = msg.isFavorited,
+            isEdited = msg.isEdited,
+            deletedAt = msg.deletedAt,
+            isGhost = msg.isGhost || msg.content?.startsWith("[Ghost]") == true || msg.messageType == "ghost",
+            ghostOpenedAt = msg.ghostOpenedAt,
+            updatedAt = msg.updatedAt,
+            musicPlaylistId = msg.musicPlaylistId
+        )
 
-        private fun resolveStatus(status: String?, deliveredAt: String?, seenAt: String?): String? {
+        private fun resolveStatus(status: String?, deliveredAt: String?, seenAt: String?): String {
             return when {
                 !seenAt.isNullOrBlank() -> "read"
                 !deliveredAt.isNullOrBlank() -> "delivered"
                 status.equals("seen", ignoreCase = true) -> "read"
                 status.equals("read", ignoreCase = true) -> "read"
                 status.equals("delivered", ignoreCase = true) -> "delivered"
+                status.equals("sent", ignoreCase = true) -> "sent"
                 status.equals("sending", ignoreCase = true) -> "sending"
+                status.equals("pending", ignoreCase = true) || status.equals("pending_media", ignoreCase = true) -> "pending"
                 status.equals("failed", ignoreCase = true) -> "failed"
-                else -> status ?: "sent"
+                status.equals("deleted", ignoreCase = true) -> "deleted"
+                else -> "pending"
             }
         }
     }
