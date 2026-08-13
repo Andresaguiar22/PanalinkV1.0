@@ -39,12 +39,12 @@ data class Profile(
 data class Chat(
     @Json(name = "id") val id: String,
     @Json(name = "created_at") val createdAt: String?,
-    @Json(name = "chat_type") val type: String = "dm", // dm, channel, group, community
+    @Json(name = "chat_type") val type: String = "dm",
     @Json(name = "name") val name: String? = null,
     @Json(name = "description") val description: String? = null,
     @Json(name = "avatar_url") val avatarUrl: String? = null,
     @Json(name = "cover_url") val coverUrl: String? = null,
-    @Json(name = "visibility") val visibility: String = "private", // public, private
+    @Json(name = "visibility") val visibility: String = "private",
     @Json(name = "is_readonly") val isReadonly: Boolean = false,
     @Json(name = "owner_id") val ownerId: String? = null,
     @Json(name = "last_message_at") val lastMessageAt: String? = null,
@@ -141,9 +141,7 @@ data class ContactWithProfileEntity(
 ) {
     val rawProfile: Profile? get() = profiles?.profile
 
-    fun getProfile(moshi: com.squareup.moshi.Moshi): Profile? {
-        return rawProfile
-    }
+    fun getProfile(moshi: com.squareup.moshi.Moshi): Profile? = rawProfile
 }
 
 data class EmbeddedProfile(val profile: Profile?)
@@ -162,16 +160,11 @@ class EmbeddedProfileAdapter {
                     if (reader.hasNext() && reader.peek() != com.squareup.moshi.JsonReader.Token.END_ARRAY) {
                         prof = delegate.fromJson(reader)
                     }
-                    while (reader.hasNext()) {
-                        reader.skipValue()
-                    }
+                    while (reader.hasNext()) reader.skipValue()
                     reader.endArray()
                     EmbeddedProfile(prof)
                 }
-                com.squareup.moshi.JsonReader.Token.BEGIN_OBJECT -> {
-                    val prof = delegate.fromJson(reader)
-                    EmbeddedProfile(prof)
-                }
+                com.squareup.moshi.JsonReader.Token.BEGIN_OBJECT -> EmbeddedProfile(delegate.fromJson(reader))
                 com.squareup.moshi.JsonReader.Token.NULL -> {
                     reader.nextNull<Unit>()
                     null
@@ -193,11 +186,7 @@ class EmbeddedProfileAdapter {
         value: EmbeddedProfile?,
         delegate: com.squareup.moshi.JsonAdapter<Profile>
     ) {
-        if (value?.profile == null) {
-            writer.nullValue()
-        } else {
-            delegate.toJson(writer, value.profile)
-        }
+        if (value?.profile == null) writer.nullValue() else delegate.toJson(writer, value.profile)
     }
 }
 
@@ -208,7 +197,7 @@ data class FriendRequestEntity(
     @Json(name = "receiver_id") val receiverId: String,
     @Json(name = "status") val status: String,
     @Json(name = "created_at") val createdAt: String? = null,
-    @Json(name = "sender") val sender: Profile? = null // For UI
+    @Json(name = "sender") val sender: Profile? = null
 )
 
 @JsonClass(generateAdapter = true)
@@ -242,8 +231,9 @@ data class ThreadMessage(
 ) {
     fun toMessage(): Message {
         val calculatedStatus = when {
-            seenAt != null -> "seen"
-            deliveredAt != null -> "delivered"
+            !seenAt.isNullOrBlank() -> "read"
+            !deliveredAt.isNullOrBlank() -> "delivered"
+            status.equals("seen", ignoreCase = true) -> "read"
             else -> status ?: "sent"
         }
         val displayContent = if (messageType == "sticker" && !mediaUrl.isNullOrEmpty()) {
@@ -260,7 +250,7 @@ data class ThreadMessage(
             createdAt = createdAt,
             status = calculatedStatus,
             replyToMessageId = replyTo,
-            clientMessageUuid = clientMessageUuid ?: "",
+            clientMessageUuid = clientMessageUuid,
             deliveredAt = deliveredAt,
             seenAt = seenAt,
             thumbnailUrl = thumbnailUrl,
@@ -298,7 +288,7 @@ data class UserState(
     @Json(name = "media_url") val mediaUrl: String? = null,
     @Json(name = "media_urls") val mediaUrls: List<String>? = emptyList(),
     @Json(name = "audio_url") val audioUrl: String? = null,
-    @Json(name = "media_type") val mediaType: String, // "text" | "image" | "video"
+    @Json(name = "media_type") val mediaType: String,
     @Json(name = "caption") val caption: String? = null,
     @Json(name = "visibility") val visibility: String? = "public",
     @Json(name = "expires_at") val expiresAt: String? = null,
@@ -323,10 +313,8 @@ data class UserState(
     }
 }
 
-
 typealias UserStatus = UserState
 
-// UI wrappers to hold aggregated details
 data class ChatWithDetails(
     val chat: Chat,
     val otherMember: Profile?,
@@ -339,45 +327,22 @@ data class UserStateWithUser(
     val profile: Profile
 )
 
-// --- Auth Request/Response DTOs ---
-
 @JsonClass(generateAdapter = true)
 data class UpdateProfileRequest(
-    @Json(name = "display_name")
-    val displayName: String,
-
-    @Json(name = "avatar_url")
-    val avatarUrl: String? = null,
-
-    @Json(name = "is_profile_complete")
-    val isProfileComplete: Boolean? = null,
-
-    @Json(name = "first_name")
-    val firstName: String? = null,
-
-    @Json(name = "last_name")
-    val lastName: String? = null,
-
-    @Json(name = "status")
-    val status: String? = null,
-
-    @Json(name = "birth_date")
-    val birthDate: String? = null,
-
-    @Json(name = "sex")
-    val sex: String? = null,
-
-    @Json(name = "interests")
-    val interests: List<String>? = null,
-
-    @Json(name = "cover_url")
-    val coverUrl: String? = null
+    @Json(name = "display_name") val displayName: String,
+    @Json(name = "avatar_url") val avatarUrl: String? = null,
+    @Json(name = "is_profile_complete") val isProfileComplete: Boolean? = null,
+    @Json(name = "first_name") val firstName: String? = null,
+    @Json(name = "last_name") val lastName: String? = null,
+    @Json(name = "status") val status: String? = null,
+    @Json(name = "birth_date") val birthDate: String? = null,
+    @Json(name = "sex") val sex: String? = null,
+    @Json(name = "interests") val interests: List<String>? = null,
+    @Json(name = "cover_url") val coverUrl: String? = null
 )
 
 @JsonClass(generateAdapter = true)
-data class SignUpOptions(
-    @Json(name = "emailRedirectTo") val emailRedirectTo: String? = "panalink://verify"
-)
+data class SignUpOptions(@Json(name = "emailRedirectTo") val emailRedirectTo: String? = "panalink://verify")
 
 @JsonClass(generateAdapter = true)
 data class SignUpRequest(
@@ -406,9 +371,7 @@ data class VerifyOtpRequest(
 )
 
 @JsonClass(generateAdapter = true)
-data class RefreshTokenRequest(
-    @Json(name = "refresh_token") val refreshToken: String
-)
+data class RefreshTokenRequest(@Json(name = "refresh_token") val refreshToken: String)
 
 @JsonClass(generateAdapter = true)
 data class AuthUser(
@@ -467,16 +430,11 @@ fun formatIsoDateTime(isoStr: String?): String {
         } else {
             isoStr
         }
-        
         val parser = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.US).apply {
             timeZone = java.util.TimeZone.getTimeZone("UTC")
         }
         val date = parser.parse(cleanStr)
-        if (date != null) {
-            java.text.SimpleDateFormat("hh:mm a", java.util.Locale.getDefault()).format(date)
-        } else {
-            ""
-        }
+        if (date != null) java.text.SimpleDateFormat("hh:mm a", java.util.Locale.getDefault()).format(date) else ""
     } catch (e: Exception) {
         ""
     }
@@ -493,9 +451,7 @@ data class StickerResult(
 )
 
 @JsonClass(generateAdapter = true)
-data class StickerSearchResponse(
-    @Json(name = "results") val results: List<StickerResult>
-)
+data class StickerSearchResponse(@Json(name = "results") val results: List<StickerResult>)
 
 @JsonClass(generateAdapter = true)
 data class SearchStickersRequest(
@@ -504,9 +460,7 @@ data class SearchStickersRequest(
 )
 
 @JsonClass(generateAdapter = true)
-data class GiphyResponse(
-    @Json(name = "data") val data: List<GiphySticker>
-)
+data class GiphyResponse(@Json(name = "data") val data: List<GiphySticker>)
 
 @JsonClass(generateAdapter = true)
 data class GiphySticker(
@@ -515,9 +469,7 @@ data class GiphySticker(
 )
 
 @JsonClass(generateAdapter = true)
-data class GiphyImages(
-    @Json(name = "fixed_width") val fixedWidth: GiphyImage
-)
+data class GiphyImages(@Json(name = "fixed_width") val fixedWidth: GiphyImage)
 
 @JsonClass(generateAdapter = true)
 data class GiphyImage(
@@ -525,7 +477,6 @@ data class GiphyImage(
     @Json(name = "width") val width: String,
     @Json(name = "height") val height: String
 )
-
 
 @JsonClass(generateAdapter = true)
 data class ChannelComment(
@@ -563,6 +514,5 @@ data class PresenceSession(
     @Json(name = "is_active") val isActive: Boolean = false,
     @Json(name = "push_token") val pushToken: String? = null
 )
-
 
 
