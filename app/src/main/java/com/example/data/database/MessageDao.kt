@@ -57,7 +57,7 @@ interface MessageDao {
     suspend fun updateChatMetadataForMessage(message: MessageEntity) {
         val myUserId = try { com.example.data.supabase.SupabaseClient.currentUser?.id ?: "" } catch (e: Exception) { "" }
         val isChatActive = com.example.data.supabase.SupabaseClient.isChatScreenActive && com.example.data.supabase.SupabaseClient.activeChatId == message.chatId
-        val shouldIncrementUnread = if (message.senderId != myUserId && !isChatActive && message.status != "seen" && message.seenAt == null) 1 else 0
+        val shouldIncrementUnread = if (message.senderId != myUserId && !isChatActive && message.status != "read" && message.status != "seen" && message.seenAt == null) 1 else 0
 
         val chatExists = hasChat(message.chatId) > 0
         if (!chatExists) {
@@ -105,33 +105,57 @@ interface MessageDao {
         }
     }
 
+    private fun deliveryRank(status: String?): Int = when (status?.lowercase()) {
+        "read", "seen" -> 4
+        "delivered" -> 3
+        "sent" -> 2
+        "failed" -> 1
+        "pending", "sending", "pending_media" -> 0
+        else -> 0
+    }
+
+    private fun normalizeDeliveryStatus(entity: MessageEntity): String {
+        return when {
+            !entity.seenAt.isNullOrBlank() -> "read"
+            !entity.deliveredAt.isNullOrBlank() -> "delivered"
+            entity.status.equals("seen", ignoreCase = true) -> "read"
+            entity.status.equals("read", ignoreCase = true) -> "read"
+            entity.status.equals("delivered", ignoreCase = true) -> "delivered"
+            else -> entity.status ?: "sent"
+        }
+    }
+
     private fun mergeReactions(localJson: String?, remoteJson: String?, preserveLocal: Boolean): String {
         if (preserveLocal && !localJson.isNullOrEmpty()) return localJson
         return remoteJson ?: localJson ?: ""
     }
 
+    /**
+     * Merge local and remote data without allowing delivery state to regress.
+     * Timestamps are treated as evidence and are preserved when either side
+     * already reached a stronger state.
+     */
     fun mergeEntities(local: MessageEntity, remote: MessageEntity): MessageEntity {
         val localWins = localVersionIsNewer(local, remote)
         val localHasPendingMutation = local.editPending || local.reactionPending || local.deletePending
         val preserveLocalMutation = localWins && localHasPendingMutation
 
+        val localStatus = normalizeDeliveryStatus(local)
+        val remoteStatus = normalizeDeliveryStatus(remote)
+        val deliveryStatus = if (deliveryRank(localStatus) >= deliveryRank(remoteStatus)) localStatus else remoteStatus
+
         val finalStatus = when {
             preserveLocalMutation && local.deletePending -> "deleted"
             preserveLocalMutation && local.editPending -> local.status
-            else -> remote.status
+            remote.status.equals("deleted", ignoreCase = true) -> "deleted"
+            else -> deliveryStatus
         }
 
-        val finalContent = if (preserveLocalMutation && local.editPending) {
-            local.content
-        } else {
-            remote.content
-        }
+        val finalContent = if (preserveLocalMutation && local.editPending) local.content else remote.content
+        val finalDeletedAt = if (preserveLocalMutation && local.deletePending) local.deletedAt ?: remote.deletedAt else remote.deletedAt
 
-        val finalDeletedAt = if (preserveLocalMutation && local.deletePending) {
-            local.deletedAt ?: remote.deletedAt
-        } else {
-            remote.deletedAt
-        }
+        val finalDeliveredAt = local.deliveredAt ?: remote.deliveredAt
+        val finalSeenAt = local.seenAt ?: remote.seenAt
 
         val finalReactionsJson = mergeReactions(
             local.reactionsJson,
@@ -142,6 +166,8 @@ interface MessageDao {
         return remote.copy(
             content = finalContent,
             status = finalStatus,
+            deliveredAt = finalDeliveredAt,
+            seenAt = finalSeenAt,
             deletedAt = finalDeletedAt,
             reactionsJson = finalReactionsJson,
             updatedAt = if (localWins) local.updatedAt else remote.updatedAt,
@@ -163,9 +189,7 @@ interface MessageDao {
 
     @Transaction
     suspend fun insertOrMergeMessages(remoteList: List<MessageEntity>) {
-        remoteList.forEach { remote ->
-            insertOrMergeMessage(remote)
-        }
+        remoteList.forEach { remote -> insertOrMergeMessage(remote) }
     }
 
     @Transaction
@@ -180,8 +204,7 @@ interface MessageDao {
         val localById = getMessageById(remote.id)
         val local = localById ?: localByUuid
         if (local != null) {
-            val merged = mergeEntities(local, remote)
-            insertMessage(merged)
+            insertMessage(mergeEntities(local, remote))
         } else {
             insertMessage(remote)
         }
@@ -199,8 +222,7 @@ interface MessageDao {
         val localById = getMessageById(finalEntity.id)
         val local = localById ?: localByUuid
         if (local != null) {
-            val merged = mergeEntities(local, finalEntity)
-            insertMessage(merged)
+            insertMessage(mergeEntities(local, finalEntity))
         } else {
             insertMessage(finalEntity)
         }
@@ -213,20 +235,12 @@ interface MessageDao {
         val localTempById = getMessageById(tempId)
         val localTemp = localTempById ?: localTempByUuid
 
-        if (!uuid.isNullOrBlank()) {
-            deleteTemporaryMessageByUuid(uuid)
-        }
+        if (!uuid.isNullOrBlank()) deleteTemporaryMessageByUuid(uuid)
         deleteMessageById(tempId)
 
         val localById = getMessageById(finalEntity.id)
         val baseLocal = localById ?: localTemp
-
-        if (baseLocal != null) {
-            val merged = mergeEntities(baseLocal, finalEntity)
-            insertMessage(merged)
-        } else {
-            insertMessage(finalEntity)
-        }
+        if (baseLocal != null) insertMessage(mergeEntities(baseLocal, finalEntity)) else insertMessage(finalEntity)
     }
 
     @Query("UPDATE local_messages SET status = :status WHERE id = :id")
@@ -244,7 +258,7 @@ interface MessageDao {
     @Query("UPDATE local_messages SET reactionsJson = :reactionsJson WHERE id = :id")
     suspend fun updateMessageReactions(id: String, reactionsJson: String)
 
-    @Query("UPDATE local_messages SET status = 'seen', seenAt = :seenAt WHERE chatId = :chatId AND senderId != :myUserId AND status != 'seen'")
+    @Query("UPDATE local_messages SET status = 'read', seenAt = :seenAt WHERE chatId = :chatId AND senderId != :myUserId AND status != 'read'")
     suspend fun markChatMessagesAsRead(chatId: String, myUserId: String, seenAt: String)
 
     @Query("UPDATE local_messages SET isFavorited = :isFavorited WHERE id = :id")
@@ -289,7 +303,7 @@ interface MessageDao {
     @Query("SELECT * FROM local_messages WHERE chatId = :chatId ORDER BY createdAt DESC LIMIT 1")
     suspend fun getLastMessageForChat(chatId: String): MessageEntity?
 
-    @Query("SELECT COUNT(*) FROM local_messages WHERE chatId = :chatId AND senderId != :myUserId AND status != 'seen' AND seenAt IS NULL")
+    @Query("SELECT COUNT(*) FROM local_messages WHERE chatId = :chatId AND senderId != :myUserId AND status != 'read' AND status != 'seen' AND seenAt IS NULL")
     suspend fun getUnreadCountForChat(chatId: String, myUserId: String): Int
 
     @Query("SELECT createdAt FROM local_messages WHERE chatId = :chatId ORDER BY createdAt ASC LIMIT 1")
