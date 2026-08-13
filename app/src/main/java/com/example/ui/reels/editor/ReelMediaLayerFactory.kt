@@ -9,7 +9,7 @@ object ReelMediaLayerFactory {
     fun image(uri: String, startTimeMs: Long, endTimeMs: Long, zIndex: Int = 120): ReelLayer =
         ReelLayer(
             id = "image_${System.nanoTime()}",
-            type = ReelTrackType.STICKER,
+            type = ReelTrackType.IMAGE,
             startTimeMs = startTimeMs,
             endTimeMs = endTimeMs.coerceAtLeast(startTimeMs + 1L),
             zIndex = zIndex,
