@@ -58,7 +58,7 @@ interface MessageDao {
         val myUserId = try { com.example.data.supabase.SupabaseClient.currentUser?.id ?: "" } catch (e: Exception) { "" }
         val isChatActive = com.example.data.supabase.SupabaseClient.isChatScreenActive && com.example.data.supabase.SupabaseClient.activeChatId == message.chatId
         val shouldIncrementUnread = if (message.senderId != myUserId && !isChatActive && message.status != "seen" && message.seenAt == null) 1 else 0
-        
+
         val chatExists = hasChat(message.chatId) > 0
         if (!chatExists) {
             val otherUserId = if (message.senderId != myUserId) message.senderId else null
@@ -94,70 +94,64 @@ interface MessageDao {
     @Query("DELETE FROM local_messages WHERE clientMessageUuid = :uuid AND id LIKE 'temp_%'")
     suspend fun deleteTemporaryMessageByUuid(uuid: String)
 
-    fun isTimestampBeforeOrEqual(ts1: String?, ts2: String?): Boolean {
-        if (ts1 == null) return true
-        if (ts2 == null) return false
-        return ts1 <= ts2
+    private fun localVersionIsNewer(local: MessageEntity, remote: MessageEntity): Boolean {
+        val localUpdated = local.updatedAt
+        val remoteUpdated = remote.updatedAt
+        return when {
+            localUpdated == null && remoteUpdated == null -> false
+            localUpdated == null -> false
+            remoteUpdated == null -> true
+            else -> localUpdated > remoteUpdated
+        }
     }
 
-    fun mergeReactions(localJson: String?, remoteJson: String?): String {
-        if (localJson.isNullOrEmpty()) return remoteJson ?: ""
-        if (remoteJson.isNullOrEmpty()) return localJson ?: ""
-        return try {
-            val localObj = org.json.JSONObject(localJson)
-            val remoteObj = org.json.JSONObject(remoteJson)
-            val merged = org.json.JSONObject(remoteJson)
-            val keys = localObj.keys()
-            while (keys.hasNext()) {
-                val key = keys.next()
-                merged.put(key, localObj.get(key))
-            }
-            merged.toString()
-        } catch (e: Exception) {
-            localJson
-        }
+    private fun mergeReactions(localJson: String?, remoteJson: String?, preserveLocal: Boolean): String {
+        if (preserveLocal && !localJson.isNullOrEmpty()) return localJson
+        return remoteJson ?: localJson ?: ""
     }
 
     fun mergeEntities(local: MessageEntity, remote: MessageEntity): MessageEntity {
-        val mergedUpdatedAt = if (isTimestampBeforeOrEqual(local.updatedAt, remote.updatedAt)) {
-            remote.updatedAt
-        } else {
-            local.updatedAt
-        }
+        val localWins = localVersionIsNewer(local, remote)
+        val localHasPendingMutation = local.editPending || local.reactionPending || local.deletePending
+        val preserveLocalMutation = localWins && localHasPendingMutation
 
         val finalStatus = when {
-            local.deletePending -> "deleted"
-            local.editPending -> local.status
+            preserveLocalMutation && local.deletePending -> "deleted"
+            preserveLocalMutation && local.editPending -> local.status
             else -> remote.status
         }
 
-        val finalContent = if (local.editPending) {
+        val finalContent = if (preserveLocalMutation && local.editPending) {
             local.content
         } else {
             remote.content
         }
 
-        val finalDeletedAt = if (local.deletePending) {
+        val finalDeletedAt = if (preserveLocalMutation && local.deletePending) {
             local.deletedAt ?: remote.deletedAt
         } else {
             remote.deletedAt
         }
 
-        val finalReactionsJson = mergeReactions(local.reactionsJson, remote.reactionsJson)
+        val finalReactionsJson = mergeReactions(
+            local.reactionsJson,
+            remote.reactionsJson,
+            preserveLocal = localWins && local.reactionPending
+        )
 
         return remote.copy(
             content = finalContent,
             status = finalStatus,
             deletedAt = finalDeletedAt,
             reactionsJson = finalReactionsJson,
-            updatedAt = mergedUpdatedAt,
+            updatedAt = if (localWins) local.updatedAt else remote.updatedAt,
             localMediaUri = local.localMediaUri ?: remote.localMediaUri,
             localThumbnailUri = local.localThumbnailUri ?: remote.localThumbnailUri,
-            isFavorited = local.isFavorited || remote.isFavorited,
+            isFavorited = if (localWins) local.isFavorited else remote.isFavorited,
             clientMessageUuid = remote.clientMessageUuid ?: local.clientMessageUuid,
-            editPending = local.editPending,
-            reactionPending = local.reactionPending,
-            deletePending = local.deletePending,
+            editPending = preserveLocalMutation && local.editPending,
+            reactionPending = preserveLocalMutation && local.reactionPending,
+            deletePending = preserveLocalMutation && local.deletePending,
             ghostOpenedAt = local.ghostOpenedAt ?: remote.ghostOpenedAt
         )
     }
@@ -218,15 +212,15 @@ interface MessageDao {
         val localTempByUuid = if (!uuid.isNullOrBlank()) getMessagesByUuid(uuid).firstOrNull() else null
         val localTempById = getMessageById(tempId)
         val localTemp = localTempById ?: localTempByUuid
-        
+
         if (!uuid.isNullOrBlank()) {
             deleteTemporaryMessageByUuid(uuid)
         }
         deleteMessageById(tempId)
-        
+
         val localById = getMessageById(finalEntity.id)
         val baseLocal = localById ?: localTemp
-        
+
         if (baseLocal != null) {
             val merged = mergeEntities(baseLocal, finalEntity)
             insertMessage(merged)
@@ -264,7 +258,7 @@ interface MessageDao {
 
     @Query("DELETE FROM local_messages WHERE chatId = :chatId")
     suspend fun clearChatMessages(chatId: String)
-    
+
     @Query("UPDATE local_messages SET content = :content, isEdited = 1 WHERE id = :id")
     suspend fun updateMessageContent(id: String, content: String)
 
