@@ -6,6 +6,7 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.example.data.database.PanalinkDatabase
 import com.example.data.repository.MessagesRepository
+import com.example.util.MessageFilter
 import com.example.util.PanalinkMediaManager
 import java.io.File
 
@@ -23,6 +24,23 @@ class MediaUploadWorker(
         Log.i(TAG, "Starting media upload for message: $messageId")
 
         val entity = messageDao.getMessageById(messageId) ?: return Result.failure()
+
+        // Re-check local visibility before touching the CDN. A message can be
+        // cleared/deleted while WorkManager is waiting for its turn.
+        val effectiveClearedAt = messagesRepository.getEffectiveClearedAt(entity.chatId, null)
+        val shouldKeepBeforeUpload = MessageFilter.shouldKeepMessage(
+            messageId = entity.id,
+            messageClientUuid = entity.clientMessageUuid,
+            messageCreatedAt = entity.createdAt,
+            lastClearedAt = effectiveClearedAt,
+            deletedMessageIds = messagesRepository.getUserDeletedMessageIds()
+        )
+        if (!shouldKeepBeforeUpload) {
+            messageDao.deleteMessageById(entity.id)
+            Log.i(TAG, "Message $messageId is no longer locally sendable; upload cancelled")
+            return Result.success()
+        }
+
         val localUri = entity.localMediaUri
 
         // The upload may already have completed on a previous Worker attempt.
@@ -96,27 +114,33 @@ class MediaUploadWorker(
                 status = "sending"
             )
 
-            val effectiveClearedAt = messagesRepository.getEffectiveClearedAt(updatedEntity.chatId, null)
-            val shouldKeep = com.example.util.MessageFilter.shouldKeepMessage(
+            // Re-check after upload because the user may have cleared/deleted the
+            // message while the potentially long CDN operation was running.
+            val effectiveClearedAtAfterUpload = messagesRepository.getEffectiveClearedAt(updatedEntity.chatId, null)
+            val shouldKeepAfterUpload = MessageFilter.shouldKeepMessage(
                 messageId = updatedEntity.id,
                 messageClientUuid = updatedEntity.clientMessageUuid,
                 messageCreatedAt = updatedEntity.createdAt,
-                lastClearedAt = effectiveClearedAt,
+                lastClearedAt = effectiveClearedAtAfterUpload,
                 deletedMessageIds = messagesRepository.getUserDeletedMessageIds()
             )
 
-            if (shouldKeep) {
-                messageDao.insertMessage(updatedEntity)
-            } else {
+            if (!shouldKeepAfterUpload) {
+                // Do not persist an already-uploaded URL into a locally deleted
+                // message. The CDN object is intentionally left untouched because
+                // this worker has no safe ownership/garbage-collection contract for
+                // remote media; cleanup must be handled by the server-side media GC.
                 messageDao.deleteMessageById(updatedEntity.id)
-                Log.i(TAG, "Message $messageId was filtered locally after upload; no remote sync needed")
+                Log.i(TAG, "Message $messageId was cleared while uploading; local row removed")
                 return Result.success()
             }
 
+            messageDao.insertMessage(updatedEntity)
+
             // IMPORTANT FOR VOICE NOTES:
-            // Do the metadata sync after the media upload has completed instead of
-            // merely enqueueing another unique sync with KEEP. A running SyncWorker
-            // could otherwise have already skipped this message while mediaUrl was null.
+            // Synchronize after the media upload instead of merely enqueueing another
+            // unique sync with KEEP. A running SyncWorker could otherwise skip this
+            // message while mediaUrl was still null.
             return try {
                 if (messagesRepository.syncPendingMessages()) {
                     Log.i(TAG, "Media + message sync completed successfully: $messageId")
