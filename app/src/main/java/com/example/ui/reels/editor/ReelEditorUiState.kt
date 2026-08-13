@@ -31,6 +31,7 @@ sealed interface ReelEditorEvent {
         val scale: Float? = null,
         val rotationDegrees: Float? = null
     ) : ReelEditorEvent
+    data class AddImageLayer(val imageUri: String) : ReelEditorEvent
     data class AddStickerLayer(val stickerUri: String) : ReelEditorEvent
     data class RemoveTrack(val trackId: String) : ReelEditorEvent
     data class AddLayer(val trackId: String, val layer: ReelLayer) : ReelEditorEvent
