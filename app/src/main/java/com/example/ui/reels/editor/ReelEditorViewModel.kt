@@ -27,6 +27,7 @@ class ReelEditorViewModel : ViewModel() {
             is ReelEditorEvent.AddTextLayer -> addTextLayer(event.text)
             is ReelEditorEvent.UpdateTextStyle -> updateTextStyle(event)
             is ReelEditorEvent.TransformLayer -> transformLayer(event)
+            is ReelEditorEvent.AddImageLayer -> addImageLayer(event.imageUri)
             is ReelEditorEvent.AddStickerLayer -> addStickerLayer(event.stickerUri)
             is ReelEditorEvent.RemoveTrack -> removeTrack(event.trackId)
             is ReelEditorEvent.AddLayer -> _uiState.update { state -> state.copy(project = state.project.copy(timeline = ReelTimelineOperations.addLayer(state.project.timeline, event.trackId, event.layer))) }
@@ -55,6 +56,10 @@ class ReelEditorViewModel : ViewModel() {
 
     private fun addTextLayer(text: String) = addOverlayTrack(ReelTrackType.TEXT, "Texto") { start, end ->
         ReelLayer("text_${System.nanoTime()}", ReelTrackType.TEXT, start, end, zIndex = 100, x = 0.5f, y = 0.5f, content = ReelLayerContent.Text(value = text.ifBlank { "Escribe aquí" }))
+    }
+
+    private fun addImageLayer(imageUri: String) = addOverlayTrack(ReelTrackType.IMAGE, "Fotos") { start, end ->
+        ReelMediaLayerFactory.image(imageUri, start, end)
     }
 
     private fun addStickerLayer(stickerUri: String) = addOverlayTrack(ReelTrackType.STICKER, "Stickers") { start, end ->
