@@ -12,46 +12,39 @@ enum class DeliveryState {
     UNKNOWN
 }
 
+/**
+ * Resolves the visual delivery state from the strongest evidence available.
+ * The hierarchy is strictly monotonic: READ > DELIVERED > SENT > pending.
+ * Server timestamps are authoritative over textual status values.
+ */
 object MessageStatusResolver {
     fun resolveMessageDeliveryState(message: Message, isOnline: Boolean): DeliveryState {
-        // Priority hierarchy: READ > DELIVERED > SENT > FAILED > OFFLINE_PENDING > SENDING
-        
-        // Force server-confirmed messages to NOT be pending/sending
-        val isServerConfirmed = !message.id.startsWith("temp_")
-        val effectiveStatus = if (isServerConfirmed && (message.status == "pending" || message.status == "sending" || message.status == "pending_media")) {
-            "sent"
-        } else {
-            message.status
-        }
-        
-        // 1. If it has seenAt or status is read/seen, it's strictly READ
-        if (!message.seenAt.isNullOrEmpty() || effectiveStatus == "seen" || effectiveStatus == "read") {
+        val status = message.status?.trim()?.lowercase()
+
+        // Real server timestamps always win and can never be downgraded by a
+        // late/out-of-order status event.
+        if (!message.seenAt.isNullOrBlank() || status == "seen" || status == "read") {
             return DeliveryState.READ
         }
-        
-        // 2. If it has deliveredAt or status is delivered, it's DELIVERED
-        if (!message.deliveredAt.isNullOrEmpty() || effectiveStatus == "delivered") {
+
+        if (!message.deliveredAt.isNullOrBlank() || status == "delivered") {
             return DeliveryState.DELIVERED
         }
-        
-        // 3. Status "sent" means Supabase accepted it. It is unequivocally SENT.
-        if (effectiveStatus == "sent") {
+
+        // A non-temporary id is NOT proof that Supabase accepted the message.
+        // Do not manufacture SENT merely because temp_ disappeared.
+        if (status == "sent") {
             return DeliveryState.SENT
         }
-        
-        // 4. Errors
-        if (effectiveStatus == "failed") {
+
+        if (status == "failed") {
             return DeliveryState.FAILED
         }
-        
-        // 5. If it's pending/sending and we're offline -> OFFLINE_PENDING
-        if (effectiveStatus == "pending" || effectiveStatus == "sending" || effectiveStatus == "pending_media") {
-            if (!isOnline) {
-                return DeliveryState.OFFLINE_PENDING
-            }
-            return DeliveryState.SENDING
+
+        if (status == "pending" || status == "sending" || status == "pending_media") {
+            return if (isOnline) DeliveryState.SENDING else DeliveryState.OFFLINE_PENDING
         }
-        
+
         return DeliveryState.UNKNOWN
     }
 }
