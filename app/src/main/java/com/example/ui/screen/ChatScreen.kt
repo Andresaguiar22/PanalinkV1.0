@@ -1319,7 +1319,7 @@ fun ChatScreen(
                     Surface(
                         modifier = Modifier
                             .weight(1f)
-                            .heightIn(min = 48.dp)
+                            .heightIn(min = 52.dp)
                             .then(
                                 if (isGhostMode) Modifier.border(
                                     2.dp,
@@ -1420,6 +1420,7 @@ fun ChatScreen(
                     Row(
                         modifier = Modifier
                             .weight(1f)
+                            .height(52.dp)
                             .background(Color(0xFF1F2C34), RoundedCornerShape(24.dp))
                             .padding(horizontal = 16.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically
@@ -1468,6 +1469,7 @@ fun ChatScreen(
                     Row(
                         modifier = Modifier
                             .weight(1f)
+                            .height(52.dp)
                             .background(Color(0xFF1F2C34), RoundedCornerShape(24.dp))
                             .padding(horizontal = 10.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically
@@ -1594,6 +1596,7 @@ fun ChatScreen(
                     Row(
                         modifier = Modifier
                             .weight(1f)
+                            .height(52.dp)
                             .background(Color(0xFF1F2C34), RoundedCornerShape(24.dp))
                             .padding(horizontal = 12.dp, vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically
@@ -1901,7 +1904,10 @@ fun ChatScreen(
                     verticalArrangement = Arrangement.Top,
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
-                        .offset(x = 0.dp, y = (-48).dp)
+                        .padding(end = 8.dp)
+                        .offset(y = (-48).dp)
+                        .requiredHeight(0.dp)
+                        .wrapContentHeight(align = Alignment.Bottom, unbounded = true)
                         .height(130.dp)
                         .width(48.dp)
                         .background(

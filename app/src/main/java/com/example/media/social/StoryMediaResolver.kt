@@ -9,18 +9,8 @@ import com.example.media.model.MediaResource
 import com.example.media.repository.MediaRepository
 import com.example.media.storage.MediaStorageManager
 import java.io.File
-import java.net.URI
 
 object StoryMediaResolver {
-
-    private fun stableMediaId(state: UserState, remoteUrl: String): String {
-        val path = runCatching { URI(remoteUrl).path }
-            .getOrNull()
-            ?.trim('/')
-            ?.takeIf { it.isNotBlank() }
-            ?: remoteUrl.substringAfter("?", remoteUrl)
-        return "story_${state.id}_${path.hashCode().toUInt().toString(16)}"
-    }
 
     @Composable
     fun rememberResolvedStoryMediaResource(
@@ -36,10 +26,12 @@ object StoryMediaResolver {
             }
         }
 
-        if (remoteUrl.isNullOrBlank()) return MediaResource.Missing
+        if (remoteUrl.isNullOrBlank()) {
+            return MediaResource.Missing
+        }
 
         if (remoteUrl.startsWith("file://") || remoteUrl.startsWith("/")) {
-            val cleanPath = remoteUrl.removePrefix("file://")
+            val cleanPath = remoteUrl.replace("file://", "")
             val file = File(cleanPath)
             return if (file.exists() && file.length() > 0) {
                 MediaResource.Local(file.absolutePath)
@@ -50,24 +42,20 @@ object StoryMediaResolver {
 
         val context = LocalContext.current
         val repository = remember {
-            val app = context.applicationContext
-            MediaRepository(app, MediaStorageManager(app))
+            val storage = MediaStorageManager(context.applicationContext)
+            MediaRepository(context.applicationContext, storage)
         }
 
         val mediaId = remember(remoteUrl, state.id) {
-            stableMediaId(state, remoteUrl)
+            "story_${state.id}_${kotlin.math.abs(remoteUrl.hashCode())}"
         }
 
         val mediaState by repository.observeMedia(mediaId)
             .collectAsStateWithLifecycle(initialValue = null)
 
         LaunchedEffect(remoteUrl, state.id) {
-            val cachedPath = mediaState?.localPath
-            if (cachedPath.isNullOrBlank() || !File(cachedPath).exists()) {
-                val type = if (
-                    state.mediaType.equals("video", ignoreCase = true) ||
-                    remoteUrl.substringBefore('?').lowercase().endsWith(".mp4")
-                ) "video" else "image"
+            if (mediaState == null || mediaState?.localPath.isNullOrBlank() || !File(mediaState?.localPath ?: "").exists()) {
+                val type = if (state.mediaType == "video" || remoteUrl.endsWith(".mp4") || remoteUrl.contains("video")) "video" else "image"
                 repository.syncManager.syncMedia(mediaId, remoteUrl, type, state.userId)
             }
         }
