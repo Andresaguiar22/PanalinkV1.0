@@ -4,7 +4,6 @@ import android.content.Context
 import android.util.Log
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
-import com.example.PanaApplication
 import com.example.data.database.PanalinkDatabase
 import com.example.util.PanalinkMediaManager
 import com.example.data.repository.MessagesRepository
@@ -26,25 +25,24 @@ class MediaUploadWorker(
         Log.i(TAG, "Starting media upload for message: $messageId")
 
         val entity = messageDao.getMessageById(messageId) ?: return Result.failure()
-        val localUri = entity.localMediaUri ?: return Result.success() // Nothing to upload
+        val localUri = entity.localMediaUri ?: run {
+            if (!entity.mediaUrl.isNullOrBlank()) {
+                messagesRepository.syncPendingMessages()
+            }
+            return Result.success()
+        }
 
         return try {
             val file = File(localUri)
             if (!file.exists()) {
                 Log.e(TAG, "Local file does not exist: $localUri")
-                try {
-                    messageDao.updateMessageStatus(messageId, "failed")
-                } catch (dbEx: Exception) {
-                    Log.e(TAG, "Failed to update db status to failed on missing file", dbEx)
-                }
+                messageDao.updateMessageStatus(messageId, "failed")
                 return Result.failure()
             }
 
             val mimeType = entity.mediaMime ?: "application/octet-stream"
             val typeLabel = entity.messageType ?: "text"
             val userId = entity.senderId
-
-            Log.i(TAG, "Processing and uploading $typeLabel ($mimeType)...")
 
             val uploadResult = PanalinkMediaManager.uploadMediaAndThumbnail(
                 context = context,
@@ -55,45 +53,69 @@ class MediaUploadWorker(
                 caption = entity.content ?: "Multimedia message"
             )
 
-            if (uploadResult.isSuccess) {
-                val mediaInfo = uploadResult.getOrThrow()
-                Log.i(TAG, "Upload successful: mediaUrl=${mediaInfo.url}, thumbUrl=${mediaInfo.thumbnailUrl}")
-
-                // Update Room with remote URLs and full metadata
-                val updatedEntity = entity.copy(
-                    mediaUrl = mediaInfo.url,
-                    thumbnailUrl = mediaInfo.thumbnailUrl ?: entity.thumbnailUrl,
-                    mediaMime = mediaInfo.mime ?: entity.mediaMime,
-                    mediaSize = mediaInfo.size,
-                    mediaDuration = mediaInfo.duration,
-                    mediaWidth = mediaInfo.width,
-                    mediaHeight = mediaInfo.height,
-                    localMediaUri = null,
-                    status = "sending" // Ready for metadata sync
-                )
-                val msgsRepo = com.example.data.repository.MessagesRepository.getInstance()
-                val effectiveClearedAt = msgsRepo.getEffectiveClearedAt(updatedEntity.chatId, null)
-                val shouldKeep = com.example.util.MessageFilter.shouldKeepMessage(
-                    messageId = updatedEntity.id,
-                    messageClientUuid = updatedEntity.clientMessageUuid,
-                    messageCreatedAt = updatedEntity.createdAt,
-                    lastClearedAt = effectiveClearedAt,
-                    deletedMessageIds = msgsRepo.getUserDeletedMessageIds()
-                )
-                if (shouldKeep) {
-                    messageDao.insertMessage(updatedEntity)
-                } else {
-                    messageDao.deleteMessageById(updatedEntity.id)
-                }
-
-                // Trigger metadata sync
-                messagesRepository.scheduleSync()
-
-                Result.success()
-            } else {
+            if (!uploadResult.isSuccess) {
                 Log.e(TAG, "Upload failed: ${uploadResult.exceptionOrNull()?.message}")
-                Result.retry()
+                return Result.retry()
             }
+
+            val mediaInfo = uploadResult.getOrThrow()
+            Log.i(TAG, "Upload successful: mediaUrl=${mediaInfo.url}, thumbUrl=${mediaInfo.thumbnailUrl}")
+
+            val updatedEntity = entity.copy(
+                mediaUrl = mediaInfo.url,
+                thumbnailUrl = mediaInfo.thumbnailUrl ?: entity.thumbnailUrl,
+                mediaMime = mediaInfo.mime ?: entity.mediaMime,
+                mediaSize = mediaInfo.size,
+                mediaDuration = mediaInfo.duration,
+                mediaWidth = mediaInfo.width,
+                mediaHeight = mediaInfo.height,
+                localMediaUri = null,
+                status = "sending"
+            )
+
+            val effectiveClearedAt = messagesRepository.getEffectiveClearedAt(updatedEntity.chatId, null)
+            val shouldKeep = com.example.util.MessageFilter.shouldKeepMessage(
+                messageId = updatedEntity.id,
+                messageClientUuid = updatedEntity.clientMessageUuid,
+                messageCreatedAt = updatedEntity.createdAt,
+                lastClearedAt = effectiveClearedAt,
+                deletedMessageIds = messagesRepository.getUserDeletedMessageIds()
+            )
+
+            if (!shouldKeep) {
+                messageDao.deleteMessageById(updatedEntity.id)
+                return Result.success()
+            }
+
+            messageDao.insertMessage(updatedEntity)
+
+            // The old implementation only scheduled a UNIQUE sync with KEEP here.
+            // If another sync was already running, this upload could remain in Room as
+            // "sending" even though its media was already uploaded and the recipient
+            // could receive it. Reconcile immediately now that mediaUrl is available.
+            val synced = messagesRepository.syncPendingMessages()
+            if (!synced) {
+                Log.w(TAG, "Metadata sync was partial; scheduling reconciliation for $messageId")
+                messagesRepository.scheduleSync()
+                return Result.retry()
+            }
+
+            // syncPendingMessages reconciles temp_* using clientMessageUuid. If the
+            // definitive row is not yet visible locally, schedule another pass rather
+            // than falsely treating the upload as permanently complete.
+            val finalEntity = if (!updatedEntity.clientMessageUuid.isNullOrBlank()) {
+                messageDao.getMessageByClientUuid(updatedEntity.clientMessageUuid!!)
+            } else {
+                messageDao.getMessageById(updatedEntity.id)
+            }
+
+            if (finalEntity != null && finalEntity.status == "sending") {
+                Log.w(TAG, "Message $messageId still sending after reconciliation; retrying")
+                messagesRepository.scheduleSync()
+                return Result.retry()
+            }
+
+            Result.success()
         } catch (e: Exception) {
             Log.e(TAG, "Error in MediaUploadWorker: ${e.localizedMessage}", e)
             Result.retry()
