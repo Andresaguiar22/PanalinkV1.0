@@ -39,7 +39,7 @@ fun ReelCanvasLayers(
     val visibleLayers = project.timeline.tracks.flatMap { track -> track.layers.map { track to it } }
         .filter { (_, layer) ->
             layer.visible && project.timeline.currentTimeMs in layer.startTimeMs..layer.endTimeMs &&
-                (layer.type == ReelTrackType.TEXT || layer.type == ReelTrackType.STICKER)
+                (layer.type == ReelTrackType.TEXT || layer.type == ReelTrackType.IMAGE || layer.type == ReelTrackType.STICKER)
         }
         .sortedBy { (_, layer) -> layer.zIndex }
 
