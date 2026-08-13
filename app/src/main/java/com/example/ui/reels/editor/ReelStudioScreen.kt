@@ -19,6 +19,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.ui.reels.editor.model.*
@@ -30,7 +31,7 @@ fun ReelStudioScreen(modifier: Modifier = Modifier, viewModel: ReelEditorViewMod
     val state by viewModel.uiState.collectAsState()
     val project = state.project
     val selected = project.selectedLayerId?.let { id -> project.timeline.tracks.flatMap { track -> track.layers.map { track to it } }.firstOrNull { (_, layer) -> layer.id == id } }
-    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? -> uri?.let { viewModel.onEvent(ReelEditorEvent.AddStickerLayer(it.toString())) } }
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? -> uri?.let { viewModel.onEvent(ReelEditorEvent.AddImageLayer(it.toString())) } }
     Surface(modifier = modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
             StudioTopBar(project.durationMs) { viewModel.onEvent(ReelEditorEvent.AddTrack(it, trackName(it))) }
