@@ -9,7 +9,6 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.effect.OverlayEffect
 import androidx.media3.effect.TextOverlay
-import androidx.media3.effect.StaticOverlaySettings
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.EditedMediaItemSequence
@@ -77,15 +76,13 @@ class StoryMediaComposer(private val context: Context) {
                 }
                 .build()
 
+            // Build text overlay if present (simplified)
             val videoEffects = if (slide.text.isNotBlank()) {
                 listOf(
                     OverlayEffect(
                         listOf(
                             TextOverlay.createStaticTextOverlay(
-                                SpannableString(slide.text),
-                                StaticOverlaySettings.Builder()
-                                    .setAlphaScale(1f)
-                                    .build()
+                                SpannableString(slide.text)
                             )
                         )
                     )
@@ -106,7 +103,8 @@ class StoryMediaComposer(private val context: Context) {
                 .build()
         }
 
-        val videoSequence = EditedMediaItemSequence.withVideoFrom(videoItems)
+        // Build video sequence
+        val videoSequence = EditedMediaItemSequence(videoItems)
         val sequences = mutableListOf(videoSequence)
 
         draft.audioUri?.let { audioPath ->
@@ -121,11 +119,7 @@ class StoryMediaComposer(private val context: Context) {
                 .build()
 
             val audioEditedItem = EditedMediaItem.Builder(audioMediaItem).build()
-            val audioSequence = EditedMediaItemSequence
-                .withAudioFrom(listOf(audioEditedItem))
-                .buildUpon()
-                .setIsLooping(true)
-                .build()
+            val audioSequence = EditedMediaItemSequence(listOf(audioEditedItem))
 
             sequences += audioSequence
         }

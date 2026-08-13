@@ -16,14 +16,14 @@ fun ReelTimelinePreviewSurface(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val player = remember(context) { ReelTimelinePlayer(context) }
+    val timelinePlayer = remember(context) { ReelTimelinePlayer(context) }
 
     LaunchedEffect(project.timeline.tracks) {
-        player.setProject(project)
+        timelinePlayer.setProject(project)
     }
 
-    DisposableEffect(player) {
-        onDispose { player.release() }
+    DisposableEffect(timelinePlayer) {
+        onDispose { timelinePlayer.release() }
     }
 
     AndroidView(
@@ -31,9 +31,9 @@ fun ReelTimelinePreviewSurface(
         factory = { viewContext ->
             PlayerView(viewContext).apply {
                 useController = false
-                player = player.playerForView()
+                player = timelinePlayer.playerForView()
             }
         },
-        update = { view -> view.player = player.playerForView() }
+        update = { view -> view.player = timelinePlayer.playerForView() }
     )
 }

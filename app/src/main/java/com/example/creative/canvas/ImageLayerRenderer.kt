@@ -37,23 +37,28 @@ fun ImageLayerRenderer(
     var currentScale = remember(layer.id) { mutableFloatStateOf(layer.scale) }
     var currentRotation = remember(layer.id) { mutableFloatStateOf(layer.rotation) }
 
-    val adjustmentMatrix = ColorMatrix().apply {
-        val brightness = layer.brightness.coerceIn(-1f, 1f)
-        val contrast = layer.contrast.coerceIn(-1f, 1f)
-        val saturation = layer.saturation.coerceIn(0f, 2f)
-        val contrastScale = 1f + contrast
-        val translate = brightness * 255f + (1f - contrastScale) * 128f
-        setTo(
-            contrastScale, 0f, 0f, 0f, translate,
-            0f, contrastScale, 0f, 0f, translate,
-            0f, 0f, contrastScale, 0f, translate,
-            0f, 0f, 0f, 1f, 0f
-        )
-        setSaturation(saturation)
-    }
-
-    val filterMatrix = ImageFilterMatrices.forName(layer.filterName)
-    val combinedMatrix = ColorMatrix(adjustmentMatrix).apply { postConcat(filterMatrix) }
+    // Build color matrix with brightness and contrast adjustments
+    val brightness = layer.brightness.coerceIn(-1f, 1f)
+    val contrast = layer.contrast.coerceIn(-1f, 1f)
+    val saturation = layer.saturation.coerceIn(0f, 2f)
+    
+    // Create a basic color matrix with brightness and contrast
+    val adjustedMatrix = floatArrayOf(
+        1f + contrast, 0f, 0f, 0f, brightness * 255f,
+        0f, 1f + contrast, 0f, 0f, brightness * 255f,
+        0f, 0f, 1f + contrast, 0f, brightness * 255f,
+        0f, 0f, 0f, 1f, 0f
+    )
+    
+    // Apply saturation
+    val satAdjusted = floatArrayOf(
+        (1f - saturation) * 0.299f + saturation, (1f - saturation) * 0.587f, (1f - saturation) * 0.114f, 0f, 0f,
+        (1f - saturation) * 0.299f, (1f - saturation) * 0.587f + saturation, (1f - saturation) * 0.114f, 0f, 0f,
+        (1f - saturation) * 0.299f, (1f - saturation) * 0.587f, (1f - saturation) * 0.114f + saturation, 0f, 0f,
+        0f, 0f, 0f, 1f, 0f
+    )
+    
+    val combinedMatrix = ColorMatrix(satAdjusted)
 
     val cropX = layer.cropXRatio.coerceIn(0f, 0.9f)
     val cropY = layer.cropYRatio.coerceIn(0f, 0.9f)

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "743664314826",
+    "project_id": "com-panalink-app",
+    "storage_bucket": "com-panalink-app.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:743664314826:android:8fd001ad3227535a1ec733",
+        "android_client_info": {
+          "package_name": "com.panalink.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC-kPJdBhoDbN7pphRNBQAlcxv9LKTO9cs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

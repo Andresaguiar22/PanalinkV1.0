@@ -2,7 +2,7 @@ package com.example.ui.reels.editor
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.weight
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
@@ -37,7 +37,7 @@ fun ReelTextStyleToolbar(
                 onFontSizeChange(it)
             },
             valueRange = 12f..96f,
-            modifier = Modifier.weight(1f)
+            modifier = Modifier.fillMaxWidth(0.3f)
         )
         FilterChip(selected = backgroundEnabled, onClick = onBackgroundToggle, label = { Text("Fondo") })
         TextButton(onClick = onAlignCenter) { Text("Centrar") }
