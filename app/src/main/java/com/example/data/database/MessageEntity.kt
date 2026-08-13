@@ -18,7 +18,7 @@ data class MessageEntity(
     val receiverId: String? = null,
     val content: String? = null,
     val createdAt: String,
-    val status: String? = "sent", // "sending", "sent", "delivered", "seen", "failed"
+    val status: String? = "sent", // sending, sent, delivered, read, failed
     val replyToMessageId: String? = null,
     val clientMessageUuid: String? = null,
     val reactionsJson: String = "{}", // JSON string mapping userId -> emoji reaction
@@ -53,7 +53,7 @@ data class MessageEntity(
             receiverId = receiverId,
             content = content ?: "",
             createdAt = createdAt,
-            status = status,
+            status = resolveStatus(status, deliveredAt, seenAt),
             replyToMessageId = replyToMessageId,
             clientMessageUuid = clientMessageUuid ?: "",
             deliveredAt = deliveredAt,
@@ -85,7 +85,7 @@ data class MessageEntity(
                 receiverId = msg.receiverId,
                 content = msg.content,
                 createdAt = msg.createdAt,
-                status = msg.status,
+                status = resolveStatus(msg.status, msg.deliveredAt, msg.seenAt),
                 replyToMessageId = msg.replyToMessageId,
                 clientMessageUuid = msg.clientMessageUuid.takeIf { it.isNotBlank() },
                 reactionsJson = reactions,
@@ -107,6 +107,19 @@ data class MessageEntity(
                 updatedAt = msg.updatedAt,
                 musicPlaylistId = msg.musicPlaylistId
             )
+        }
+
+        private fun resolveStatus(status: String?, deliveredAt: String?, seenAt: String?): String? {
+            return when {
+                !seenAt.isNullOrBlank() -> "read"
+                !deliveredAt.isNullOrBlank() -> "delivered"
+                status.equals("seen", ignoreCase = true) -> "read"
+                status.equals("read", ignoreCase = true) -> "read"
+                status.equals("delivered", ignoreCase = true) -> "delivered"
+                status.equals("sending", ignoreCase = true) -> "sending"
+                status.equals("failed", ignoreCase = true) -> "failed"
+                else -> status ?: "sent"
+            }
         }
     }
 }
