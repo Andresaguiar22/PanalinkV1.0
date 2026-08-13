@@ -1,4 +1,5 @@
 import java.util.Base64
+import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
@@ -20,24 +21,34 @@ android {
         applicationId = "com.panalink.app"
         minSdk = 24
         targetSdk = 35
-        val baseVersionCode = 1
+        val baseVersionCode = 1000
         val runNumber = (System.getenv("GITHUB_RUN_NUMBER") ?: "0").toInt()
         versionCode = (System.getenv("VERSION_CODE") ?: (baseVersionCode + runNumber).toString()).toInt()
-        versionName = System.getenv("VERSION_NAME") ?: "1.0.$runNumber"
+        versionName = System.getenv("VERSION_NAME") ?: "2.0.$runNumber"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         val appUrl = System.getenv("APP_URL") ?: "http://10.0.2.2:3000"
         buildConfigField("String", "BACKEND_URL", "\"$appUrl\"")
     }
     signingConfigs {
         create("release") {
-            val keystoreFile = System.getenv("KEYSTORE_FILE")
-            val keystorePassword = System.getenv("KEYSTORE_PASSWORD")
-            val keyAliasStr = System.getenv("KEY_ALIAS")
-            val keyPasswordEnv = System.getenv("KEY_PASSWORD")
+            val secretsFile = File(projectDir, "secrets.properties")
+            val localProperties = Properties()
+            if (secretsFile.exists()) {
+                secretsFile.inputStream().use { localProperties.load(it) }
+            }
+
+            val keystoreFile = System.getenv("KEYSTORE_FILE") ?: localProperties.getProperty("KEYSTORE_FILE")
+            val keystorePassword = System.getenv("KEYSTORE_PASSWORD") ?: localProperties.getProperty("KEYSTORE_PASSWORD")
+            val keyAliasStr = System.getenv("KEY_ALIAS") ?: localProperties.getProperty("KEY_ALIAS")
+            val keyPasswordEnv = System.getenv("KEY_PASSWORD") ?: localProperties.getProperty("KEY_PASSWORD")
             val keyPasswordStr = if (!keyPasswordEnv.isNullOrEmpty()) keyPasswordEnv else keystorePassword
             val isReleaseRequested = gradle.startParameter.taskNames.any { it.contains("Release", ignoreCase = true) }
             if (!keystoreFile.isNullOrEmpty() && !keystorePassword.isNullOrEmpty() && !keyAliasStr.isNullOrEmpty()) {
-                storeFile = file(keystoreFile); storePassword = keystorePassword; keyAlias = keyAliasStr; keyPassword = keyPasswordStr
+                val resolvedKeystore = if (File(keystoreFile).isAbsolute) File(keystoreFile) else File(projectDir, keystoreFile)
+                storeFile = resolvedKeystore
+                storePassword = keystorePassword
+                keyAlias = keyAliasStr
+                keyPassword = keyPasswordStr
             } else if (isReleaseRequested) {
                 throw GradleException("RELEASE BUILD BLOCKED: SIGNING CREDENTIALS (KEYSTORE_FILE, KEYSTORE_PASSWORD, KEY_ALIAS) ARE MISSING")
             }
