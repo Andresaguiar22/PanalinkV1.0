@@ -13,6 +13,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.util.Collections
@@ -36,6 +37,7 @@ class ReelsViewModel(
     private val processing = Collections.synchronizedSet(mutableSetOf<String>())
 
     val reelsState: StateFlow<ReelsUiState> = repository.observeReels()
+        .map { reels -> ReelsUiState.Success(reels) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ReelsUiState.Loading)
 
     private val _currentComments = MutableStateFlow<List<Comment>>(emptyList())
