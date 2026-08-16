@@ -54,11 +54,19 @@ interface MessageDao {
     suspend fun insertChatPlaceholder(chat: ChatEntity)
 
     @Transaction
-    suspend fun updateChatMetadataForMessage(message: MessageEntity) {
+    suspend fun updateChatMetadataForMessage(
+        message: MessageEntity,
+        shouldIncrementUnreadOverride: Boolean? = null
+    ) {
         val myUserId = try { com.example.data.supabase.SupabaseClient.currentUser?.id ?: "" } catch (e: Exception) { "" }
         val isChatActive = com.example.data.supabase.SupabaseClient.isChatScreenActive && com.example.data.supabase.SupabaseClient.activeChatId == message.chatId
-        val shouldIncrementUnread = if (message.senderId != myUserId && !isChatActive && message.status != "seen" && message.seenAt == null) 1 else 0
-        
+        val shouldIncrementUnread = shouldIncrementUnreadOverride ?: (
+            message.senderId != myUserId &&
+                !isChatActive &&
+                message.status != "seen" &&
+                message.seenAt == null
+            )
+
         val chatExists = hasChat(message.chatId) > 0
         if (!chatExists) {
             val otherUserId = if (message.senderId != myUserId) message.senderId else null
@@ -68,24 +76,51 @@ interface MessageDao {
                 type = "dm",
                 otherUserId = otherUserId,
                 lastMessageId = message.id,
-                unreadCount = shouldIncrementUnread
+                unreadCount = if (shouldIncrementUnread) 1 else 0
             )
             insertChatPlaceholder(newChat)
         } else {
-            updateChatLastMessageAndUnread(message.chatId, message.id, shouldIncrementUnread)
+            updateChatLastMessageAndUnread(
+                message.chatId,
+                message.id,
+                if (shouldIncrementUnread) 1 else 0
+            )
         }
     }
 
     @Transaction
     suspend fun insertMessage(message: MessageEntity) {
+        val existingById = getMessageById(message.id)
+        val existingByUuid = if (!message.clientMessageUuid.isNullOrBlank()) {
+            getMessagesByUuid(message.clientMessageUuid!!).firstOrNull()
+        } else {
+            null
+        }
+
         insertMessageRaw(message)
-        updateChatMetadataForMessage(message)
+
+        // Only a genuinely new row may increment unread. Re-saves caused by
+        // Realtime reconciliation, edits, reactions or a repeated sync must
+        // update chat metadata without inflating unreadCount.
+        val shouldIncrementUnread = existingById == null && existingByUuid == null
+        updateChatMetadataForMessage(message, shouldIncrementUnread)
     }
 
     @Transaction
     suspend fun insertMessages(messages: List<MessageEntity>) {
-        insertMessagesRaw(messages)
-        messages.forEach { updateChatMetadataForMessage(it) }
+        messages.forEach { message ->
+            val existingById = getMessageById(message.id)
+            val existingByUuid = if (!message.clientMessageUuid.isNullOrBlank()) {
+                getMessagesByUuid(message.clientMessageUuid!!).firstOrNull()
+            } else {
+                null
+            }
+
+            insertMessageRaw(message)
+
+            val shouldIncrementUnread = existingById == null && existingByUuid == null
+            updateChatMetadataForMessage(message, shouldIncrementUnread)
+        }
     }
 
     @Query("DELETE FROM local_messages WHERE id = :id")
@@ -169,13 +204,19 @@ interface MessageDao {
 
     @Transaction
     suspend fun insertOrMergeMessages(remoteList: List<MessageEntity>) {
+        // Historical/incremental HTTP sync must never increase unreadCount.
+        // Realtime/new-message reconciliation uses mergeAndSaveMessage() and
+        // can increment unread only when the message is actually new.
         remoteList.forEach { remote ->
-            insertOrMergeMessage(remote)
+            mergeAndSaveMessage(remote, allowUnreadIncrement = false)
         }
     }
 
     @Transaction
-    suspend fun mergeAndSaveMessage(remote: MessageEntity) {
+    suspend fun mergeAndSaveMessage(
+        remote: MessageEntity,
+        allowUnreadIncrement: Boolean = true
+    ) {
         val uuid = remote.clientMessageUuid
         var localByUuid: MessageEntity? = null
         if (!uuid.isNullOrBlank()) {
@@ -188,8 +229,11 @@ interface MessageDao {
         if (local != null) {
             val merged = mergeEntities(local, remote)
             insertMessage(merged)
-        } else {
+        } else if (allowUnreadIncrement) {
             insertMessage(remote)
+        } else {
+            insertMessageRaw(remote)
+            updateChatMetadataForMessage(remote, false)
         }
     }
 
@@ -218,15 +262,15 @@ interface MessageDao {
         val localTempByUuid = if (!uuid.isNullOrBlank()) getMessagesByUuid(uuid).firstOrNull() else null
         val localTempById = getMessageById(tempId)
         val localTemp = localTempById ?: localTempByUuid
-        
+
         if (!uuid.isNullOrBlank()) {
             deleteTemporaryMessageByUuid(uuid)
         }
         deleteMessageById(tempId)
-        
+
         val localById = getMessageById(finalEntity.id)
         val baseLocal = localById ?: localTemp
-        
+
         if (baseLocal != null) {
             val merged = mergeEntities(baseLocal, finalEntity)
             insertMessage(merged)
@@ -264,7 +308,7 @@ interface MessageDao {
 
     @Query("DELETE FROM local_messages WHERE chatId = :chatId")
     suspend fun clearChatMessages(chatId: String)
-    
+
     @Query("UPDATE local_messages SET content = :content, isEdited = 1 WHERE id = :id")
     suspend fun updateMessageContent(id: String, content: String)
 
