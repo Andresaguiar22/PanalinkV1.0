@@ -14,32 +14,35 @@ class SyncMessagesWorker(
     override suspend fun doWork(): Result {
         Log.i("SyncMessagesWorker", "Starting background sync of pending messages...")
         val repository = MessagesRepository.getInstance()
-        try {
-        } catch (e: Exception) {}
-        
-        val result = try {
+
+        return try {
             val allSynced = repository.syncAllPendingAndUpdatedMessages()
+
             if (allSynced) {
+                Log.i("SyncMessagesWorker", "Background sync completed successfully")
                 Result.success()
+            } else if (runAttemptCount < 5) {
+                Log.w(
+                    "SyncMessagesWorker",
+                    "Sync incomplete; scheduling retry ${runAttemptCount + 1}/5"
+                )
+                Result.retry()
             } else {
-                if (runAttemptCount < 5) {
-                    Result.retry()
-                } else {
-                    Result.failure()
-                }
+                Log.e("SyncMessagesWorker", "Sync incomplete after 5 attempts")
+                Result.failure()
             }
         } catch (e: Exception) {
-            Log.e("SyncMessagesWorker", "Error during sync: ${e.localizedMessage}", e)
-            if (runAttemptCount < 3) {
+            Log.e(
+                "SyncMessagesWorker",
+                "Error during sync attempt ${runAttemptCount + 1}/5: ${e.localizedMessage}",
+                e
+            )
+
+            if (runAttemptCount < 5) {
                 Result.retry()
             } else {
                 Result.failure()
             }
         }
-
-        try {
-        } catch (e: Exception) {}
-
-        return result
     }
 }
