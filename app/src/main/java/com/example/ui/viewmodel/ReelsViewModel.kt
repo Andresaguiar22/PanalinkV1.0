@@ -11,8 +11,8 @@ import com.example.data.database.PanalinkDatabase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.util.Collections
@@ -22,6 +22,12 @@ sealed class ReelsUiState {
     data class Success(val reels: List<UserStateWithUser>) : ReelsUiState()
     data class Error(val message: String) : ReelsUiState()
 }
+
+/** Compatibility state used by the current Reel feed while the feature-owned
+ * repository remains the source of truth. */
+typealias StatesUiState = ReelsUiState
+
+data class ReelUploadProgress(val percent: Int, val status: String)
 
 /** Feature-owned ViewModel for the Reels feed. */
 class ReelsViewModel(
@@ -34,6 +40,8 @@ class ReelsViewModel(
 
     private val errorHandler = com.example.util.Resilience.globalExceptionHandler("ReelsViewModel")
     private val processing = Collections.synchronizedSet(mutableSetOf<String>())
+    private val preferences = PanalinkDatabase.getDatabase(com.example.PanaApplication.instance)
+        .openHelper.writableDatabase
 
     val reelsState: StateFlow<ReelsUiState> = repository.observeReels()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ReelsUiState.Loading)
@@ -48,6 +56,16 @@ class ReelsViewModel(
     val isRefreshing: StateFlow<Boolean> = _isRefreshing
 
     private var commentsJob: Job? = null
+
+    private val prefs by lazy {
+        com.example.PanaApplication.instance.getSharedPreferences("reels_feature", android.content.Context.MODE_PRIVATE)
+    }
+
+    fun getLastViewedReelId(): String? = prefs.getString("last_viewed_reel_id", null)
+
+    fun rememberLastViewedReel(reelId: String) {
+        if (reelId.isNotBlank()) prefs.edit().putString("last_viewed_reel_id", reelId).apply()
+    }
 
     fun refresh() {
         if (_isRefreshing.value) return
@@ -119,6 +137,12 @@ class ReelsViewModel(
     fun deleteComment(reelId: String, commentId: String) {
         viewModelScope.launch(errorHandler + Dispatchers.IO) {
             repository.deleteComment(commentId).onSuccess { loadComments(reelId) }
+        }
+    }
+
+    fun removeFromFeed(reelId: String) {
+        viewModelScope.launch(errorHandler + Dispatchers.IO) {
+            repository.clearLocalReel(reelId)
         }
     }
 
