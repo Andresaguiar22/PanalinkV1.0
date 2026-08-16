@@ -1,7 +1,7 @@
 diff --git a/app/src/main/java/com/example/data/repository/StatesRepository.kt b/app/src/main/java/com/example/data/repository/StatesRepository.kt
 --- a/app/src/main/java/com/example/data/repository/StatesRepository.kt
 +++ b/app/src/main/java/com/example/data/repository/StatesRepository.kt
-@@ -147,24 +147,30 @@
+@@ -147,23 +147,21 @@
                      val storyLikesRes = runCall { b -> 
                          service.getUserLikes(
                              table = "story_likes",
@@ -33,13 +33,13 @@ diff --git a/app/src/main/java/com/example/data/repository/StatesRepository.kt b
 +                            service.getUserLikes("story_likes", apiKey, b, emptyMap())
 +                        }
                      }
-@@ -176,6 +182,7 @@
+@@ -176,2 +174,3 @@
 -                    val storyLikes = if (storyLikesRes != null && storyLikesRes.isSuccessful) {
 -                        storyLikesRes.body()?.filter { it.userId.isEmpty() || it.userId == currentUid }?.mapNotNull { it.stateId.takeIf { s -> s.isNotBlank() } }?.toSet() ?: emptySet()
 +                    val storyLikes = if (storyLikesResolved != null && storyLikesResolved.isSuccessful) {
 +                        storyLikesResolved.body()?.filter { it.userId.isEmpty() || it.userId == currentUid }?.mapNotNull { it.stateId.takeIf { s -> s.isNotBlank() } }?.toSet() ?: emptySet()
                      } else emptySet()
-@@ -191,24 +198,30 @@
+@@ -191,23 +190,21 @@
                      val storyFavsRes = runCall { b -> 
                          service.getUserFavorites(
                              table = "story_favorites",
@@ -71,13 +71,13 @@ diff --git a/app/src/main/java/com/example/data/repository/StatesRepository.kt b
 +                            service.getUserFavorites("story_favorites", apiKey, b, emptyMap())
 +                        }
                      }
-@@ -215,6 +228,7 @@
+@@ -215,2 +212,3 @@
 -                    val storyFavs = if (storyFavsRes != null && storyFavsRes.isSuccessful) {
 -                        storyFavsRes.body()?.filter { it.userId.isEmpty() || it.userId == currentUid }?.mapNotNull { it.stateId.takeIf { s -> s.isNotBlank() } }?.toSet() ?: emptySet()
 +                    val storyFavs = if (storyFavsResolved != null && storyFavsResolved.isSuccessful) {
 +                        storyFavsResolved.body()?.filter { it.userId.isEmpty() || it.userId == currentUid }?.mapNotNull { it.stateId.takeIf { s -> s.isNotBlank() } }?.toSet() ?: emptySet()
                      } else emptySet()
-@@ -238,24 +252,30 @@
+@@ -238,23 +237,21 @@
                      val storyViewsRes = runCall { b -> 
                          service.getUserLikes(
                              table = "story_views",
@@ -109,7 +109,7 @@ diff --git a/app/src/main/java/com/example/data/repository/StatesRepository.kt b
 +                            service.getUserLikes("story_views", apiKey, b, emptyMap())
 +                        }
                      }
-@@ -255,7 +275,7 @@
+@@ -255,2 +254,3 @@
 -                    val storyViews = if (storyViewsRes != null && storyViewsRes.isSuccessful) {
 -                        storyViewsRes.body()?.mapNotNull { it.stateId.takeIf { s -> s.isNotBlank() } }?.toSet() ?: emptySet()
 +                    val storyViews = if (storyViewsResolved != null && storyViewsResolved.isSuccessful) {
