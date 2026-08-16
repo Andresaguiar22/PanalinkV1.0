@@ -17,7 +17,7 @@ interface MessageDao {
     @Query("SELECT * FROM local_messages WHERE chatId = :chatId AND (:oldestTimestamp IS NULL OR createdAt < :oldestTimestamp) ORDER BY createdAt DESC LIMIT :limit")
     suspend fun getMessagesForChatPaged(chatId: String, limit: Int, oldestTimestamp: String?): List<MessageEntity>
 
-    @Query("SELECT * FROM local_messages WHERE status = 'sending' OR status = 'failed'")
+    @Query("SELECT * FROM local_messages WHERE status = 'pending' OR status = 'sending' OR status = 'failed'")
     suspend fun getPendingMessages(): List<MessageEntity>
 
     @Query("SELECT DISTINCT chatId FROM local_messages")
