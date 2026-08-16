@@ -139,6 +139,9 @@ alter table social.reel_views add constraint reel_views_reel_id_fkey foreign key
 revoke execute on function public.sync_profile_to_public_profile() from public, anon;
 revoke execute on function public.update_post_shares_count() from public, anon;
 revoke execute on function social.handle_reel_report() from anon;
+grant execute on function public.sync_profile_to_public_profile() to authenticated;
+grant execute on function public.update_post_shares_count() to authenticated;
+grant execute on function social.handle_reel_report() to authenticated;
 
 -- Fix search_path for all application-owned functions without an explicit path.
 do $$
