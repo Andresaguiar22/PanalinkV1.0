@@ -40,6 +40,11 @@ class MediaUploadWorker(
                     Log.d(TAG, "Message $messageId metadata is synchronized")
                     Result.success()
                 }
+                runAttemptCount >= MAX_ATTEMPTS -> {
+                    Log.e(TAG, "Message $messageId metadata sync exhausted retries; marking failed")
+                    messageDao.updateMessageStatus(messageId, "failed")
+                    Result.failure()
+                }
                 else -> {
                     Log.w(TAG, "Message $messageId remains pending after metadata sync; retrying")
                     Result.retry()
@@ -47,13 +52,18 @@ class MediaUploadWorker(
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error synchronizing metadata for message $messageId", e)
-            Result.retry()
+            if (runAttemptCount >= MAX_ATTEMPTS) {
+                messageDao.updateMessageStatus(messageId, "failed")
+                Result.failure()
+            } else {
+                Result.retry()
+            }
         }
     }
 
     override suspend fun doWork(): Result {
         val messageId = inputData.getString("messageId") ?: return Result.failure()
-        Log.i(TAG, "Starting media upload for message: $messageId")
+        Log.i(TAG, "Starting media upload for message: $messageId (attempt=${runAttemptCount + 1})")
 
         val entity = messageDao.getMessageById(messageId) ?: return Result.success()
 
@@ -73,9 +83,6 @@ class MediaUploadWorker(
         // A media message must remain pending until both stages finish:
         // 1) the binary is uploaded and a mediaUrl exists;
         // 2) the message metadata is persisted in Supabase.
-        // Never report success here while an unresolved media message still
-        // has neither a local file nor a remote URL, otherwise WorkManager
-        // drops the task and the message can remain stuck forever in Room.
         val localUri = entity.localMediaUri
         if (localUri.isNullOrEmpty()) {
             if (!entity.mediaUrl.isNullOrBlank() && entity.status != "sent") {
@@ -87,9 +94,6 @@ class MediaUploadWorker(
                 return Result.success()
             }
 
-            // There is no recoverable input left for this worker. Retrying
-            // cannot recreate a deleted/missing local file and would only
-            // loop the same broken job until WorkManager exhausts retries.
             Log.e(
                 TAG,
                 "Pending media message $messageId has no local URI and no mediaUrl; cannot recover upload"
@@ -118,50 +122,69 @@ class MediaUploadWorker(
             )
 
             if (!uploadResult.isSuccess) {
-                Log.e(TAG, "Media upload failed: ${uploadResult.exceptionOrNull()?.message}")
-                return Result.retry()
+                val error = uploadResult.exceptionOrNull()
+                Log.e(TAG, "Media upload failed: ${error?.message}", error)
+                if (runAttemptCount >= MAX_ATTEMPTS) {
+                    messageDao.updateMessageStatus(messageId, "failed")
+                    Result.failure()
+                } else {
+                    Result.retry()
+                }
+            } else {
+                val mediaInfo = uploadResult.getOrThrow()
+                if (mediaInfo.url.isBlank()) {
+                    Log.e(TAG, "Media upload returned an empty URL for message $messageId")
+                    if (runAttemptCount >= MAX_ATTEMPTS) {
+                        messageDao.updateMessageStatus(messageId, "failed")
+                        Result.failure()
+                    } else {
+                        Result.retry()
+                    }
+                } else {
+                    val updatedEntity = entity.copy(
+                        mediaUrl = mediaInfo.url,
+                        thumbnailUrl = mediaInfo.thumbnailUrl ?: entity.thumbnailUrl,
+                        mediaMime = mediaInfo.mime ?: entity.mediaMime,
+                        mediaSize = mediaInfo.size,
+                        mediaDuration = mediaInfo.duration,
+                        mediaWidth = mediaInfo.width,
+                        mediaHeight = mediaInfo.height,
+                        localMediaUri = null,
+                        status = "sending"
+                    )
+
+                    val effectiveClearedAtAfterUpload = messagesRepository.getEffectiveClearedAt(updatedEntity.chatId, null)
+                    val shouldKeepAfterUpload = MessageFilter.shouldKeepMessage(
+                        messageId = updatedEntity.id,
+                        messageClientUuid = updatedEntity.clientMessageUuid,
+                        messageCreatedAt = updatedEntity.createdAt,
+                        lastClearedAt = effectiveClearedAtAfterUpload,
+                        deletedMessageIds = messagesRepository.getUserDeletedMessageIds()
+                    )
+
+                    if (!shouldKeepAfterUpload) {
+                        messageDao.deleteMessageById(updatedEntity.id)
+                        Result.success()
+                    } else {
+                        messageDao.insertMessage(updatedEntity)
+                        // Once the URL exists, the metadata sync path is responsible
+                        // for replacing the temporary row or marking it SENT.
+                        syncOwnMessageMetadata(messageId)
+                    }
+                }
             }
-
-            val mediaInfo = uploadResult.getOrThrow()
-            if (mediaInfo.url.isBlank()) {
-                Log.e(TAG, "Media upload returned an empty URL for message $messageId")
-                return Result.retry()
-            }
-
-            val updatedEntity = entity.copy(
-                mediaUrl = mediaInfo.url,
-                thumbnailUrl = mediaInfo.thumbnailUrl ?: entity.thumbnailUrl,
-                mediaMime = mediaInfo.mime ?: entity.mediaMime,
-                mediaSize = mediaInfo.size,
-                mediaDuration = mediaInfo.duration,
-                mediaWidth = mediaInfo.width,
-                mediaHeight = mediaInfo.height,
-                localMediaUri = null,
-                status = "sending"
-            )
-
-            val effectiveClearedAtAfterUpload = messagesRepository.getEffectiveClearedAt(updatedEntity.chatId, null)
-            val shouldKeepAfterUpload = MessageFilter.shouldKeepMessage(
-                messageId = updatedEntity.id,
-                messageClientUuid = updatedEntity.clientMessageUuid,
-                messageCreatedAt = updatedEntity.createdAt,
-                lastClearedAt = effectiveClearedAtAfterUpload,
-                deletedMessageIds = messagesRepository.getUserDeletedMessageIds()
-            )
-
-            if (!shouldKeepAfterUpload) {
-                messageDao.deleteMessageById(updatedEntity.id)
-                return Result.success()
-            }
-
-            messageDao.insertMessage(updatedEntity)
-
-            // The media worker owns the upload. Once the URL exists, hand the
-            // same pending message to the metadata sync path directly.
-            syncOwnMessageMetadata(messageId)
         } catch (e: Exception) {
             Log.e(TAG, "Error in MediaUploadWorker: ${e.localizedMessage}", e)
-            Result.retry()
+            if (runAttemptCount >= MAX_ATTEMPTS) {
+                messageDao.updateMessageStatus(messageId, "failed")
+                Result.failure()
+            } else {
+                Result.retry()
+            }
         }
+    }
+
+    private companion object {
+        const val MAX_ATTEMPTS = 5
     }
 }
