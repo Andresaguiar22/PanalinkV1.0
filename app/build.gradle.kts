@@ -25,15 +25,10 @@ android {
         applicationId = "com.panalink.app"
         minSdk = 24
         targetSdk = 35
-        
-        // Dynamic versioning: base value + GitHub Actions run number
-        // Allow overrides via environment variables for Git Tag consistency
         val baseVersionCode = 1
         val runNumber = (System.getenv("GITHUB_RUN_NUMBER") ?: "0").toInt()
-        
         versionCode = (System.getenv("VERSION_CODE") ?: (baseVersionCode + runNumber).toString()).toInt()
         versionName = System.getenv("VERSION_NAME") ?: "1.0.$runNumber"
-        
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         val appUrl = System.getenv("APP_URL") ?: "http://10.0.2.2:3000"
         buildConfigField("String", "BACKEND_URL", "\"$appUrl\"")
@@ -46,17 +41,13 @@ android {
             val keyAliasStr = System.getenv("KEY_ALIAS")
             val keyPasswordEnv = System.getenv("KEY_PASSWORD")
             val keyPasswordStr = if (!keyPasswordEnv.isNullOrEmpty()) keyPasswordEnv else keystorePassword
-            
-            // Check if we are in a release build context
             val isReleaseRequested = gradle.startParameter.taskNames.any { it.contains("Release", ignoreCase = true) }
-            
             if (!keystoreFile.isNullOrEmpty() && !keystorePassword.isNullOrEmpty() && !keyAliasStr.isNullOrEmpty()) {
                 storeFile = file(keystoreFile)
                 storePassword = keystorePassword
                 keyAlias = keyAliasStr
                 keyPassword = keyPasswordStr
             } else if (isReleaseRequested) {
-                // If it's a release build but secrets are missing, fail fast to avoid un-signed APKs in production
                 throw GradleException("RELEASE BUILD BLOCKED: SIGNING CREDENTIALS (KEYSTORE_FILE, KEYSTORE_PASSWORD, KEY_ALIAS) ARE MISSING")
             }
         }
@@ -64,16 +55,14 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
             signingConfig = signingConfigs.getByName("release")
         }
-        debug {
-            // Configuración estándar de debug
-        }
+        debug { }
     }
 
     compileOptions {
@@ -146,6 +135,7 @@ dependencies {
   implementation("com.pierfrancescosoffritti.androidyoutubeplayer:core:12.1.0")
   implementation(libs.webrtc)
   implementation(libs.socket.io)
+  implementation("androidx.security:security-crypto:1.1.0-alpha06")
 
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)
