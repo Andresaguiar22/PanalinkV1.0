@@ -136,20 +136,10 @@ interface MessageDao {
     }
 
     fun mergeReactions(localJson: String?, remoteJson: String?): String {
-        if (localJson.isNullOrEmpty()) return remoteJson ?: ""
-        if (remoteJson.isNullOrEmpty()) return localJson ?: ""
-        return try {
-            val localObj = org.json.JSONObject(localJson)
-            val remoteObj = org.json.JSONObject(remoteJson)
-            val merged = org.json.JSONObject(remoteJson)
-            val keys = localObj.keys()
-            while (keys.hasNext()) {
-                val key = keys.next()
-                merged.put(key, localObj.get(key))
-            }
-            merged.toString()
-        } catch (e: Exception) {
-            localJson
+        return when {
+            !remoteJson.isNullOrEmpty() -> remoteJson
+            !localJson.isNullOrEmpty() -> localJson
+            else -> ""
         }
     }
 
@@ -178,7 +168,11 @@ interface MessageDao {
             remote.deletedAt
         }
 
-        val finalReactionsJson = mergeReactions(local.reactionsJson, remote.reactionsJson)
+        val finalReactionsJson = if (local.reactionPending) {
+            local.reactionsJson
+        } else {
+            mergeReactions(null, remote.reactionsJson)
+        }
 
         return remote.copy(
             content = finalContent,
@@ -188,7 +182,11 @@ interface MessageDao {
             updatedAt = mergedUpdatedAt,
             localMediaUri = local.localMediaUri ?: remote.localMediaUri,
             localThumbnailUri = local.localThumbnailUri ?: remote.localThumbnailUri,
-            isFavorited = local.isFavorited || remote.isFavorited,
+            isFavorited = if (local.editPending || local.reactionPending) {
+                local.isFavorited
+            } else {
+                remote.isFavorited
+            },
             clientMessageUuid = remote.clientMessageUuid ?: local.clientMessageUuid,
             editPending = local.editPending,
             reactionPending = local.reactionPending,
