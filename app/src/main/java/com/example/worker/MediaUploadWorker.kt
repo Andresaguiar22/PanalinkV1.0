@@ -38,19 +38,34 @@ class MediaUploadWorker(
             return Result.success()
         }
 
+        // A media message must remain pending until both stages finish:
+        // 1) the binary is uploaded and a mediaUrl exists;
+        // 2) the message metadata is persisted in Supabase.
+        // Never report success here while an unresolved media message still
+        // has neither a local file nor a remote URL, otherwise WorkManager
+        // drops the task and the message can remain stuck forever in Room.
         val localUri = entity.localMediaUri
         if (localUri.isNullOrEmpty()) {
-            // The file may already have been uploaded by a previous attempt.
-            // In that case only the message metadata still needs to be synced.
-            if (!entity.mediaUrl.isNullOrEmpty() && entity.status == "sending") {
+            if (!entity.mediaUrl.isNullOrBlank() && entity.status != "sent") {
                 return try {
-                    if (messagesRepository.syncPendingMessages()) Result.success() else Result.retry()
+                    Log.d(TAG, "Media already uploaded for $messageId; syncing message metadata")
+                    if (messagesRepository.syncPendingMessages()) {
+                        Result.success()
+                    } else {
+                        Result.retry()
+                    }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error synchronizing already-uploaded message $messageId", e)
                     Result.retry()
                 }
             }
-            return Result.success()
+
+            if (entity.status == "sent") {
+                return Result.success()
+            }
+
+            Log.w(TAG, "Pending media message $messageId has no local URI and no mediaUrl yet; retrying")
+            return Result.retry()
         }
 
         return try {
@@ -78,6 +93,11 @@ class MediaUploadWorker(
             }
 
             val mediaInfo = uploadResult.getOrThrow()
+            if (mediaInfo.url.isBlank()) {
+                Log.e(TAG, "Media upload returned an empty URL for message $messageId")
+                return Result.retry()
+            }
+
             val updatedEntity = entity.copy(
                 mediaUrl = mediaInfo.url,
                 thumbnailUrl = mediaInfo.thumbnailUrl ?: entity.thumbnailUrl,
@@ -107,10 +127,13 @@ class MediaUploadWorker(
             messageDao.insertMessage(updatedEntity)
 
             // The media worker owns the upload. Once the URL exists, hand the
-            // same pending message to the metadata sync path directly instead
-            // of scheduling another SyncMessagesWorker cycle.
+            // same pending message to the metadata sync path directly.
             try {
-                if (messagesRepository.syncPendingMessages()) Result.success() else Result.retry()
+                if (messagesRepository.syncPendingMessages()) {
+                    Result.success()
+                } else {
+                    Result.retry()
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Media uploaded but metadata sync failed: $messageId", e)
                 Result.retry()
