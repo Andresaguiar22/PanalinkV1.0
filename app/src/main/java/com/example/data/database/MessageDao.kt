@@ -38,6 +38,9 @@ interface MessageDao {
     @Query("SELECT * FROM local_messages WHERE id = :id")
     suspend fun getMessageById(id: String): MessageEntity?
 
+    @Query("SELECT id FROM local_chats WHERE threadId = :threadId LIMIT 1")
+    suspend fun getChatIdByThreadId(threadId: String): String?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertMessageRaw(message: MessageEntity)
 
@@ -88,38 +91,46 @@ interface MessageDao {
         }
     }
 
+    private suspend fun normalizeChatIdentity(message: MessageEntity): MessageEntity {
+        if (hasChat(message.chatId) > 0) return message
+        val localChatId = getChatIdByThreadId(message.chatId)
+        return if (!localChatId.isNullOrBlank()) message.copy(chatId = localChatId) else message
+    }
+
     @Transaction
     suspend fun insertMessage(message: MessageEntity) {
-        val existingById = getMessageById(message.id)
-        val existingByUuid = if (!message.clientMessageUuid.isNullOrBlank()) {
-            getMessagesByUuid(message.clientMessageUuid!!).firstOrNull()
+        val normalizedMessage = normalizeChatIdentity(message)
+        val existingById = getMessageById(normalizedMessage.id)
+        val existingByUuid = if (!normalizedMessage.clientMessageUuid.isNullOrBlank()) {
+            getMessagesByUuid(normalizedMessage.clientMessageUuid!!).firstOrNull()
         } else {
             null
         }
 
-        insertMessageRaw(message)
+        insertMessageRaw(normalizedMessage)
 
         // Only a genuinely new row may increment unread. Re-saves caused by
         // Realtime reconciliation, edits, reactions or a repeated sync must
         // update chat metadata without inflating unreadCount.
         val shouldIncrementUnread = existingById == null && existingByUuid == null
-        updateChatMetadataForMessage(message, shouldIncrementUnread)
+        updateChatMetadataForMessage(normalizedMessage, shouldIncrementUnread)
     }
 
     @Transaction
     suspend fun insertMessages(messages: List<MessageEntity>) {
         messages.forEach { message ->
-            val existingById = getMessageById(message.id)
-            val existingByUuid = if (!message.clientMessageUuid.isNullOrBlank()) {
-                getMessagesByUuid(message.clientMessageUuid!!).firstOrNull()
+            val normalizedMessage = normalizeChatIdentity(message)
+            val existingById = getMessageById(normalizedMessage.id)
+            val existingByUuid = if (!normalizedMessage.clientMessageUuid.isNullOrBlank()) {
+                getMessagesByUuid(normalizedMessage.clientMessageUuid!!).firstOrNull()
             } else {
                 null
             }
 
-            insertMessageRaw(message)
+            insertMessageRaw(normalizedMessage)
 
             val shouldIncrementUnread = existingById == null && existingByUuid == null
-            updateChatMetadataForMessage(message, shouldIncrementUnread)
+            updateChatMetadataForMessage(normalizedMessage, shouldIncrementUnread)
         }
     }
 
@@ -215,48 +226,51 @@ interface MessageDao {
         remote: MessageEntity,
         allowUnreadIncrement: Boolean = true
     ) {
-        val uuid = remote.clientMessageUuid
+        val normalizedRemote = normalizeChatIdentity(remote)
+        val uuid = normalizedRemote.clientMessageUuid
         var localByUuid: MessageEntity? = null
         if (!uuid.isNullOrBlank()) {
             val found = getMessagesByUuid(uuid)
             localByUuid = found.firstOrNull()
             deleteTemporaryMessageByUuid(uuid)
         }
-        val localById = getMessageById(remote.id)
+        val localById = getMessageById(normalizedRemote.id)
         val local = localById ?: localByUuid
         if (local != null) {
-            val merged = mergeEntities(local, remote)
+            val merged = mergeEntities(local, normalizedRemote)
             insertMessage(merged)
         } else if (allowUnreadIncrement) {
-            insertMessage(remote)
+            insertMessage(normalizedRemote)
         } else {
-            insertMessageRaw(remote)
-            updateChatMetadataForMessage(remote, false)
+            insertMessageRaw(normalizedRemote)
+            updateChatMetadataForMessage(normalizedRemote, false)
         }
     }
 
     @Transaction
     suspend fun replaceMessageByUuid(finalEntity: MessageEntity) {
-        val uuid = finalEntity.clientMessageUuid
+        val normalizedFinal = normalizeChatIdentity(finalEntity)
+        val uuid = normalizedFinal.clientMessageUuid
         var localByUuid: MessageEntity? = null
         if (!uuid.isNullOrBlank()) {
             val found = getMessagesByUuid(uuid)
             localByUuid = found.firstOrNull()
             deleteTemporaryMessageByUuid(uuid)
         }
-        val localById = getMessageById(finalEntity.id)
+        val localById = getMessageById(normalizedFinal.id)
         val local = localById ?: localByUuid
         if (local != null) {
-            val merged = mergeEntities(local, finalEntity)
+            val merged = mergeEntities(local, normalizedFinal)
             insertMessage(merged)
         } else {
-            insertMessage(finalEntity)
+            insertMessage(normalizedFinal)
         }
     }
 
     @Transaction
     suspend fun replaceTemporaryMessage(tempId: String, finalEntity: MessageEntity) {
-        val uuid = finalEntity.clientMessageUuid
+        val normalizedFinal = normalizeChatIdentity(finalEntity)
+        val uuid = normalizedFinal.clientMessageUuid
         val localTempByUuid = if (!uuid.isNullOrBlank()) getMessagesByUuid(uuid).firstOrNull() else null
         val localTempById = getMessageById(tempId)
         val localTemp = localTempById ?: localTempByUuid
@@ -266,14 +280,14 @@ interface MessageDao {
         }
         deleteMessageById(tempId)
 
-        val localById = getMessageById(finalEntity.id)
+        val localById = getMessageById(normalizedFinal.id)
         val baseLocal = localById ?: localTemp
 
         if (baseLocal != null) {
-            val merged = mergeEntities(baseLocal, finalEntity)
+            val merged = mergeEntities(baseLocal, normalizedFinal)
             insertMessage(merged)
         } else {
-            insertMessage(finalEntity)
+            insertMessage(normalizedFinal)
         }
     }
 
