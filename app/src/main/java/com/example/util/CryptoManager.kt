@@ -26,7 +26,6 @@ object CryptoManager {
     private const val TAG = "CryptoManager"
     private const val ALIAS = "panalink_e2ee_key_v2"
     private const val KEYSTORE_PROVIDER = "AndroidKeyStore"
-    private const val VERSION = 1
     private const val IV_SIZE = 12
     private const val TAG_SIZE_BITS = 128
 
@@ -109,7 +108,7 @@ object CryptoManager {
     private fun deriveAESKey(sharedSecret: ByteArray): SecretKeySpec =
         SecretKeySpec(MessageDigest.getInstance("SHA-256").digest(sharedSecret), "AES")
 
-    /** Versioned AES-GCM payload. Plaintext fallback is forbidden. */
+    /** AES-GCM payload compatible with the existing Panalink ciphertext format. */
     fun encrypt(plainText: String, receiverPublicKeyBase64: String): String {
         if (!ENABLE_E2EE || plainText.isEmpty()) return plainText
         val cleaned = cleanPublicKey(receiverPublicKeyBase64)
@@ -117,26 +116,22 @@ object CryptoManager {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         val iv = ByteArray(IV_SIZE).also(SecureRandom()::nextBytes)
         cipher.init(Cipher.ENCRYPT_MODE, deriveAESKey(getSharedSecret(cleaned)), GCMParameterSpec(TAG_SIZE_BITS, iv))
-        cipher.updateAAD(byteArrayOf(VERSION.toByte()))
         val encrypted = cipher.doFinal(plainText.toByteArray(Charsets.UTF_8))
-        return Base64.encodeToString(byteArrayOf(VERSION.toByte()) + iv + encrypted, Base64.NO_WRAP)
+        return Base64.encodeToString(iv + encrypted, Base64.NO_WRAP)
     }
 
-    /** Returns an explicit marker on authentication/decryption failure; never ciphertext as plaintext. */
+    /** Never returns ciphertext as plaintext when E2EE decryption fails. */
     fun decrypt(encryptedPayloadBase64: String, senderPublicKeyBase64: String): String {
         if (encryptedPayloadBase64.isEmpty()) return encryptedPayloadBase64
         val cleaned = cleanPublicKey(senderPublicKeyBase64)
         if (cleaned.isEmpty()) return "[Mensaje cifrado]"
         return try {
             val combined = decodeBase64(encryptedPayloadBase64)
-            if (combined.size <= 1 + IV_SIZE) return "[Mensaje cifrado]"
-            val version = combined[0].toInt()
-            if (version != VERSION) return "[Mensaje cifrado: versión no compatible]"
-            val iv = combined.copyOfRange(1, 1 + IV_SIZE)
-            val ciphertext = combined.copyOfRange(1 + IV_SIZE, combined.size)
+            if (combined.size <= IV_SIZE) return "[Mensaje cifrado]"
+            val iv = combined.copyOfRange(0, IV_SIZE)
+            val ciphertext = combined.copyOfRange(IV_SIZE, combined.size)
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.DECRYPT_MODE, deriveAESKey(getSharedSecret(cleaned)), GCMParameterSpec(TAG_SIZE_BITS, iv))
-            cipher.updateAAD(byteArrayOf(version.toByte()))
             String(cipher.doFinal(ciphertext), Charsets.UTF_8)
         } catch (e: Throwable) {
             Log.w(TAG, "E2EE decryption failed", e)
@@ -172,7 +167,6 @@ object CryptoManager {
                 } catch (_: Throwable) { null }
             }
         }
-
         if (otherUserId.isNullOrEmpty()) return msg.copy(content = "[Mensaje cifrado]")
         var publicKey = publicKeyCache[otherUserId]
         repeat(3) { attempt ->
