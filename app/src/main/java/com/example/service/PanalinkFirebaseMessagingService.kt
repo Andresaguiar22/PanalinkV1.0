@@ -46,6 +46,13 @@ class PanalinkFirebaseMessagingService : FirebaseMessagingService() {
                 .apply()
         }
 
+        fun clearSavedToken(context: Context) {
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .remove(KEY_FCM_TOKEN)
+                .apply()
+        }
+
         fun sendTokenToSupabase(context: Context, token: String, explicitUserId: String? = null) {
             val currentUserId = explicitUserId ?: SupabaseClient.currentUser?.id
             if (!currentUserId.isNullOrEmpty()) {
@@ -68,6 +75,12 @@ class PanalinkFirebaseMessagingService : FirebaseMessagingService() {
         Log.d(TAG, "onNewToken triggered")
         saveToken(applicationContext, token)
         sendTokenToSupabase(applicationContext, token)
+    }
+
+    override fun onUnregistered(installationId: String) {
+        super.onUnregistered(installationId)
+        Log.i(TAG, "FCM installation unregistered: $installationId")
+        clearSavedToken(applicationContext)
     }
 
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
