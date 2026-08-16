@@ -121,9 +121,9 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
             val authManager = com.example.data.supabase.AuthManager()
             authManager.signOut()
             try {
-                com.google.firebase.messaging.FirebaseMessaging.getInstance().deleteToken()
+                com.google.firebase.messaging.FirebaseMessaging.getInstance().unregister()
             } catch (e: Exception) {
-                android.util.Log.e("DashboardViewModel", "Failed to delete FCM token on logout", e)
+                android.util.Log.e("DashboardViewModel", "Failed to unregister FCM on logout", e)
             }
             kotlinx.coroutines.withContext(Dispatchers.Main) {
                 onComplete()
@@ -136,9 +136,9 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
             val authManager = com.example.data.supabase.AuthManager()
             authManager.deleteAccount()
             try {
-                com.google.firebase.messaging.FirebaseMessaging.getInstance().deleteToken()
+                com.google.firebase.messaging.FirebaseMessaging.getInstance().unregister()
             } catch (e: Exception) {
-                android.util.Log.e("DashboardViewModel", "Failed to delete FCM token on deleteAccount", e)
+                android.util.Log.e("DashboardViewModel", "Failed to unregister FCM on deleteAccount", e)
             }
             kotlinx.coroutines.withContext(Dispatchers.Main) {
                 onComplete()
