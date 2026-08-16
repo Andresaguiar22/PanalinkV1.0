@@ -21,28 +21,28 @@ class SyncMessagesWorker(
             if (allSynced) {
                 Log.i("SyncMessagesWorker", "Background sync completed successfully")
                 Result.success()
-            } else if (runAttemptCount < 5) {
+            } else {
+                // IMPORTANT: never terminate the unique sync chain as FAILED.
+                // MessagesRepository uses enqueueUniqueWork(..., KEEP, ...). A FAILED
+                // unique work remains the active work and later KEEP enqueues are ignored,
+                // which can strand pending messages forever. Keep the worker retryable so
+                // WorkManager's persistent backoff can resume the queue when connectivity,
+                // auth or the server becomes healthy again.
                 Log.w(
                     "SyncMessagesWorker",
-                    "Sync incomplete; scheduling retry ${runAttemptCount + 1}/5"
+                    "Sync incomplete; keeping persistent retry (attempt=${runAttemptCount + 1})"
                 )
                 Result.retry()
-            } else {
-                Log.e("SyncMessagesWorker", "Sync incomplete after 5 attempts")
-                Result.failure()
             }
         } catch (e: Exception) {
             Log.e(
                 "SyncMessagesWorker",
-                "Error during sync attempt ${runAttemptCount + 1}/5: ${e.localizedMessage}",
+                "Error during sync attempt ${runAttemptCount + 1}: ${e.localizedMessage}",
                 e
             )
 
-            if (runAttemptCount < 5) {
-                Result.retry()
-            } else {
-                Result.failure()
-            }
+            // Same rule as above: a sync failure is recoverable state, not terminal state.
+            Result.retry()
         }
     }
 }
