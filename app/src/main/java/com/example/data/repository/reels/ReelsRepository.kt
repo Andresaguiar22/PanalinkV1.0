@@ -32,10 +32,10 @@ class ReelsRepository(
     suspend fun refresh(): Result<Unit> = remote.getActiveStates()
 
     suspend fun toggleLike(reelId: String, currentlyLiked: Boolean): Result<Unit> =
-        remote.toggleLike(reelId, currentlyLiked, true)
+        remote.toggleLike(reelId, currentlyLiked, true).map { }
 
     suspend fun toggleFavorite(reelId: String, currentlyFavorited: Boolean): Result<Unit> =
-        remote.toggleFavorite(reelId, currentlyFavorited, true)
+        remote.toggleFavorite(reelId, currentlyFavorited, true).map { }
 
     suspend fun registerShare(reelId: String): Result<Unit> =
         remote.incrementShare(reelId, true)
