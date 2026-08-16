@@ -15,6 +15,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
@@ -23,13 +25,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ChatBubbleOutline
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Report
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.VolumeOff
@@ -39,7 +41,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -53,17 +54,19 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import com.example.data.model.Comment
 import com.example.data.model.UserStateWithUser
 import com.example.data.repository.CdnManager
 import com.example.data.video.CacheDataSourceFactory
-import com.example.ui.viewmodel.ReelUploadProgress
+import com.example.ui.viewmodel.ReelsUiState
 import com.example.ui.viewmodel.ReelsViewModel
-import com.example.ui.viewmodel.StatesUiState
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.max
 
-private enum class ReelFilterV2(val label: String) { EXPLORE("Explorar"), NEW("Nuevos"), TRENDING("Tendencias"), MOST_VIEWED("Más vistos") }
+private enum class ReelFilterV2(val label: String) {
+    EXPLORE("Explorar"), NEW("Nuevos"), TRENDING("Tendencias"), MOST_VIEWED("Más vistos")
+}
 
 @OptIn(UnstableApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -78,16 +81,15 @@ fun ReelsFeedScreenV2(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val reelsState by viewModel.reelsState.collectAsStateWithLifecycle()
-    val commentsByReel by viewModel.commentsByReel.collectAsStateWithLifecycle()
-    val reels = (reelsState as? StatesUiState.Success)?.states.orEmpty()
-    val uploadProgress by viewModel.uploadProgress.collectAsStateWithLifecycle()
-    val targetId = initialStateId.ifBlank { remember { viewModel.getLastViewedReelId().orEmpty() } }
+    val comments by viewModel.currentComments.collectAsStateWithLifecycle()
+    val commentsReelId by viewModel.commentsReelId.collectAsStateWithLifecycle()
+    val reels = (reelsState as? ReelsUiState.Success)?.reels.orEmpty()
     var refreshing by remember { mutableStateOf(false) }
     var muted by remember { mutableStateOf(false) }
     var filter by remember { mutableStateOf(ReelFilterV2.EXPLORE) }
-    var commentsReelId by remember { mutableStateOf<String?>(null) }
-    var reportReelId by remember { mutableStateOf<String?>(null) }
+    var commentsDialogReelId by remember { mutableStateOf<String?>(null) }
 
+    val targetId = initialStateId.ifBlank { viewModel.getLastViewedReelId().orEmpty() }
     val filteredReels = remember(reels, filter) {
         when (filter) {
             ReelFilterV2.EXPLORE -> reels
@@ -102,19 +104,23 @@ fun ReelsFeedScreenV2(
             }
         }
     }
+
     val initialPage = remember(filteredReels, targetId) {
         filteredReels.indexOfFirst { it.state.id == targetId }.takeIf { it >= 0 } ?: 0
     }
     val pagerState = rememberPagerState(initialPage = initialPage, pageCount = { filteredReels.size })
 
     LaunchedEffect(initialPage, filteredReels.size) {
-        if (filteredReels.isNotEmpty()) pagerState.scrollToPage(initialPage.coerceIn(0, filteredReels.lastIndex))
+        if (filteredReels.isNotEmpty()) {
+            pagerState.scrollToPage(initialPage.coerceIn(0, filteredReels.lastIndex))
+        }
     }
+
     LaunchedEffect(pagerState.currentPage, filteredReels, isActive) {
         if (!isActive || filteredReels.isEmpty()) return@LaunchedEffect
         filteredReels.getOrNull(pagerState.currentPage)?.let { current ->
             viewModel.rememberLastViewedReel(current.state.id)
-            viewModel.registerView(current.state.id)
+            viewModel.registerView(current)
             (pagerState.currentPage + 1..pagerState.currentPage + 2).forEach { index ->
                 filteredReels.getOrNull(index)?.state?.mediaUrl?.let { raw ->
                     CdnManager.resolveMediaUrlSync(raw)?.takeIf(String::isNotBlank)?.let {
@@ -124,15 +130,21 @@ fun ReelsFeedScreenV2(
             }
         }
     }
-    LaunchedEffect(commentsReelId) { commentsReelId?.let(viewModel::loadComments) }
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         when {
-            reelsState is StatesUiState.Loading && reels.isEmpty() -> CircularProgressIndicator(Modifier.align(Alignment.Center))
-            reels.isEmpty() -> Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("No hay Reels disponibles", color = Color.White)
-                Spacer(Modifier.height(12.dp))
-                OutlinedButton(onClick = { viewModel.refresh() }) { Text("Reintentar") }
+            reelsState is ReelsUiState.Loading && reels.isEmpty() -> {
+                CircularProgressIndicator(Modifier.align(Alignment.Center))
+            }
+            reels.isEmpty() -> {
+                Column(
+                    Modifier.align(Alignment.Center),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text("No hay Reels disponibles", color = Color.White)
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedButton(onClick = { viewModel.refresh() }) { Text("Reintentar") }
+                }
             }
             else -> VerticalPager(
                 state = pagerState,
@@ -145,16 +157,18 @@ fun ReelsFeedScreenV2(
                     reel = reel,
                     active = isActive && page == pagerState.currentPage,
                     muted = muted,
-                    commentsCount = max(reel.state.commentsCount ?: 0, commentsByReel[reel.state.id]?.size ?: 0),
+                    commentsCount = reel.state.commentsCount ?: 0,
                     onMute = { muted = !muted },
                     onLike = { viewModel.toggleLike(reel.state.id, reel.state.likedByMe == true) },
                     onFavorite = { viewModel.toggleFavorite(reel.state.id, reel.state.favoritedByMe == true) },
-                    onShare = { viewModel.incrementShare(reel.state.id); shareReelV2(context, reel) },
-                    onComments = { commentsReelId = reel.state.id },
+                    onShare = {
+                        viewModel.registerShare(reel.state.id)
+                        shareReelV2(context, reel)
+                    },
+                    onComments = { commentsDialogReelId = reel.state.id },
                     onProfile = { onNavigateToUserProfile?.invoke(reel.state.userId) },
                     onHashtag = { onNavigateToHashtag?.invoke(it) },
-                    onReport = { reportReelId = reel.state.id },
-                    onNotInterested = { viewModel.deleteStateForMe(reel.state.id) {} },
+                    onNotInterested = { viewModel.removeFromFeed(reel.state.id) },
                     onCopyLink = { copyReelLinkV2(context, reel) },
                 )
             }
@@ -165,7 +179,10 @@ fun ReelsFeedScreenV2(
             color = Color.Black.copy(alpha = .42f),
             shape = MaterialTheme.shapes.extraLarge,
         ) {
-            Row(Modifier.height(46.dp).padding(horizontal = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                Modifier.height(46.dp).padding(horizontal = 2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 IconButton(onClick = onBack, modifier = Modifier.size(40.dp)) {
                     Icon(Icons.Default.ArrowBack, "Volver", tint = Color.White)
                 }
@@ -205,39 +222,18 @@ fun ReelsFeedScreenV2(
                 modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 50.dp).fillMaxWidth(.86f)
             )
         }
-        uploadProgress?.let { ReelUploadPillV2(it) }
     }
 
-    commentsReelId?.let { reelId ->
-        ReelsCommentsSheet(viewModel = viewModel, reelId = reelId, onDismiss = { commentsReelId = null })
-    }
-    reportReelId?.let { reelId ->
-        ReportReelDialog(
-            onDismiss = { reportReelId = null },
-            onSubmit = { reason, details ->
-                viewModel.reportReel(
-                    reelId, reason, details,
-                    onSuccess = { reportReelId = null; Toast.makeText(context, "Reporte enviado.", Toast.LENGTH_LONG).show() },
-                    onError = { Toast.makeText(context, it, Toast.LENGTH_LONG).show() },
-                )
-            },
-        )
-    }
-}
-
-@Composable
-private fun ReelUploadPillV2(progress: ReelUploadProgress) {
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
-        Surface(
-            modifier = Modifier.navigationBarsPadding().padding(bottom = 8.dp),
-            color = Color.Black.copy(alpha = .72f),
-            shape = CircleShape,
-        ) {
-            Row(Modifier.padding(horizontal = 14.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                CircularProgressIndicator(progress = { progress.percent / 100f }, modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                Text("${progress.percent}% · ${progress.status}", color = Color.White, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+    commentsDialogReelId?.let { reelId ->
+        ReelsCommentsSheet(
+            viewModel = viewModel,
+            reelId = reelId,
+            comments = if (commentsReelId == reelId) comments else emptyList(),
+            onDismiss = {
+                viewModel.clearComments(reelId)
+                commentsDialogReelId = null
             }
-        }
+        )
     }
 }
 
@@ -255,7 +251,6 @@ private fun ReelsPageV2(
     onComments: () -> Unit,
     onProfile: () -> Unit,
     onHashtag: (String) -> Unit,
-    onReport: () -> Unit,
     onNotInterested: () -> Unit,
     onCopyLink: () -> Unit,
 ) {
@@ -303,7 +298,7 @@ private fun ReelsPageV2(
         }
     }
 
-    fun triggerLikeFromDoubleTap() {
+    fun doubleTapLike() {
         showHeartBurst = true
         if (!liked) {
             liked = true
@@ -321,14 +316,12 @@ private fun ReelsPageV2(
                     this.player = player
                 }
             },
-            modifier = Modifier
-                .fillMaxSize()
-                .pointerInput(active) {
-                    detectTapGestures(
-                        onDoubleTap = { if (active) triggerLikeFromDoubleTap() },
-                        onTap = { if (active) paused = !paused },
-                    )
-                },
+            modifier = Modifier.fillMaxSize().pointerInput(active) {
+                detectTapGestures(
+                    onDoubleTap = { if (active) doubleTapLike() },
+                    onTap = { if (active) paused = !paused },
+                )
+            },
         )
 
         AnimatedVisibility(
@@ -337,7 +330,7 @@ private fun ReelsPageV2(
             enter = fadeIn() + scaleIn(initialScale = .35f),
             exit = fadeOut() + scaleOut(targetScale = 1.45f),
         ) {
-            Icon(Icons.Default.Favorite, contentDescription = "Me gusta", tint = Color.Red, modifier = Modifier.size(150.dp))
+            Icon(Icons.Default.Favorite, "Me gusta", tint = Color.Red, modifier = Modifier.size(150.dp))
         }
         LaunchedEffect(showHeartBurst) {
             if (showHeartBurst) { delay(620); showHeartBurst = false }
@@ -349,7 +342,7 @@ private fun ReelsPageV2(
             color = Color.Black.copy(alpha = if (paused) .74f else .28f),
         ) {
             IconButton(onClick = { if (active) paused = !paused }) {
-                Icon(if (paused) Icons.Default.PlayArrow else Icons.Default.Pause, if (paused) "Reanudar" else "Pausar", tint = Color.White, modifier = Modifier.size(30.dp))
+                Icon(if (paused) Icons.Default.PlayArrow else Icons.Default.Pause, "Reproducción", tint = Color.White, modifier = Modifier.size(30.dp))
             }
         }
 
@@ -359,39 +352,68 @@ private fun ReelsPageV2(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             ReelActionButtonV2(if (liked) Icons.Default.Favorite else Icons.Default.FavoriteBorder, compactCountV2(likes), liked) {
-                val next = !liked; liked = next; likes = (likes + if (next) 1 else -1).coerceAtLeast(0); onLike()
+                val next = !liked
+                liked = next
+                likes = (likes + if (next) 1 else -1).coerceAtLeast(0)
+                onLike()
             }
             ReelActionButtonV2(Icons.Default.ChatBubbleOutline, compactCountV2(commentsCount), false, onComments)
             ReelActionButtonV2(Icons.Default.Star, compactCountV2(favorites), favorited) {
-                val next = !favorited; favorited = next; favorites = (favorites + if (next) 1 else -1).coerceAtLeast(0); onFavorite()
+                val next = !favorited
+                favorited = next
+                favorites = (favorites + if (next) 1 else -1).coerceAtLeast(0)
+                onFavorite()
             }
-            ReelActionButtonV2(Icons.Default.Share, compactCountV2(shares), false) { shares += 1; onShare() }
+            ReelActionButtonV2(Icons.Default.Share, compactCountV2(shares), false) {
+                shares += 1
+                onShare()
+            }
             ReelActionButtonV2(if (muted) Icons.Default.VolumeOff else Icons.Default.VolumeUp, "", false, onMute)
             Box {
                 ReelActionButtonV2(Icons.Default.MoreVert, "", false) { menuExpanded = true }
                 DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-                    DropdownMenuItem(text = { Text("Compartir") }, leadingIcon = { Icon(Icons.Default.Share, null) }, onClick = { menuExpanded = false; onShare() })
-                    DropdownMenuItem(text = { Text("Copiar enlace") }, leadingIcon = { Icon(Icons.Default.ContentCopy, null) }, onClick = { menuExpanded = false; onCopyLink() })
+                    DropdownMenuItem(text = { Text("Compartir") }, onClick = { menuExpanded = false; onShare() })
+                    DropdownMenuItem(text = { Text("Copiar enlace") }, onClick = { menuExpanded = false; onCopyLink() })
                     DropdownMenuItem(text = { Text("No me interesa") }, onClick = { menuExpanded = false; onNotInterested() })
-                    DropdownMenuItem(text = { Text("Reportar Reel") }, leadingIcon = { Icon(Icons.Default.Report, null) }, onClick = { menuExpanded = false; onReport() })
                     DropdownMenuItem(text = { Text("Ver perfil") }, onClick = { menuExpanded = false; onProfile() })
                 }
             }
         }
 
-        Column(Modifier.align(Alignment.BottomStart).navigationBarsPadding().padding(start = 16.dp, end = 90.dp, bottom = 58.dp)) {
+        Column(
+            Modifier.align(Alignment.BottomStart).navigationBarsPadding().padding(start = 16.dp, end = 90.dp, bottom = 58.dp)
+        ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Surface(shape = CircleShape, color = Color.White.copy(alpha = .18f), modifier = Modifier.size(40.dp).clickable(onClick = onProfile)) {
-                    Box(contentAlignment = Alignment.Center) { Text(reel.profile?.displayName?.firstOrNull()?.uppercase() ?: "P", color = Color.White, fontWeight = FontWeight.Bold) }
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(
+                            reel.profile?.displayName?.firstOrNull()?.uppercase() ?: "P",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
                 Spacer(Modifier.width(9.dp))
-                Text("@${reel.profile?.displayName?.ifBlank { "pana" } ?: "pana"}", color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.clickable(onClick = onProfile))
+                Text(
+                    "@${reel.profile?.displayName?.ifBlank { "pana" } ?: "pana"}",
+                    color = Color.White,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.clickable(onClick = onProfile)
+                )
             }
-            reel.state.caption?.takeIf(String::isNotBlank)?.let { Spacer(Modifier.height(5.dp)); Text(it, color = Color.White, maxLines = 3, style = MaterialTheme.typography.bodyMedium) }
+            reel.state.caption?.takeIf(String::isNotBlank)?.let {
+                Spacer(Modifier.height(5.dp))
+                Text(it, color = Color.White, maxLines = 3, style = MaterialTheme.typography.bodyMedium)
+            }
             val hashtags = Regex("#[A-Za-z0-9_ÁÉÍÓÚáéíóúÑñ]+").findAll(reel.state.caption.orEmpty()).map { it.value }.distinct().toList()
             if (hashtags.isNotEmpty()) {
                 Spacer(Modifier.height(3.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) { hashtags.take(4).forEach { tag -> Text(tag, color = Color.White, fontWeight = FontWeight.SemiBold, modifier = Modifier.clickable { onHashtag(tag.removePrefix("#")) }) } }
+                Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    hashtags.take(4).forEach { tag ->
+                        Text(tag, color = Color.White, fontWeight = FontWeight.SemiBold, modifier = Modifier.clickable { onHashtag(tag.removePrefix("#")) })
+                    }
+                }
             }
         }
 
@@ -412,25 +434,100 @@ private fun ReelsPageV2(
 }
 
 @Composable
-private fun ReelActionButtonV2(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, active: Boolean, onClick: () -> Unit) {
+private fun ReelActionButtonV2(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    active: Boolean,
+    onClick: () -> Unit
+) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Surface(modifier = Modifier.size(50.dp), shape = CircleShape, color = Color.Black.copy(alpha = .48f)) {
-            IconButton(onClick = onClick) { Icon(icon, label.ifBlank { null }, tint = if (active) Color.Red else Color.White, modifier = Modifier.size(27.dp)) }
+            IconButton(onClick = onClick) {
+                Icon(icon, label.ifBlank { null }, tint = if (active) Color.Red else Color.White, modifier = Modifier.size(27.dp))
+            }
         }
         if (label.isNotBlank()) Text(label, color = Color.White, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
     }
 }
 
-private fun compactCountV2(value: Int): String = when { value >= 1_000_000 -> "%.1fM".format(value / 1_000_000f); value >= 1_000 -> "%.1fK".format(value / 1_000f); else -> value.toString() }
-private fun formatTimeV2(ms: Long): String { val total = (ms / 1000L).coerceAtLeast(0L); return "%d:%02d".format(total / 60L, total % 60L) }
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ReelsCommentsSheet(
+    viewModel: ReelsViewModel,
+    reelId: String,
+    comments: List<Comment>,
+    onDismiss: () -> Unit,
+) {
+    var text by remember(reelId) { mutableStateOf("") }
+    LaunchedEffect(reelId) { viewModel.loadComments(reelId) }
+
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(Modifier.fillMaxWidth().fillMaxHeight(.78f).padding(horizontal = 16.dp)) {
+            Text("Comentarios", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(8.dp))
+            LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                items(comments, key = { it.id }) { comment ->
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+                        Surface(shape = CircleShape, modifier = Modifier.size(36.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+                            Box(contentAlignment = Alignment.Center) { Text(comment.authorName.firstOrNull()?.uppercase() ?: "P") }
+                        }
+                        Spacer(Modifier.width(9.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(comment.authorName, fontWeight = FontWeight.SemiBold)
+                            Text(comment.text)
+                        }
+                        if (comment.userId == com.example.data.supabase.SupabaseClient.currentUser?.id) {
+                            IconButton(onClick = { viewModel.deleteComment(reelId, comment.id) }) {
+                                Icon(Icons.Default.Delete, "Eliminar")
+                            }
+                        }
+                    }
+                }
+            }
+            Row(Modifier.fillMaxWidth().navigationBarsPadding(), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    modifier = Modifier.weight(1f),
+                    placeholder = { Text("Escribe un comentario…") },
+                    maxLines = 3,
+                )
+                Spacer(Modifier.width(8.dp))
+                Button(onClick = {
+                    val clean = text.trim()
+                    if (clean.isNotEmpty()) {
+                        viewModel.addComment(reelId, clean)
+                        text = ""
+                    }
+                }) { Text("Enviar") }
+            }
+        }
+    }
+}
+
+private fun compactCountV2(value: Int): String = when {
+    value >= 1_000_000 -> "%.1fM".format(value / 1_000_000f)
+    value >= 1_000 -> "%.1fK".format(value / 1_000f)
+    else -> value.toString()
+}
+
+private fun formatTimeV2(ms: Long): String {
+    val total = (ms / 1000L).coerceAtLeast(0L)
+    return "%d:%02d".format(total / 60L, total % 60L)
+}
 
 private fun shareReelV2(context: Context, reel: UserStateWithUser) {
-    val send = Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, reel.state.mediaUrl.orEmpty()) }
+    val send = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_TEXT, reel.state.mediaUrl.orEmpty())
+    }
     context.startActivity(Intent.createChooser(send, "Compartir Reel"))
 }
 
 private fun copyReelLinkV2(context: Context, reel: UserStateWithUser) {
     val value = reel.state.mediaUrl.orEmpty()
-    context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(ClipData.newPlainText("Reel", value))
+    context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(
+        ClipData.newPlainText("Reel", value)
+    )
     Toast.makeText(context, "Enlace copiado", Toast.LENGTH_SHORT).show()
 }
