@@ -4,66 +4,35 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
 import android.util.Log
+import com.example.data.model.Message
 import java.security.KeyFactory
+import java.security.KeyPair
 import java.security.KeyPairGenerator
 import java.security.KeyStore
 import java.security.PrivateKey
-import java.security.PublicKey
 import java.security.SecureRandom
 import java.security.spec.ECGenParameterSpec
 import java.security.spec.X509EncodedKeySpec
+import java.util.concurrent.ConcurrentHashMap
 import javax.crypto.Cipher
 import javax.crypto.KeyAgreement
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 import java.security.MessageDigest
-import java.util.concurrent.ConcurrentHashMap
-import com.example.data.model.Message
 
-/**
- * CryptoManager: Handles secure E2EE operations for Panalink using AndroidKeyStore,
- * Elliptic Curve Diffie-Hellman (ECDH) for key agreement, and AES-256-GCM for symmetric encryption.
- */
+/** E2EE for direct messages: ECDH P-256 + AES-256-GCM. */
 object CryptoManager {
-    const val ENABLE_E2EE = false // Temporalmente desactivado
+    const val ENABLE_E2EE = true
     private const val TAG = "CryptoManager"
     private const val ALIAS = "panalink_e2ee_key_v2"
     private const val KEYSTORE_PROVIDER = "AndroidKeyStore"
 
-    private fun logError(tag: String, msg: String, t: Throwable? = null) {
-        try {
-            if (t != null) {
-                Log.e(tag, msg, t)
-            } else {
-                Log.e(tag, msg)
-            }
-        } catch (e: Throwable) {
-            println("[ERROR] $tag: $msg")
-            t?.printStackTrace()
-        }
-    }
-
-    private fun logDebug(tag: String, msg: String) {
-        try {
-            Log.d(tag, msg)
-        } catch (e: Throwable) {
-            println("[DEBUG] $tag: $msg")
-        }
-    }
-
-    // High-performance in-memory caches to enable synchronous decryption on the fly
     val publicKeyCache = ConcurrentHashMap<String, String>()
     val chatToOtherUserCache = ConcurrentHashMap<String, String>()
+    private var localKeyPair: KeyPair? = null
 
-    private var localKeyPair: java.security.KeyPair? = null
+    init { ensureKeyPairExists() }
 
-    init {
-        ensureKeyPairExists()
-    }
-
-    /**
-     * Sanitizes and normalizes a Base64 encoded public key string.
-     */
     fun cleanPublicKey(keyStr: String?): String {
         if (keyStr.isNullOrBlank()) return ""
         return keyStr.trim()
@@ -82,51 +51,31 @@ object CryptoManager {
             .trim()
     }
 
-    /**
-     * Safely decodes a Base64 string to ByteArray.
-     */
-    private fun decodeBase64Key(base64Str: String): ByteArray {
-        val cleaned = cleanPublicKey(base64Str)
-        return try {
-            Base64.decode(cleaned, Base64.NO_WRAP)
-        } catch (e: Throwable) {
-            Base64.decode(cleaned, Base64.DEFAULT)
-        }
+    private fun decodeBase64(value: String): ByteArray {
+        val cleaned = cleanPublicKey(value)
+        return try { Base64.decode(cleaned, Base64.NO_WRAP) }
+        catch (_: Throwable) { Base64.decode(cleaned, Base64.DEFAULT) }
     }
 
-    /**
-     * Generates and stores the EC key pair securely inside AndroidKeyStore (Hardware-backed).
-     */
     @Synchronized
     fun ensureKeyPairExists() {
         if (localKeyPair != null) return
-
         try {
-            val keyStore = KeyStore.getInstance(KEYSTORE_PROVIDER)
-            keyStore.load(null)
-
-            if (!keyStore.containsAlias(ALIAS)) {
-                logDebug(TAG, "Generating new hardware-backed EC key pair (secp256r1)")
-                val kpg = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, KEYSTORE_PROVIDER)
-                val spec = KeyGenParameterSpec.Builder(
-                    ALIAS,
-                    KeyProperties.PURPOSE_AGREE_KEY
+            val ks = KeyStore.getInstance(KEYSTORE_PROVIDER).apply { load(null) }
+            if (!ks.containsAlias(ALIAS)) {
+                val generator = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, KEYSTORE_PROVIDER)
+                generator.initialize(
+                    KeyGenParameterSpec.Builder(ALIAS, KeyProperties.PURPOSE_AGREE_KEY)
+                        .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
+                        .setDigests(KeyProperties.DIGEST_SHA256)
+                        .build()
                 )
-                    .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
-                    .setDigests(KeyProperties.DIGEST_SHA256)
-                    .build()
-                kpg.initialize(spec)
-                kpg.generateKeyPair()
-            } else {
-                logDebug(TAG, "Loaded existing EC key pair from AndroidKeyStore")
+                generator.generateKeyPair()
             }
-
-            val entry = keyStore.getEntry(ALIAS, null) as? KeyStore.PrivateKeyEntry
-            if (entry != null) {
-                localKeyPair = java.security.KeyPair(entry.certificate.publicKey, entry.privateKey)
-            }
+            val entry = ks.getEntry(ALIAS, null) as? KeyStore.PrivateKeyEntry
+            if (entry != null) localKeyPair = KeyPair(entry.certificate.publicKey, entry.privateKey)
         } catch (e: Throwable) {
-            logError(TAG, "KeyStore failed, falling back to software keys", e)
+            Log.e(TAG, "AndroidKeyStore unavailable; using in-memory fallback", e)
             ensureSoftwareKeyPair()
         }
     }
@@ -134,226 +83,110 @@ object CryptoManager {
     private fun ensureSoftwareKeyPair() {
         if (localKeyPair != null) return
         try {
-            val keyPairGenerator = KeyPairGenerator.getInstance("EC")
-            keyPairGenerator.initialize(ECGenParameterSpec("secp256r1"))
-            localKeyPair = keyPairGenerator.generateKeyPair()
-        } catch (e: Throwable) {
-            logError(TAG, "Software key generation failed", e)
-        }
+            val generator = KeyPairGenerator.getInstance("EC")
+            generator.initialize(ECGenParameterSpec("secp256r1"))
+            localKeyPair = generator.generateKeyPair()
+        } catch (e: Throwable) { Log.e(TAG, "Software key generation failed", e) }
     }
 
-    /**
-     * Gets the local public key encoded in Base64.
-     */
     fun getPublicKeyBase64(): String {
-        return try {
-            ensureKeyPairExists()
-            val keyPair = localKeyPair ?: return ""
-            cleanPublicKey(Base64.encodeToString(keyPair.public.encoded, Base64.NO_WRAP))
-        } catch (e: Throwable) {
-            logError(TAG, "Error getting public key", e)
-            ""
-        }
+        ensureKeyPairExists()
+        val key = localKeyPair?.public?.encoded ?: return ""
+        return Base64.encodeToString(key, Base64.NO_WRAP)
     }
 
-    /**
-     * Retrieves the private key securely.
-     */
     private fun getPrivateKey(): PrivateKey? {
         ensureKeyPairExists()
         return localKeyPair?.private
     }
 
-    /**
-     * Performs ECDH Key Agreement to derive a shared secret.
-     */
     private fun getSharedSecret(otherPublicKeyBase64: String): ByteArray? {
         val privateKey = getPrivateKey() ?: return null
-        val cleanedKeyStr = cleanPublicKey(otherPublicKeyBase64)
-        if (cleanedKeyStr.isEmpty()) return null
-        
-        val keyFactory = KeyFactory.getInstance("EC")
-        val otherKeyBytes = decodeBase64Key(cleanedKeyStr)
-        val otherPublicKey = keyFactory.generatePublic(X509EncodedKeySpec(otherKeyBytes))
-
-        val keyAgreement = KeyAgreement.getInstance("ECDH")
-        keyAgreement.init(privateKey)
-        keyAgreement.doPhase(otherPublicKey, true)
-        return keyAgreement.generateSecret()
-    }
-
-    /**
-     * Hashes the shared secret using SHA-256 to derive a high-entropy AES-256 key.
-     */
-    private fun deriveAESKey(sharedSecret: ByteArray): SecretKeySpec {
-        val messageDigest = MessageDigest.getInstance("SHA-256")
-        val hashedSecret = messageDigest.digest(sharedSecret)
-        return SecretKeySpec(hashedSecret, "AES")
-    }
-
-    /**
-     * Encrypts plain text using the receiver's public key (via ECDH + AES-256-GCM).
-     * Returns "IV + Ciphertext" in Base64 format.
-     */
-    fun encrypt(plainText: String, receiverPublicKeyBase64: String): String {
-        if (!ENABLE_E2EE) return plainText
-        if (plainText.isEmpty() || receiverPublicKeyBase64.isEmpty()) return plainText
-        val cleanedKey = cleanPublicKey(receiverPublicKeyBase64)
-        if (cleanedKey.isEmpty()) return plainText
-        return try {
-            val sharedSecret = getSharedSecret(cleanedKey) ?: return plainText
-            val aesKey = deriveAESKey(sharedSecret)
-
-            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-            val iv = ByteArray(12)
-            SecureRandom().nextBytes(iv)
-            cipher.init(Cipher.ENCRYPT_MODE, aesKey, GCMParameterSpec(128, iv))
-            
-            val cipherText = cipher.doFinal(plainText.toByteArray(Charsets.UTF_8))
-            val combined = ByteArray(iv.size + cipherText.size)
-            System.arraycopy(iv, 0, combined, 0, iv.size)
-            System.arraycopy(cipherText, 0, combined, iv.size, cipherText.size)
-            
-            Base64.encodeToString(combined, Base64.NO_WRAP)
-        } catch (e: Throwable) {
-            logError(TAG, "Encryption failed for public key: ${cleanedKey.take(15)}...", e)
-            throw e
+        val otherBytes = decodeBase64(otherPublicKeyBase64)
+        if (otherBytes.isEmpty()) return null
+        val otherPublicKey = KeyFactory.getInstance("EC").generatePublic(X509EncodedKeySpec(otherBytes))
+        return KeyAgreement.getInstance("ECDH").run {
+            init(privateKey)
+            doPhase(otherPublicKey, true)
+            generateSecret()
         }
     }
 
-    /**
-     * Decrypts ciphertext (Base64 IV + Ciphertext) using the sender's public key (via ECDH + AES-256-GCM).
-     */
+    private fun deriveAESKey(sharedSecret: ByteArray): SecretKeySpec {
+        return SecretKeySpec(MessageDigest.getInstance("SHA-256").digest(sharedSecret), "AES")
+    }
+
+    /** Throws when encryption cannot be performed; plaintext fallback is intentionally forbidden. */
+    fun encrypt(plainText: String, receiverPublicKeyBase64: String): String {
+        if (!ENABLE_E2EE || plainText.isEmpty()) return plainText
+        val cleaned = cleanPublicKey(receiverPublicKeyBase64)
+        require(cleaned.isNotEmpty()) { "Missing receiver public key; refusing plaintext fallback" }
+        val secret = getSharedSecret(cleaned) ?: error("Unable to derive E2EE shared secret")
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        val iv = ByteArray(12).also { SecureRandom().nextBytes(it) }
+        cipher.init(Cipher.ENCRYPT_MODE, deriveAESKey(secret), GCMParameterSpec(128, iv))
+        val encrypted = cipher.doFinal(plainText.toByteArray(Charsets.UTF_8))
+        return Base64.encodeToString(iv + encrypted, Base64.NO_WRAP)
+    }
+
     fun decrypt(encryptedPayloadBase64: String, senderPublicKeyBase64: String): String {
         if (encryptedPayloadBase64.isEmpty() || senderPublicKeyBase64.isEmpty()) return encryptedPayloadBase64
-        val cleanedKey = cleanPublicKey(senderPublicKeyBase64)
-        if (cleanedKey.isEmpty()) return encryptedPayloadBase64
-        val combined = try {
-            decodeBase64Key(encryptedPayloadBase64)
-        } catch (e: Throwable) {
-            return encryptedPayloadBase64
-        }
-        if (combined.size < 12) return encryptedPayloadBase64
-
+        val cleaned = cleanPublicKey(senderPublicKeyBase64)
+        if (cleaned.isEmpty()) return "[Mensaje cifrado]"
         return try {
-            val sharedSecret = getSharedSecret(cleanedKey) ?: return "[Mensaje cifrado]"
-            val aesKey = deriveAESKey(sharedSecret)
-
-            val iv = ByteArray(12)
-            System.arraycopy(combined, 0, iv, 0, 12)
-            
-            val cipherText = ByteArray(combined.size - 12)
-            System.arraycopy(combined, 12, cipherText, 0, cipherText.size)
-
+            val combined = decodeBase64(encryptedPayloadBase64)
+            if (combined.size <= 12) return encryptedPayloadBase64
+            val secret = getSharedSecret(cleaned) ?: return "[Mensaje cifrado]"
+            val iv = combined.copyOfRange(0, 12)
+            val ciphertext = combined.copyOfRange(12, combined.size)
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-            cipher.init(Cipher.DECRYPT_MODE, aesKey, GCMParameterSpec(128, iv))
-            
-            val decryptedBytes = cipher.doFinal(cipherText)
-            String(decryptedBytes, Charsets.UTF_8)
-        } catch (e: Throwable) {
+            cipher.init(Cipher.DECRYPT_MODE, deriveAESKey(secret), GCMParameterSpec(128, iv))
+            String(cipher.doFinal(ciphertext), Charsets.UTF_8)
+        } catch (_: Throwable) {
+            // Preserve compatibility with messages stored before E2EE was enabled.
             encryptedPayloadBase64
         }
     }
 
-    /**
-     * Pure function to decrypt a message without performing any database/network queries.
-     */
     fun decryptMessagePure(msg: Message, chatType: String?, otherUserPublicKey: String?): Message {
-        if (!ENABLE_E2EE) return msg
-        val rawContent = msg.content
-        if (rawContent.isNullOrEmpty()) return msg
-
-        if (chatType == "channel" || chatType == "community") return msg
-
-        if (otherUserPublicKey.isNullOrBlank()) {
-            return msg.copy(content = "[Mensaje cifrado]")
-        }
-
-        val cleanKey = cleanPublicKey(otherUserPublicKey)
-        if (cleanKey.isEmpty()) {
-            return msg.copy(content = "[Mensaje cifrado]")
-        }
-
-        logDebug("ChatE2ETrace", "decryptMessagePure | pubKey=${cleanKey.take(15)}...")
-        val decrypted = decrypt(rawContent, cleanKey)
-        if (decrypted != rawContent) {
-            logDebug("ChatE2ETrace", "decryptMessagePure result OK")
-        }
-        return msg.copy(content = decrypted)
+        if (!ENABLE_E2EE || msg.content.isNullOrEmpty()) return msg
+        if (chatType == "channel" || chatType == "community" || chatType == "group") return msg
+        val key = cleanPublicKey(otherUserPublicKey)
+        if (key.isEmpty()) return msg.copy(content = "[Mensaje cifrado]")
+        return msg.copy(content = decrypt(msg.content, key))
     }
 
-    /**
-     * Decrypts a message's text_content if needed using the other participant's public key.
-     */
     suspend fun decryptMessageIfNeeded(msg: Message): Message {
-        if (!ENABLE_E2EE) return msg
-        val rawContent = msg.content
-        if (rawContent.isNullOrEmpty()) return msg
-
-        // Check if this chat is a channel or community to skip decryption
+        if (!ENABLE_E2EE || msg.content.isNullOrEmpty()) return msg
         val isChannelOrCommunity = try {
             val db = com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance)
-            val chatEntity = db.chatDao().getChatById(msg.chatId)
-            chatEntity?.type == "channel" || chatEntity?.type == "community"
-        } catch (e: Throwable) {
-            false
-        }
+            val type = db.chatDao().getChatById(msg.chatId)?.type
+            type == "channel" || type == "community" || type == "group"
+        } catch (_: Throwable) { false }
         if (isChannelOrCommunity) return msg
 
-        val currentUid = try { com.example.data.supabase.SupabaseClient.currentUser?.id ?: "" } catch (e: Throwable) { "" }
- 
-        val otherUserId = if (msg.senderId != currentUid && msg.senderId.isNotEmpty()) {
-            msg.senderId
-        } else {
+        val currentUid = try { com.example.data.supabase.SupabaseClient.currentUser?.id ?: "" } catch (_: Throwable) { "" }
+        val otherUserId = if (msg.senderId != currentUid && msg.senderId.isNotEmpty()) msg.senderId else {
             chatToOtherUserCache[msg.chatId] ?: run {
                 try {
                     val db = com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance)
-                    val chatEntity = db.chatDao().getChatById(msg.chatId)
-                    val uid = chatEntity?.otherUserId
-                    if (!uid.isNullOrEmpty()) chatToOtherUserCache[msg.chatId] = uid
-                    uid
-                } catch (e: Throwable) {
-                    null
-                }
+                    val id = db.chatDao().getChatById(msg.chatId)?.otherUserId
+                    if (!id.isNullOrEmpty()) chatToOtherUserCache[msg.chatId] = id
+                    id
+                } catch (_: Throwable) { null }
             }
         }
- 
-        if (!otherUserId.isNullOrEmpty()) {
-            var otherPubKey = publicKeyCache[otherUserId]
-            var retries = 3
-            while (otherPubKey.isNullOrEmpty() && retries > 0) {
-                if (retries < 3) {
-                    try {
-                        kotlinx.coroutines.delay(400)
-                    } catch (e: Throwable) {}
-                }
-                if (otherPubKey.isNullOrEmpty()) {
-                    try {
-                        otherPubKey = com.example.data.repository.UserKeysRepository.getPublicKeyForUser(otherUserId)
-                        if (!otherPubKey.isNullOrEmpty()) {
-                            val cleanKey = cleanPublicKey(otherPubKey)
-                            if (cleanKey.isNotEmpty()) {
-                                publicKeyCache[otherUserId] = cleanKey
-                                otherPubKey = cleanKey
-                                break
-                            }
-                        }
-                    } catch (e: Throwable) {}
-                }
 
-                retries--
-            }
- 
-            val cleanedPubKey = cleanPublicKey(otherPubKey)
-            if (cleanedPubKey.isNotEmpty()) {
-                return decryptMessagePure(msg, if (isChannelOrCommunity) "channel" else "direct", cleanedPubKey)
-            } else {
-                logError("ChatE2ETrace", "3. Resultado decrypt ERROR: Clave pública vacía para usuario $otherUserId")
-            }
-        } else {
-            logError("ChatE2ETrace", "3. Resultado decrypt ERROR: No se encontró otro usuario para chatId=${msg.chatId}")
-            return msg
+        if (otherUserId.isNullOrEmpty()) return msg.copy(content = "[Mensaje cifrado]")
+        var publicKey = publicKeyCache[otherUserId]
+        repeat(3) { attempt ->
+            if (!publicKey.isNullOrEmpty()) return@repeat
+            try {
+                if (attempt > 0) kotlinx.coroutines.delay(400)
+                publicKey = com.example.data.repository.UserKeysRepository.getPublicKeyForUser(otherUserId)
+            } catch (_: Throwable) { }
         }
-        return msg.copy(content = "[Mensaje cifrado]")
+        val clean = cleanPublicKey(publicKey)
+        return if (clean.isNotEmpty()) decryptMessagePure(msg, "direct", clean) else msg.copy(content = "[Mensaje cifrado]")
     }
 }
