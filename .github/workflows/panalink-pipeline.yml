@@ -2,7 +2,7 @@ name: PanaLink V2.0 Unified Pipeline
 
 on:
   push:
-    branches: [ "main", "master", "develop" ]
+    branches: [ "main", "master", "develop", "refactor/full-app-turbo" ]
     tags:
       - 'v*'
   workflow_dispatch:
@@ -74,8 +74,6 @@ jobs:
           EOF
           base64 --decode --ignore-garbage base64_temp.txt > app/release-key.jks
           cp app/release-key.jks release-key.jks
-
-          # Escribir las propiedades requeridas por el build.gradle.kts en app/secrets.properties
           echo "KEYSTORE_FILE=release-key.jks" > app/secrets.properties
           echo "KEYSTORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }}" >> app/secrets.properties
           echo "KEY_ALIAS=${{ secrets.KEY_ALIAS }}" >> app/secrets.properties
