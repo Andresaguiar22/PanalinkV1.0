@@ -28,12 +28,16 @@ object CryptoManager {
     private const val KEYSTORE_PROVIDER = "AndroidKeyStore"
     private const val IV_SIZE = 12
     private const val TAG_SIZE_BITS = 128
+    private const val ENCRYPTION_ERROR = "E2EE encryption unavailable"
 
     val publicKeyCache = ConcurrentHashMap<String, String>()
     val chatToOtherUserCache = ConcurrentHashMap<String, String>()
     private var localKeyPair: KeyPair? = null
 
-    init { ensureKeyPairExists() }
+    init {
+        runCatching { ensureKeyPairExists() }
+            .onFailure { Log.e(TAG, "Secure E2EE key initialization deferred", it) }
+    }
 
     fun cleanPublicKey(keyStr: String?): String {
         if (keyStr.isNullOrBlank()) return ""
@@ -56,8 +60,11 @@ object CryptoManager {
     private fun decodeBase64(value: String): ByteArray {
         val cleaned = value.trim()
         require(cleaned.isNotEmpty()) { "Empty Base64 value" }
-        return try { Base64.decode(cleaned, Base64.NO_WRAP) }
-        catch (_: IllegalArgumentException) { Base64.decode(cleaned, Base64.DEFAULT) }
+        return try {
+            Base64.decode(cleaned, Base64.NO_WRAP)
+        } catch (_: IllegalArgumentException) {
+            Base64.decode(cleaned, Base64.DEFAULT)
+        }
     }
 
     @Synchronized
@@ -108,19 +115,26 @@ object CryptoManager {
     private fun deriveAESKey(sharedSecret: ByteArray): SecretKeySpec =
         SecretKeySpec(MessageDigest.getInstance("SHA-256").digest(sharedSecret), "AES")
 
-    /** AES-GCM payload compatible with the existing Panalink ciphertext format. */
     fun encrypt(plainText: String, receiverPublicKeyBase64: String): String {
         if (!ENABLE_E2EE || plainText.isEmpty()) return plainText
         val cleaned = cleanPublicKey(receiverPublicKeyBase64)
         require(cleaned.isNotEmpty()) { "Missing receiver public key; refusing plaintext fallback" }
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        val iv = ByteArray(IV_SIZE).also(SecureRandom()::nextBytes)
-        cipher.init(Cipher.ENCRYPT_MODE, deriveAESKey(getSharedSecret(cleaned)), GCMParameterSpec(TAG_SIZE_BITS, iv))
-        val encrypted = cipher.doFinal(plainText.toByteArray(Charsets.UTF_8))
-        return Base64.encodeToString(iv + encrypted, Base64.NO_WRAP)
+        return try {
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            val iv = ByteArray(IV_SIZE).also(SecureRandom()::nextBytes)
+            cipher.init(
+                Cipher.ENCRYPT_MODE,
+                deriveAESKey(getSharedSecret(cleaned)),
+                GCMParameterSpec(TAG_SIZE_BITS, iv)
+            )
+            val encrypted = cipher.doFinal(plainText.toByteArray(Charsets.UTF_8))
+            Base64.encodeToString(iv + encrypted, Base64.NO_WRAP)
+        } catch (e: Throwable) {
+            Log.e(TAG, ENCRYPTION_ERROR, e)
+            throw IllegalStateException(ENCRYPTION_ERROR, e)
+        }
     }
 
-    /** Never returns ciphertext as plaintext when E2EE decryption fails. */
     fun decrypt(encryptedPayloadBase64: String, senderPublicKeyBase64: String): String {
         if (encryptedPayloadBase64.isEmpty()) return encryptedPayloadBase64
         val cleaned = cleanPublicKey(senderPublicKeyBase64)
@@ -131,7 +145,11 @@ object CryptoManager {
             val iv = combined.copyOfRange(0, IV_SIZE)
             val ciphertext = combined.copyOfRange(IV_SIZE, combined.size)
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-            cipher.init(Cipher.DECRYPT_MODE, deriveAESKey(getSharedSecret(cleaned)), GCMParameterSpec(TAG_SIZE_BITS, iv))
+            cipher.init(
+                Cipher.DECRYPT_MODE,
+                deriveAESKey(getSharedSecret(cleaned)),
+                GCMParameterSpec(TAG_SIZE_BITS, iv)
+            )
             String(cipher.doFinal(ciphertext), Charsets.UTF_8)
         } catch (e: Throwable) {
             Log.w(TAG, "E2EE decryption failed", e)
@@ -153,30 +171,47 @@ object CryptoManager {
             val db = com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance)
             val type = db.chatDao().getChatById(msg.chatId)?.type
             type == "channel" || type == "community" || type == "group"
-        } catch (_: Throwable) { false }
+        } catch (_: Throwable) {
+            false
+        }
         if (isChannelOrCommunity) return msg
 
-        val currentUid = try { com.example.data.supabase.SupabaseClient.currentUser?.id ?: "" } catch (_: Throwable) { "" }
-        val otherUserId = if (msg.senderId != currentUid && msg.senderId.isNotEmpty()) msg.senderId else {
+        val currentUid = try {
+            com.example.data.supabase.SupabaseClient.currentUser?.id ?: ""
+        } catch (_: Throwable) {
+            ""
+        }
+        val otherUserId = if (msg.senderId != currentUid && msg.senderId.isNotEmpty()) {
+            msg.senderId
+        } else {
             chatToOtherUserCache[msg.chatId] ?: run {
                 try {
                     val db = com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance)
                     val id = db.chatDao().getChatById(msg.chatId)?.otherUserId
                     if (!id.isNullOrEmpty()) chatToOtherUserCache[msg.chatId] = id
                     id
-                } catch (_: Throwable) { null }
+                } catch (_: Throwable) {
+                    null
+                }
             }
         }
         if (otherUserId.isNullOrEmpty()) return msg.copy(content = "[Mensaje cifrado]")
+
         var publicKey = publicKeyCache[otherUserId]
         repeat(3) { attempt ->
             if (!publicKey.isNullOrEmpty()) return@repeat
             try {
                 if (attempt > 0) kotlinx.coroutines.delay(400)
                 publicKey = com.example.data.repository.UserKeysRepository.getPublicKeyForUser(otherUserId)
-            } catch (_: Throwable) { }
+            } catch (_: Throwable) {
+                // Fail closed below.
+            }
         }
         val clean = cleanPublicKey(publicKey)
-        return if (clean.isNotEmpty()) decryptMessagePure(msg, "direct", clean) else msg.copy(content = "[Mensaje cifrado]")
+        return if (clean.isNotEmpty()) {
+            decryptMessagePure(msg, "direct", clean)
+        } else {
+            msg.copy(content = "[Mensaje cifrado]")
+        }
     }
 }
