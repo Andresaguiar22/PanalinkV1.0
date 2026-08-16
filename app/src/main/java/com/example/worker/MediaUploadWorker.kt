@@ -87,8 +87,15 @@ class MediaUploadWorker(
                 return Result.success()
             }
 
-            Log.w(TAG, "Pending media message $messageId has no local URI and no mediaUrl yet; retrying")
-            return Result.retry()
+            // There is no recoverable input left for this worker. Retrying
+            // cannot recreate a deleted/missing local file and would only
+            // loop the same broken job until WorkManager exhausts retries.
+            Log.e(
+                TAG,
+                "Pending media message $messageId has no local URI and no mediaUrl; cannot recover upload"
+            )
+            messageDao.updateMessageStatus(messageId, "failed")
+            return Result.failure()
         }
 
         return try {
