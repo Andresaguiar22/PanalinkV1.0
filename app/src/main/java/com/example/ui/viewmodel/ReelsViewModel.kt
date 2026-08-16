@@ -30,8 +30,7 @@ class ReelsViewModel(
         ReelsLocalDataSource(
             PanalinkDatabase.getDatabase(com.example.PanaApplication.instance).statesDao()
         )
-    )
-) : ViewModel() {
+    ) : ViewModel() {
 
     private val errorHandler = com.example.util.Resilience.globalExceptionHandler("ReelsViewModel")
     private val processing = Collections.synchronizedSet(mutableSetOf<String>())
@@ -75,21 +74,32 @@ class ReelsViewModel(
         }
     }
 
+    /** Compatibility entry point used by the feed after a social upload completes. */
+    fun loadActiveStates(showLoading: Boolean = false) = refresh()
+
     fun toggleLike(reelId: String, liked: Boolean, onError: ((String) -> Unit)? = null) =
         runAction("like:$reelId", onError) { repository.toggleLike(reelId, liked) }
 
     fun toggleFavorite(reelId: String, favorited: Boolean, onError: ((String) -> Unit)? = null) =
         runAction("favorite:$reelId", onError) { repository.toggleFavorite(reelId, favorited) }
 
+    /** Compatibility name used by the feed. */
+    fun incrementShare(reelId: String, onError: ((String) -> Unit)? = null) =
+        registerShare(reelId, onError)
+
     fun registerShare(reelId: String, onError: ((String) -> Unit)? = null) =
         runAction("share:$reelId", onError) { repository.registerShare(reelId) }
 
-    fun registerView(reel: UserStateWithUser) {
+    fun registerView(reelId: String) {
         viewModelScope.launch(errorHandler + Dispatchers.IO) {
-            repository.registerView(reel.state.id).onSuccess {
-                repository.saveReelLocally(reel.copy(state = reel.state.copy(viewedByMe = true)))
+            repository.registerView(reelId).onFailure {
+                Log.e("ReelsViewModel", "Failed to register reel view: $reelId", it)
             }
         }
+    }
+
+    fun registerView(reel: UserStateWithUser) {
+        registerView(reel.state.id)
     }
 
     fun addComment(reelId: String, text: String, parentId: String? = null, onError: ((String) -> Unit)? = null) {
@@ -146,6 +156,16 @@ class ReelsViewModel(
                 if (it.isSuccess) onSuccess()
             }
         }
+    }
+
+    /** Compatibility name used by the legacy feed boundary. */
+    fun deleteState(reelId: String, onSuccess: () -> Unit = {}, onError: ((String) -> Unit)? = null) {
+        val reel = (reelsState.value as? ReelsUiState.Success)?.reels?.firstOrNull { it.state.id == reelId }
+        if (reel == null) {
+            onError?.invoke("Reel no encontrado")
+            return
+        }
+        deleteReel(reel, onSuccess, onError)
     }
 
     private fun runAction(
