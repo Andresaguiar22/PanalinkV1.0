@@ -1,0 +1,117 @@
+diff --git a/app/src/main/java/com/example/data/repository/StatesRepository.kt b/app/src/main/java/com/example/data/repository/StatesRepository.kt
+--- a/app/src/main/java/com/example/data/repository/StatesRepository.kt
++++ b/app/src/main/java/com/example/data/repository/StatesRepository.kt
+@@ -147,24 +147,30 @@
+                     val storyLikesRes = runCall { b -> 
+                         service.getUserLikes(
+                             table = "story_likes",
+                             apiKey = apiKey,
+                             authorization = b,
+                             filters = mapOf("user_id" to "eq.$currentUid")
+                         )
+-                    } ?: runCall { b ->
+-                        service.getUserLikes(
+-                            table = "story_likes",
+-                            apiKey = apiKey,
+-                            authorization = b,
+-                            filters = mapOf("author_id" to "eq.$currentUid")
+-                        )
+-                    } ?: runCall { b ->
+-                        service.getUserLikes(
+-                            table = "story_likes",
+-                            apiKey = apiKey,
+-                            authorization = b,
+-                            filters = emptyMap()
+-                        )
++                    }
++                    val storyLikesResolved = if (storyLikesRes?.isSuccessful == true) {
++                        storyLikesRes
++                    } else {
++                        runCall { b ->
++                            service.getUserLikes("story_likes", apiKey, b, mapOf("author_id" to "eq.$currentUid"))
++                        }?.takeIf { it.isSuccessful } ?: runCall { b ->
++                            service.getUserLikes("story_likes", apiKey, b, emptyMap())
++                        }
+                     }
+@@ -176,6 +182,7 @@
+-                    val storyLikes = if (storyLikesRes != null && storyLikesRes.isSuccessful) {
+-                        storyLikesRes.body()?.filter { it.userId.isEmpty() || it.userId == currentUid }?.mapNotNull { it.stateId.takeIf { s -> s.isNotBlank() } }?.toSet() ?: emptySet()
++                    val storyLikes = if (storyLikesResolved != null && storyLikesResolved.isSuccessful) {
++                        storyLikesResolved.body()?.filter { it.userId.isEmpty() || it.userId == currentUid }?.mapNotNull { it.stateId.takeIf { s -> s.isNotBlank() } }?.toSet() ?: emptySet()
+                     } else emptySet()
+@@ -191,24 +198,30 @@
+                     val storyFavsRes = runCall { b -> 
+                         service.getUserFavorites(
+                             table = "story_favorites",
+                             apiKey = apiKey,
+                             authorization = b,
+                             filters = mapOf("user_id" to "eq.$currentUid")
+                         )
+-                    } ?: runCall { b ->
+-                        service.getUserFavorites(
+-                            table = "story_favorites",
+-                            apiKey = apiKey,
+-                            authorization = b,
+-                            filters = mapOf("author_id" to "eq.$currentUid")
+-                        )
+-                    } ?: runCall { b ->
+-                        service.getUserFavorites(
+-                            table = "story_favorites",
+-                            apiKey = apiKey,
+-                            authorization = b,
+-                            filters = emptyMap()
+-                        )
++                    }
++                    val storyFavsResolved = if (storyFavsRes?.isSuccessful == true) {
++                        storyFavsRes
++                    } else {
++                        runCall { b ->
++                            service.getUserFavorites("story_favorites", apiKey, b, mapOf("author_id" to "eq.$currentUid"))
++                        }?.takeIf { it.isSuccessful } ?: runCall { b ->
++                            service.getUserFavorites("story_favorites", apiKey, b, emptyMap())
++                        }
+                     }
+@@ -215,6 +228,7 @@
+-                    val storyFavs = if (storyFavsRes != null && storyFavsRes.isSuccessful) {
+-                        storyFavsRes.body()?.filter { it.userId.isEmpty() || it.userId == currentUid }?.mapNotNull { it.stateId.takeIf { s -> s.isNotBlank() } }?.toSet() ?: emptySet()
++                    val storyFavs = if (storyFavsResolved != null && storyFavsResolved.isSuccessful) {
++                        storyFavsResolved.body()?.filter { it.userId.isEmpty() || it.userId == currentUid }?.mapNotNull { it.stateId.takeIf { s -> s.isNotBlank() } }?.toSet() ?: emptySet()
+                     } else emptySet()
+@@ -238,24 +252,30 @@
+                     val storyViewsRes = runCall { b -> 
+                         service.getUserLikes(
+                             table = "story_views",
+                             apiKey = apiKey,
+                             authorization = b,
+                             filters = mapOf("viewer_id" to "eq.$currentUid")
+                         )
+-                    } ?: runCall { b ->
+-                        service.getUserLikes(
+-                            table = "story_views",
+-                            apiKey = apiKey,
+-                            authorization = b,
+-                            filters = mapOf("user_id" to "eq.$currentUid")
+-                        )
+-                    } ?: runCall { b ->
+-                        service.getUserLikes(
+-                            table = "story_views",
+-                            apiKey = apiKey,
+-                            authorization = b,
+-                            filters = emptyMap()
+-                        )
++                    }
++                    val storyViewsResolved = if (storyViewsRes?.isSuccessful == true) {
++                        storyViewsRes
++                    } else {
++                        runCall { b ->
++                            service.getUserLikes("story_views", apiKey, b, mapOf("user_id" to "eq.$currentUid"))
++                        }?.takeIf { it.isSuccessful } ?: runCall { b ->
++                            service.getUserLikes("story_views", apiKey, b, emptyMap())
++                        }
+                     }
+@@ -255,7 +275,7 @@
+-                    val storyViews = if (storyViewsRes != null && storyViewsRes.isSuccessful) {
+-                        storyViewsRes.body()?.mapNotNull { it.stateId.takeIf { s -> s.isNotBlank() } }?.toSet() ?: emptySet()
++                    val storyViews = if (storyViewsResolved != null && storyViewsResolved.isSuccessful) {
++                        storyViewsResolved.body()?.mapNotNull { it.stateId.takeIf { s -> s.isNotBlank() } }?.toSet() ?: emptySet()
+                     } else emptySet()
