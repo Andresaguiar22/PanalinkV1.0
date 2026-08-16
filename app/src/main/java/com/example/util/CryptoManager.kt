@@ -26,6 +26,9 @@ object CryptoManager {
     private const val TAG = "CryptoManager"
     private const val ALIAS = "panalink_e2ee_key_v2"
     private const val KEYSTORE_PROVIDER = "AndroidKeyStore"
+    private const val VERSION = 1
+    private const val IV_SIZE = 12
+    private const val TAG_SIZE_BITS = 128
 
     val publicKeyCache = ConcurrentHashMap<String, String>()
     val chatToOtherUserCache = ConcurrentHashMap<String, String>()
@@ -52,9 +55,10 @@ object CryptoManager {
     }
 
     private fun decodeBase64(value: String): ByteArray {
-        val cleaned = cleanPublicKey(value)
+        val cleaned = value.trim()
+        require(cleaned.isNotEmpty()) { "Empty Base64 value" }
         return try { Base64.decode(cleaned, Base64.NO_WRAP) }
-        catch (_: Throwable) { Base64.decode(cleaned, Base64.DEFAULT) }
+        catch (_: IllegalArgumentException) { Base64.decode(cleaned, Base64.DEFAULT) }
     }
 
     @Synchronized
@@ -73,78 +77,70 @@ object CryptoManager {
                 generator.generateKeyPair()
             }
             val entry = ks.getEntry(ALIAS, null) as? KeyStore.PrivateKeyEntry
-            if (entry != null) localKeyPair = KeyPair(entry.certificate.publicKey, entry.privateKey)
+                ?: error("E2EE KeyStore entry is missing")
+            localKeyPair = KeyPair(entry.certificate.publicKey, entry.privateKey)
         } catch (e: Throwable) {
-            Log.e(TAG, "AndroidKeyStore unavailable; using in-memory fallback", e)
-            ensureSoftwareKeyPair()
+            Log.e(TAG, "AndroidKeyStore unavailable; refusing non-persistent E2EE key", e)
+            localKeyPair = null
+            throw IllegalStateException("Secure E2EE key storage is unavailable", e)
         }
-    }
-
-    private fun ensureSoftwareKeyPair() {
-        if (localKeyPair != null) return
-        try {
-            val generator = KeyPairGenerator.getInstance("EC")
-            generator.initialize(ECGenParameterSpec("secp256r1"))
-            localKeyPair = generator.generateKeyPair()
-        } catch (e: Throwable) { Log.e(TAG, "Software key generation failed", e) }
     }
 
     fun getPublicKeyBase64(): String {
         ensureKeyPairExists()
-        val key = localKeyPair?.public?.encoded ?: return ""
-        return Base64.encodeToString(key, Base64.NO_WRAP)
+        return Base64.encodeToString(localKeyPair!!.public.encoded, Base64.NO_WRAP)
     }
 
-    private fun getPrivateKey(): PrivateKey? {
+    private fun getPrivateKey(): PrivateKey {
         ensureKeyPairExists()
-        return localKeyPair?.private
+        return localKeyPair!!.private
     }
 
-    private fun getSharedSecret(otherPublicKeyBase64: String): ByteArray? {
-        val privateKey = getPrivateKey() ?: return null
+    private fun getSharedSecret(otherPublicKeyBase64: String): ByteArray {
         val otherBytes = decodeBase64(otherPublicKeyBase64)
-        if (otherBytes.isEmpty()) return null
         val otherPublicKey = KeyFactory.getInstance("EC").generatePublic(X509EncodedKeySpec(otherBytes))
         return KeyAgreement.getInstance("ECDH").run {
-            init(privateKey)
+            init(getPrivateKey())
             doPhase(otherPublicKey, true)
             generateSecret()
         }
     }
 
-    private fun deriveAESKey(sharedSecret: ByteArray): SecretKeySpec {
-        return SecretKeySpec(MessageDigest.getInstance("SHA-256").digest(sharedSecret), "AES")
-    }
+    private fun deriveAESKey(sharedSecret: ByteArray): SecretKeySpec =
+        SecretKeySpec(MessageDigest.getInstance("SHA-256").digest(sharedSecret), "AES")
 
-    /** Throws when encryption cannot be performed; plaintext fallback is intentionally forbidden. */
+    /** Versioned AES-GCM payload. Plaintext fallback is forbidden. */
     fun encrypt(plainText: String, receiverPublicKeyBase64: String): String {
         if (!ENABLE_E2EE || plainText.isEmpty()) return plainText
         val cleaned = cleanPublicKey(receiverPublicKeyBase64)
         require(cleaned.isNotEmpty()) { "Missing receiver public key; refusing plaintext fallback" }
-        val secret = getSharedSecret(cleaned) ?: error("Unable to derive E2EE shared secret")
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        val iv = ByteArray(12).also { SecureRandom().nextBytes(it) }
-        cipher.init(Cipher.ENCRYPT_MODE, deriveAESKey(secret), GCMParameterSpec(128, iv))
+        val iv = ByteArray(IV_SIZE).also(SecureRandom()::nextBytes)
+        cipher.init(Cipher.ENCRYPT_MODE, deriveAESKey(getSharedSecret(cleaned)), GCMParameterSpec(TAG_SIZE_BITS, iv))
+        cipher.updateAAD(byteArrayOf(VERSION.toByte()))
         val encrypted = cipher.doFinal(plainText.toByteArray(Charsets.UTF_8))
-        return Base64.encodeToString(iv + encrypted, Base64.NO_WRAP)
+        return Base64.encodeToString(byteArrayOf(VERSION.toByte()) + iv + encrypted, Base64.NO_WRAP)
     }
 
+    /** Returns an explicit marker on authentication/decryption failure; never ciphertext as plaintext. */
     fun decrypt(encryptedPayloadBase64: String, senderPublicKeyBase64: String): String {
-        if (encryptedPayloadBase64.isEmpty() || senderPublicKeyBase64.isEmpty()) return encryptedPayloadBase64
+        if (encryptedPayloadBase64.isEmpty()) return encryptedPayloadBase64
         val cleaned = cleanPublicKey(senderPublicKeyBase64)
         if (cleaned.isEmpty()) return "[Mensaje cifrado]"
         return try {
             val combined = decodeBase64(encryptedPayloadBase64)
-            if (combined.size <= 12) return encryptedPayloadBase64
-            val secret = getSharedSecret(cleaned) ?: return "[Mensaje cifrado]"
-            val iv = combined.copyOfRange(0, 12)
-            val ciphertext = combined.copyOfRange(12, combined.size)
+            if (combined.size <= 1 + IV_SIZE) return "[Mensaje cifrado]"
+            val version = combined[0].toInt()
+            if (version != VERSION) return "[Mensaje cifrado: versión no compatible]"
+            val iv = combined.copyOfRange(1, 1 + IV_SIZE)
+            val ciphertext = combined.copyOfRange(1 + IV_SIZE, combined.size)
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-            cipher.init(Cipher.DECRYPT_MODE, deriveAESKey(secret), GCMParameterSpec(128, iv))
+            cipher.init(Cipher.DECRYPT_MODE, deriveAESKey(getSharedSecret(cleaned)), GCMParameterSpec(TAG_SIZE_BITS, iv))
+            cipher.updateAAD(byteArrayOf(version.toByte()))
             String(cipher.doFinal(ciphertext), Charsets.UTF_8)
-        } catch (_: Throwable) {
-            // Preserve compatibility with messages stored before E2EE was enabled.
-            encryptedPayloadBase64
+        } catch (e: Throwable) {
+            Log.w(TAG, "E2EE decryption failed", e)
+            "[Mensaje cifrado]"
         }
     }
 
