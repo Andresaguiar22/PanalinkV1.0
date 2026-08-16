@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <base-config cleartextTrafficPermitted="true" />
+    <!-- Release policy: HTTPS only. Local HTTP is not permitted by the production manifest. -->
+    <base-config cleartextTrafficPermitted="false" />
 </network-security-config>
