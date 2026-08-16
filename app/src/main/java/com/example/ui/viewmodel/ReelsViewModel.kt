@@ -3,16 +3,16 @@ package com.example.ui.viewmodel
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.data.database.PanalinkDatabase
 import com.example.data.model.Comment
 import com.example.data.model.UserStateWithUser
 import com.example.data.repository.reels.ReelsLocalDataSource
 import com.example.data.repository.reels.ReelsRepository
-import com.example.data.database.PanalinkDatabase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.util.Collections
@@ -22,12 +22,6 @@ sealed class ReelsUiState {
     data class Success(val reels: List<UserStateWithUser>) : ReelsUiState()
     data class Error(val message: String) : ReelsUiState()
 }
-
-/** Compatibility state used by the current Reel feed while the feature-owned
- * repository remains the source of truth. */
-typealias StatesUiState = ReelsUiState
-
-data class ReelUploadProgress(val percent: Int, val status: String)
 
 /** Feature-owned ViewModel for the Reels feed. */
 class ReelsViewModel(
@@ -40,8 +34,6 @@ class ReelsViewModel(
 
     private val errorHandler = com.example.util.Resilience.globalExceptionHandler("ReelsViewModel")
     private val processing = Collections.synchronizedSet(mutableSetOf<String>())
-    private val preferences = PanalinkDatabase.getDatabase(com.example.PanaApplication.instance)
-        .openHelper.writableDatabase
 
     val reelsState: StateFlow<ReelsUiState> = repository.observeReels()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ReelsUiState.Loading)
