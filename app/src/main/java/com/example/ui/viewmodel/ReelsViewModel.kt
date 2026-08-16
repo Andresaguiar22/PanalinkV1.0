@@ -30,7 +30,8 @@ class ReelsViewModel(
         ReelsLocalDataSource(
             PanalinkDatabase.getDatabase(com.example.PanaApplication.instance).statesDao()
         )
-    ) : ViewModel() {
+    )
+) : ViewModel() {
 
     private val errorHandler = com.example.util.Resilience.globalExceptionHandler("ReelsViewModel")
     private val processing = Collections.synchronizedSet(mutableSetOf<String>())
@@ -74,7 +75,6 @@ class ReelsViewModel(
         }
     }
 
-    /** Compatibility entry point used by the feed after a social upload completes. */
     fun loadActiveStates(showLoading: Boolean = false) = refresh()
 
     fun toggleLike(reelId: String, liked: Boolean, onError: ((String) -> Unit)? = null) =
@@ -83,7 +83,6 @@ class ReelsViewModel(
     fun toggleFavorite(reelId: String, favorited: Boolean, onError: ((String) -> Unit)? = null) =
         runAction("favorite:$reelId", onError) { repository.toggleFavorite(reelId, favorited) }
 
-    /** Compatibility name used by the feed. */
     fun incrementShare(reelId: String, onError: ((String) -> Unit)? = null) =
         registerShare(reelId, onError)
 
@@ -98,9 +97,7 @@ class ReelsViewModel(
         }
     }
 
-    fun registerView(reel: UserStateWithUser) {
-        registerView(reel.state.id)
-    }
+    fun registerView(reel: UserStateWithUser) = registerView(reel.state.id)
 
     fun addComment(reelId: String, text: String, parentId: String? = null, onError: ((String) -> Unit)? = null) {
         val clean = text.trim()
@@ -116,7 +113,6 @@ class ReelsViewModel(
         commentsJob?.cancel()
         _commentsReelId.value = reelId
         _currentComments.value = emptyList()
-
         commentsJob = viewModelScope.launch(errorHandler + Dispatchers.IO) {
             launch {
                 repository.observeComments(reelId).collect { comments ->
@@ -158,7 +154,6 @@ class ReelsViewModel(
         }
     }
 
-    /** Compatibility name used by the legacy feed boundary. */
     fun deleteState(reelId: String, onSuccess: () -> Unit = {}, onError: ((String) -> Unit)? = null) {
         val reel = (reelsState.value as? ReelsUiState.Success)?.reels?.firstOrNull { it.state.id == reelId }
         if (reel == null) {
