@@ -1,6 +1,6 @@
 begin;
 
-revoke execute on function public.run_notification_backend_intelligence_smoke_tests() from anon, authenticated;
+revoke execute on function public.run_notification_backend_intelligence_smoke_tests() from public, anon, authenticated;
 
 create or replace function social.can_view_reel(reel_id uuid)
 returns boolean language sql stable security definer set search_path = ''
@@ -102,12 +102,12 @@ end; $$;
 
 do $$ declare r record; begin
   for r in select p.oid from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='social' and p.proname in ('toggle_reel_like','toggle_story_like','toggle_reel_favorite','toggle_story_favorite') loop
-    execute format('revoke execute on function %s from anon, authenticated', r.oid::regprocedure);
+    execute format('revoke execute on function %s from public, anon, authenticated', r.oid::regprocedure);
   end loop;
 end $$;
 
 alter view public.chat_members set (security_invoker = true);
-revoke all on public.chat_members from anon;
+revoke all on public.chat_members from public, anon;
 grant select, insert, update, delete on public.chat_members to authenticated;
 
 commit;
