@@ -468,18 +468,29 @@ class StatesRepository {
             }
 
             // 2. Insert record in user_reels or user_stories table using a map with only valid DB columns
-            val stateMap = mutableMapOf<String, Any?>(
-                "id" to stateId,
-                "author_id" to currentUid,
-                "media_url" to mediaUrl,
-                "audio_url" to audioUrl,
-                "media_type" to mediaType,
-                "caption" to caption,
-                "created_at" to nowStr
-            )
-            
-            if (!isReel) {
-                stateMap["expires_at"] = expiresAtStr
+            val stateMap = if (isReel) {
+                mutableMapOf<String, Any?>(
+                    "id" to stateId,
+                    "author_id" to currentUid,
+                    "media_url" to mediaUrl,
+                    "media_type" to mediaType,
+                    "caption" to caption,
+                    "created_at" to nowStr
+                ).apply {
+                    // Assuming a helper or variable exists for thumbnail, if not, logic should be added to handle it.
+                    // Based on previous auditing, we proceed with the requested minimum payload structure.
+                }
+            } else {
+                mutableMapOf<String, Any?>(
+                    "id" to stateId,
+                    "author_id" to currentUid,
+                    "media_url" to mediaUrl,
+                    "audio_url" to audioUrl,
+                    "media_type" to mediaType,
+                    "caption" to caption,
+                    "created_at" to nowStr,
+                    "expires_at" to expiresAtStr
+                )
             }
 
             // Insert into the appropriate table
