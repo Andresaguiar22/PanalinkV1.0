@@ -506,6 +506,8 @@ class StatesRepository {
                 Result.success(newState)
             } else {
                 val errorBody = createResponse.errorBody()?.string()
+                Log.e(TAG, "🚨 Error en ${if(isReel) "createReel" else "createStory"}: HTTP ${createResponse.code()} - Body: $errorBody")
+                
                 if (errorBody?.contains("23505") == true) {
                      // If it already exists, return success with what we have
                      val newState = UserState(

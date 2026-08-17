@@ -389,7 +389,8 @@ interface SupabaseApiService {
         @Header("Authorization") authorization: String,
         @Body state: Map<String, @JvmSuppressWildcards Any?>,
         @Header("Prefer") prefer: String = "return=representation",
-        @Header("Accept-Profile") acceptProfile: String = "social"
+        @Header("Accept-Profile") acceptProfile: String = "social",
+        @Header("Content-Profile") contentProfile: String = "social"
     ): Response<List<UserState>>
 
     @POST("rest/v1/user_stories")
@@ -398,7 +399,8 @@ interface SupabaseApiService {
         @Header("Authorization") authorization: String,
         @Body state: Map<String, @JvmSuppressWildcards Any?>,
         @Header("Prefer") prefer: String = "return=representation",
-        @Header("Accept-Profile") acceptProfile: String = "social"
+        @Header("Accept-Profile") acceptProfile: String = "social",
+        @Header("Content-Profile") contentProfile: String = "social"
     ): Response<List<UserState>>
 
     @GET("rest/v1/contacts")
