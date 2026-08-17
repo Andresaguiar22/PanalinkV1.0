@@ -1,4 +1,4 @@
-package com.example.media.feed
+package com.example.core.media.preload
 
 import android.content.Context
 import androidx.annotation.OptIn

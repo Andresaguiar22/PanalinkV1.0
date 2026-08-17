@@ -26,11 +26,8 @@ sealed class ReelsUiState {
 
 /** Feature-owned ViewModel for the Reels feed. */
 class ReelsViewModel(
-    private val repository: ReelsRepository = ReelsRepository(
-        ReelsLocalDataSource(
-            PanalinkDatabase.getDatabase(com.example.PanaApplication.instance).statesDao()
-        )
-    )
+    private val repository: ReelsRepository,
+    private val preloadManager: com.example.core.media.preload.ReelsPreloadManager
 ) : ViewModel() {
 
     private val errorHandler = com.example.util.Resilience.globalExceptionHandler("ReelsViewModel")
@@ -54,8 +51,6 @@ class ReelsViewModel(
     private val prefs by lazy {
         com.example.PanaApplication.instance.getSharedPreferences("reels_feature", android.content.Context.MODE_PRIVATE)
     }
-
-    private val preloadManager = com.example.media.feed.ReelsPreloadManager(com.example.PanaApplication.instance)
 
     fun preloadNextReel(url: String) {
         preloadManager.preloadNext(url)

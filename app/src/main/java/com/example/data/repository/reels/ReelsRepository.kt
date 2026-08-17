@@ -20,7 +20,7 @@ import kotlinx.coroutines.withContext
  */
 class ReelsRepository(
     private val local: ReelsLocalDataSource,
-    private val remote: StatesRepository = StatesRepository()
+    private val remote: ReelsRemoteDataSource = ReelsRemoteDataSource()
 ) {
     private val db by lazy {
         PanalinkDatabase.getDatabase(com.example.PanaApplication.instance)
@@ -32,32 +32,32 @@ class ReelsRepository(
     suspend fun refresh(): Result<Unit> = remote.getActiveStates()
 
     suspend fun toggleLike(reelId: String, currentlyLiked: Boolean): Result<Unit> =
-        remote.toggleLike(reelId, currentlyLiked, true).map { }
+        remote.toggleLike(reelId, currentlyLiked)
 
     suspend fun toggleFavorite(reelId: String, currentlyFavorited: Boolean): Result<Unit> =
-        remote.toggleFavorite(reelId, currentlyFavorited, true).map { }
+        remote.toggleFavorite(reelId, currentlyFavorited)
 
     suspend fun registerShare(reelId: String): Result<Unit> =
-        remote.incrementShare(reelId, true)
+        remote.registerShare(reelId)
 
     suspend fun registerView(reelId: String): Result<Unit> =
-        remote.registerView(reelId, true)
+        remote.registerView(reelId)
 
     fun observeComments(reelId: String): Flow<List<Comment>> =
-        remote.getCommentsFlow(reelId, true)
+        remote.observeComments(reelId)
 
     suspend fun refreshComments(reelId: String): Result<List<Comment>> =
-        remote.getStateComments(reelId, true)
+        remote.refreshComments(reelId)
 
     suspend fun addComment(reelId: String, text: String, parentId: String?): Result<Unit> =
-        remote.addComment(reelId, text, true, parentId)
+        remote.addComment(reelId, text, parentId)
 
     suspend fun deleteComment(commentId: String): Result<Unit> =
-        remote.deleteComment(commentId, true)
+        remote.deleteComment(commentId)
 
     suspend fun deleteReel(reelId: String, mediaUrl: String?): Result<Unit> = withContext(Dispatchers.IO) {
         local.deleteById(reelId)
-        val result = remote.deleteUserStatus(reelId, true, mediaUrl)
+        val result = remote.deleteReel(reelId, mediaUrl)
         if (result.isSuccess && !mediaUrl.isNullOrBlank()) {
             try {
                 com.example.data.video.VideoCacheManager.removeVideoCache(mediaUrl)
@@ -67,6 +67,7 @@ class ReelsRepository(
         }
         result
     }
+
 
     suspend fun saveReelLocally(reel: UserStateWithUser) {
         local.save(com.example.data.database.StateEntity.fromUserStateWithUser(reel))
