@@ -4,11 +4,12 @@ import android.content.Context
 import android.util.Log
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
-import com.example.PanaApplication
 import com.example.data.database.PanalinkDatabase
 import com.example.util.PanalinkMediaManager
 import com.example.data.repository.MessagesRepository
 import com.example.data.repository.UploadRepository
+import com.example.util.MessageFilter
+import com.example.service.PanaLinkNotificationManager
 import java.io.File
 
 class MediaUploadWorker(
@@ -71,23 +72,24 @@ class MediaUploadWorker(
                     localMediaUri = null,
                     status = "sending" // Ready for metadata sync
                 )
-                val msgsRepo = com.example.data.repository.MessagesRepository.getInstance()
-                val effectiveClearedAt = msgsRepo.getEffectiveClearedAt(updatedEntity.chatId, null)
-                val shouldKeep = com.example.util.MessageFilter.shouldKeepMessage(
+
+                val effectiveClearedAt = messagesRepository.getEffectiveClearedAt(updatedEntity.chatId, null)
+                val shouldKeep = MessageFilter.shouldKeepMessage(
                     messageId = updatedEntity.id,
                     messageClientUuid = updatedEntity.clientMessageUuid,
                     messageCreatedAt = updatedEntity.createdAt,
                     lastClearedAt = effectiveClearedAt,
-                    deletedMessageIds = msgsRepo.getUserDeletedMessageIds()
+                    deletedMessageIds = messagesRepository.getUserDeletedMessageIds()
                 )
-                if (shouldKeep) {
-                    messageDao.insertMessage(updatedEntity)
-                } else {
-                    messageDao.deleteMessageById(updatedEntity.id)
-                }
 
-                // Trigger metadata sync
-                messagesRepository.scheduleSync()
+                if (!shouldKeep) {
+                    messageDao.deleteMessageById(updatedEntity.id)
+                } else {
+                    messageDao.insertMessage(updatedEntity)
+                    // Trigger metadata sync
+                    messagesRepository.scheduleSync()
+                    PanaLinkNotificationManager.showUploadSuccessNotification(context)
+                }
 
                 Result.success()
             } else {
