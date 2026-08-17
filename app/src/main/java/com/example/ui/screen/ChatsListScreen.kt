@@ -5484,32 +5484,7 @@ fun PendingUploadsBanner(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        if (hasFailed) {
-                            Text(text = "⚠️", fontSize = 16.sp)
-                        } else {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(16.dp),
-                                color = Color(0xFF007AFF),
-                                strokeWidth = 2.dp
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = when {
-                                hasFailed -> "${failedUploads.size} publicación(es) fallida(s)"
-                                uploadingUploads.isNotEmpty() -> "Subiendo ${uploadingUploads.size} publicación(es)..."
-                                else -> "Esperando red (${pendingUploads.size} en cola)..."
-                            },
-                            color = Color.White,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 13.sp
-                        )
-                    }
-
+                    
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             text = "Gestor 📊",

@@ -27,6 +27,20 @@ object PanaLinkNotificationManager {
     // Remote Input Key
     const val KEY_TEXT_REPLY = "key_text_reply"
 
+    fun showUploadSuccessNotification(context: Context) {
+        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        
+        val builder = NotificationCompat.Builder(context, CHANNEL_MESSAGES)
+            .setSmallIcon(android.R.drawable.stat_sys_upload_done)
+            .setContentTitle("PanaLink")
+            .setContentText("¡Hola! 🚀 Tu video se ha publicado correctamente y ya está disponible para que todos lo vean.")
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setColor(0xFF00FF85.toInt())
+
+        notificationManager.notify(1001, builder.build())
+    }
+
     fun showChatNotification(
         context: Context,
         senderName: String,

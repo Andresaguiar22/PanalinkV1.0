@@ -169,7 +169,11 @@ class MediaUploadWorker(
                         messageDao.insertMessage(updatedEntity)
                         // Once the URL exists, the metadata sync path is responsible
                         // for replacing the temporary row or marking it SENT.
-                        syncOwnMessageMetadata(messageId)
+                        val syncResult = syncOwnMessageMetadata(messageId)
+                        if (syncResult is Result.Success) {
+                            com.example.service.PanaLinkNotificationManager.showUploadSuccessNotification(context)
+                        }
+                        syncResult
                     }
                 }
             }
