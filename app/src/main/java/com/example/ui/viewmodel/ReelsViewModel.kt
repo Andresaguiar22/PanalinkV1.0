@@ -55,6 +55,20 @@ class ReelsViewModel(
         com.example.PanaApplication.instance.getSharedPreferences("reels_feature", android.content.Context.MODE_PRIVATE)
     }
 
+    private val preloadManager = com.example.media.feed.ReelsPreloadManager(com.example.PanaApplication.instance)
+
+    fun preloadNextReel(url: String) {
+        preloadManager.preloadNext(url)
+    }
+
+    fun consumePreloadedPlayer(url: String?): androidx.media3.exoplayer.ExoPlayer? {
+        return preloadManager.consumePreloaded(url)
+    }
+
+    fun releasePreload() {
+        preloadManager.releasePreload()
+    }
+
     fun getLastViewedReelId(): String? = prefs.getString("last_viewed_reel_id", null)
 
     fun rememberLastViewedReel(reelId: String) {
@@ -180,6 +194,7 @@ class ReelsViewModel(
 
     override fun onCleared() {
         commentsJob?.cancel()
+        preloadManager.releasePreload()
         super.onCleared()
     }
 }

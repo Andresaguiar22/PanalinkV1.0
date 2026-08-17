@@ -119,6 +119,16 @@ fun ReelsFeedScreenV2(
         filteredReels.getOrNull(pagerState.currentPage)?.let { current ->
             viewModel.rememberLastViewedReel(current.state.id)
             viewModel.registerView(current)
+            
+            // Trigger preloading of the next reel
+            val nextIndex = pagerState.currentPage + 1
+            if (nextIndex < filteredReels.size) {
+                val nextUrl = CdnManager.resolveMediaUrlSync(filteredReels[nextIndex].state.mediaUrl)
+                if (!nextUrl.isNullOrBlank()) {
+                    viewModel.preloadNextReel(nextUrl)
+                }
+            }
+
             (pagerState.currentPage + 1..pagerState.currentPage + 2).forEach { index ->
                 filteredReels.getOrNull(index)?.state?.mediaUrl?.let { raw ->
                     CdnManager.resolveMediaUrlSync(raw)?.takeIf(String::isNotBlank)?.let {
@@ -147,6 +157,7 @@ fun ReelsFeedScreenV2(
             ) { page ->
                 val reel = filteredReels[page]
                 ReelsPageV2(
+                    viewModel = viewModel,
                     reel = reel,
                     active = isActive && page == pagerState.currentPage,
                     muted = muted,
@@ -165,7 +176,7 @@ fun ReelsFeedScreenV2(
         }
 
         Surface(
-            modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(horizontal = 10.dp, vertical = 3.dp),
+            modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(horizontal = 10.dp),
             color = Color.Black.copy(alpha = .42f),
             shape = MaterialTheme.shapes.extraLarge,
         ) {
@@ -222,6 +233,7 @@ fun ReelsFeedScreenV2(
 @OptIn(UnstableApi::class)
 @Composable
 private fun ReelsPageV2(
+    viewModel: ReelsViewModel,
     reel: UserStateWithUser,
     active: Boolean,
     muted: Boolean,
@@ -248,24 +260,34 @@ private fun ReelsPageV2(
     var showHeartBurst by remember(reel.state.id) { mutableStateOf(false) }
     var durationMs by remember(reel.state.id) { mutableLongStateOf(0L) }
     var positionMs by remember(reel.state.id) { mutableLongStateOf(0L) }
-
+    
     val player = remember(url) {
-        ExoPlayer.Builder(context)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(CacheDataSourceFactory.getCacheDataSourceFactory(context)))
-            .build()
-            .apply {
+        // Attempt to consume preloaded, fallback to pooled
+        viewModel.consumePreloadedPlayer(url)
+            ?: com.example.core.media.ExoPlayerManager.getPlayer(context).apply {
                 url?.takeIf(String::isNotBlank)?.let { setMediaItem(MediaItem.fromUri(it)) }
-                repeatMode = Player.REPEAT_MODE_ONE
-                addListener(object : Player.Listener {
-                    override fun onPlaybackStateChanged(state: Int) {
-                        if (state == Player.STATE_READY) durationMs = max(0L, duration)
-                    }
-                })
                 prepare()
             }
     }
 
-    DisposableEffect(player) { onDispose { player.release() } }
+    // Keep the player configured even if consumed preloaded
+    LaunchedEffect(player, url) {
+        player.repeatMode = Player.REPEAT_MODE_ONE
+    }
+    // Add listener if not already added to avoid multiple registrations
+    DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onPlaybackStateChanged(state: Int) {
+                // (This listener was previously inside the remember block, 
+                // but listeners need to be maintained across re-remembers if the player instance changes)
+            }
+        }
+        player.addListener(listener)
+        onDispose { 
+            player.removeListener(listener)
+            com.example.core.media.ExoPlayerManager.releasePlayer(player) 
+        }
+    }
     LaunchedEffect(active, muted, paused) {
         player.volume = if (muted) 0f else 1f
         player.playWhenReady = active && !paused
@@ -301,7 +323,7 @@ private fun ReelsPageV2(
                 Icon(if (paused) Icons.Default.PlayArrow else Icons.Default.Pause, "Reproducción", tint = Color.White, modifier = Modifier.size(30.dp))
             }
         }
-        Column(Modifier.align(Alignment.CenterEnd).padding(end = 10.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(Modifier.align(Alignment.CenterEnd).offset(y = 44.dp).padding(end = 10.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
             ReelActionButtonV2(if (liked) Icons.Default.Favorite else Icons.Default.FavoriteBorder, compactCountV2(likes), liked) {
                 val next = !liked; liked = next; likes = (likes + if (next) 1 else -1).coerceAtLeast(0); onLike()
             }
@@ -321,7 +343,7 @@ private fun ReelsPageV2(
                 }
             }
         }
-        Column(Modifier.align(Alignment.BottomStart).navigationBarsPadding().padding(start = 16.dp, end = 90.dp, bottom = 58.dp)) {
+        Column(Modifier.align(Alignment.BottomStart).navigationBarsPadding().padding(start = 16.dp, end = 90.dp, bottom = 34.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Surface(shape = CircleShape, color = Color.White.copy(alpha = .18f), modifier = Modifier.size(40.dp).clickable(onClick = onProfile)) {
                     Box(contentAlignment = Alignment.Center) {

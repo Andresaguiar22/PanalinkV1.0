@@ -387,7 +387,7 @@ interface SupabaseApiService {
     suspend fun createReel(
         @Header("apikey") apiKey: String,
         @Header("Authorization") authorization: String,
-        @Body state: Map<String, @JvmSuppressWildcards Any?>,
+        @Body reel: com.example.data.model.ReelDto,
         @Header("Prefer") prefer: String = "return=representation",
         @Header("Accept-Profile") acceptProfile: String = "social",
         @Header("Content-Profile") contentProfile: String = "social"
