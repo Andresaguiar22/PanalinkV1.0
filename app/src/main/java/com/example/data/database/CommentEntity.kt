@@ -5,6 +5,7 @@ import androidx.room.PrimaryKey
 import com.example.data.model.Comment
 import com.example.data.model.PostCommentDto
 import com.example.data.model.Profile
+import com.example.data.repository.PublicProfileResolver
 
 @Entity(tableName = "local_comments")
 data class CommentEntity(
@@ -51,11 +52,13 @@ data class CommentEntity(
 
     companion object {
         fun fromPostCommentDto(dto: PostCommentDto): CommentEntity {
+            val rawName = dto.profile?.displayName?.trim()
+            val cleanName = rawName?.takeIf { !PublicProfileResolver.isGenericOrUuid(it) } ?: ""
             return CommentEntity(
                 id = dto.id ?: java.util.UUID.randomUUID().toString(),
                 targetId = dto.postId ?: "",
                 authorId = dto.userId ?: "",
-                authorName = dto.profile?.displayName?.takeIf { it.isNotBlank() } ?: "",
+                authorName = cleanName,
                 authorAvatarUrl = dto.profile?.avatarUrl,
                 content = dto.content ?: "",
                 createdAt = dto.createdAt ?: com.example.data.supabase.SupabaseClient.getNowIsoString(),
@@ -65,11 +68,12 @@ data class CommentEntity(
         }
 
         fun fromStateComment(comment: Comment, isReel: Boolean): CommentEntity {
+            val cleanName = comment.authorName.takeIf { !PublicProfileResolver.isGenericOrUuid(it) } ?: ""
             return CommentEntity(
                 id = comment.id,
                 targetId = comment.stateId,
                 authorId = comment.userId,
-                authorName = comment.authorName,
+                authorName = cleanName,
                 authorAvatarUrl = comment.avatarUrl,
                 content = comment.text,
                 createdAt = comment.createdAt,
