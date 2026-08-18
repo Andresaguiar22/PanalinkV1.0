@@ -6,14 +6,9 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.example.data.database.PanalinkDatabase
 import com.example.data.repository.MessagesRepository
-<<<<<<< HEAD
-import com.example.data.repository.UploadRepository
-import com.example.util.MessageFilter
-import com.example.service.PanaLinkNotificationManager
-=======
 import com.example.util.MessageFilter
 import com.example.util.PanalinkMediaManager
->>>>>>> origin/refactor/full-app-turbo
+import com.example.service.PanaLinkNotificationManager
 import java.io.File
 
 class MediaUploadWorker(
@@ -127,44 +122,6 @@ class MediaUploadWorker(
                 caption = entity.content ?: "Multimedia message"
             )
 
-<<<<<<< HEAD
-            if (uploadResult.isSuccess) {
-                val mediaInfo = uploadResult.getOrThrow()
-                Log.i(TAG, "Upload successful: mediaUrl=${mediaInfo.url}, thumbUrl=${mediaInfo.thumbnailUrl}")
-
-                // Update Room with remote URLs and full metadata
-                val updatedEntity = entity.copy(
-                    mediaUrl = mediaInfo.url,
-                    thumbnailUrl = mediaInfo.thumbnailUrl ?: entity.thumbnailUrl,
-                    mediaMime = mediaInfo.mime ?: entity.mediaMime,
-                    mediaSize = mediaInfo.size,
-                    mediaDuration = mediaInfo.duration,
-                    mediaWidth = mediaInfo.width,
-                    mediaHeight = mediaInfo.height,
-                    localMediaUri = null,
-                    status = "sending" // Ready for metadata sync
-                )
-
-                val effectiveClearedAt = messagesRepository.getEffectiveClearedAt(updatedEntity.chatId, null)
-                val shouldKeep = MessageFilter.shouldKeepMessage(
-                    messageId = updatedEntity.id,
-                    messageClientUuid = updatedEntity.clientMessageUuid,
-                    messageCreatedAt = updatedEntity.createdAt,
-                    lastClearedAt = effectiveClearedAt,
-                    deletedMessageIds = messagesRepository.getUserDeletedMessageIds()
-                )
-
-                if (!shouldKeep) {
-                    messageDao.deleteMessageById(updatedEntity.id)
-                } else {
-                    messageDao.insertMessage(updatedEntity)
-                    // Trigger metadata sync
-                    messagesRepository.scheduleSync()
-                    PanaLinkNotificationManager.showUploadSuccessNotification(context)
-                }
-
-                Result.success()
-=======
             if (!uploadResult.isSuccess) {
                 val error = uploadResult.exceptionOrNull()
                 Log.e(TAG, "Media upload failed: ${error?.message}", error)
@@ -174,7 +131,6 @@ class MediaUploadWorker(
                 } else {
                     Result.retry()
                 }
->>>>>>> origin/refactor/full-app-turbo
             } else {
                 val mediaInfo = uploadResult.getOrThrow()
                 if (mediaInfo.url.isBlank()) {
@@ -216,7 +172,7 @@ class MediaUploadWorker(
                         // for replacing the temporary row or marking it SENT.
                         val syncResult = syncOwnMessageMetadata(messageId)
                         if (syncResult is Result.Success) {
-                            com.example.service.PanaLinkNotificationManager.showUploadSuccessNotification(context)
+                            PanaLinkNotificationManager.showUploadSuccessNotification(context)
                         }
                         syncResult
                     }

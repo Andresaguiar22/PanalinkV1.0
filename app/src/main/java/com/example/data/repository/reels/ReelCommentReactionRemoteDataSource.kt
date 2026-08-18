@@ -95,7 +95,7 @@ class ReelCommentReactionRemoteDataSource {
                 .delete()
                 .build()
             client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful && response.code() != 404) {
+                if (!response.isSuccessful && response.code != 404) {
                     error("HTTP ${response.code}: ${response.body?.string()}")
                 }
             }

@@ -1,4 +1,5 @@
 import java.util.Base64
+import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
@@ -14,7 +15,7 @@ android {
     sourceSets {
         getByName("test") {
             assets {
-                srcDir(projectDir.absolutePath + "/schemas")
+                srcDir("schemas")
             }
         }
     }
@@ -30,16 +31,27 @@ android {
         versionCode = (System.getenv("VERSION_CODE") ?: (baseVersionCode + runNumber).toString()).toInt()
         versionName = System.getenv("VERSION_NAME") ?: "1.0.$runNumber"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        val appUrl = System.getenv("APP_URL") ?: "http://10.0.2.2:3000"
+
+        val secretsFile = file("../secrets.properties")
+        val secrets = Properties()
+        if (secretsFile.exists()) secrets.load(secretsFile.inputStream())
+
+        val appUrl = System.getenv("APP_URL") ?: secrets.getProperty("BACKEND_URL") ?: "http://10.0.2.2:3000"
         buildConfigField("String", "BACKEND_URL", "\"$appUrl\"")
     }
 
     signingConfigs {
         create("release") {
-            val keystoreFile = System.getenv("KEYSTORE_FILE")
-            val keystorePassword = System.getenv("KEYSTORE_PASSWORD")
-            val keyAliasStr = System.getenv("KEY_ALIAS")
-            val keyPasswordEnv = System.getenv("KEY_PASSWORD")
+            val secretsFile = file("../secrets.properties")
+            val appSecretsFile = file("secrets.properties")
+            val secrets = Properties()
+            if (secretsFile.exists()) secrets.load(secretsFile.inputStream())
+            if (appSecretsFile.exists()) secrets.load(appSecretsFile.inputStream())
+
+            val keystoreFile = System.getenv("KEYSTORE_FILE") ?: secrets.getProperty("KEYSTORE_FILE")
+            val keystorePassword = System.getenv("KEYSTORE_PASSWORD") ?: secrets.getProperty("KEYSTORE_PASSWORD")
+            val keyAliasStr = System.getenv("KEY_ALIAS") ?: secrets.getProperty("KEY_ALIAS")
+            val keyPasswordEnv = System.getenv("KEY_PASSWORD") ?: secrets.getProperty("KEY_PASSWORD")
             val keyPasswordStr = if (!keyPasswordEnv.isNullOrEmpty()) keyPasswordEnv else keystorePassword
             val isReleaseRequested = gradle.startParameter.taskNames.any { it.contains("Release", ignoreCase = true) }
             if (!keystoreFile.isNullOrEmpty() && !keystorePassword.isNullOrEmpty() && !keyAliasStr.isNullOrEmpty()) {

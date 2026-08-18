@@ -3,7 +3,7 @@ package com.example.data.repository.reels
 import com.example.data.database.CommentEntity
 import com.example.data.database.PanalinkDatabase
 import com.example.data.model.Comment
-import com.example.data.model.PublicProfileFetchResult
+import com.example.data.repository.PublicProfileFetchResult
 import com.example.data.repository.PublicProfileRepository
 import com.example.data.repository.PublicProfileResolver
 import com.example.data.repository.StatesRepository

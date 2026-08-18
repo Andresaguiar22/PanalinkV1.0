@@ -118,7 +118,7 @@ class IdentityRepository(context: Context) {
         val existing = profileDao.getProfileById(state.userId)
         if (existing != null) {
             profileDao.insertProfile(existing.copy(
-                displayName = state.displayName,
+                displayName = state.displayName ?: existing.displayName,
                 avatarUrl = state.avatarUrl ?: existing.avatarUrl,
                 avatarLocalPath = state.avatarLocalPath ?: existing.avatarLocalPath
             ))

@@ -17,3 +17,14 @@ local.properties
 .env
 debug.keystore
 
+
+# Secrets / signing
+app/secrets.properties
+app/google-services.json
+app/keystore/
+*.jks
+*.keystore
+
+# Local build artifacts
+release-build.log
+app/build/

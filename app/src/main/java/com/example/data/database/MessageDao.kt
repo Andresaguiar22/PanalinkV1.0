@@ -303,7 +303,7 @@ interface MessageDao {
     @Query("UPDATE local_messages SET status = :status, deliveredAt = :deliveredAt WHERE id = :id")
     suspend fun updateMessageDelivered(id: String, deliveredAt: String, status: String)
 
-    @Query("UPDATE local_messages SET status = :status, seenAt = :seenAt WHERE id = :id")
+    @Query("UPDATE local_messages SET status = 'seen', seenAt = :seenAt WHERE id = :id")
     suspend fun updateMessageSeen(id: String, seenAt: String)
 
     @Query("UPDATE local_messages SET reactionsJson = :reactionsJson WHERE id = :id")
