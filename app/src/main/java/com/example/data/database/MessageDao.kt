@@ -17,7 +17,10 @@ interface MessageDao {
     @Query("SELECT * FROM local_messages WHERE chatId = :chatId AND (:oldestTimestamp IS NULL OR createdAt < :oldestTimestamp) ORDER BY createdAt DESC LIMIT :limit")
     suspend fun getMessagesForChatPaged(chatId: String, limit: Int, oldestTimestamp: String?): List<MessageEntity>
 
-    @Query("SELECT * FROM local_messages WHERE status = 'sending' OR status = 'failed'")
+    // Outgoing queue: include every transient local status so a failed immediate send
+    // cannot become permanently invisible to WorkManager. In particular, sendMessage()
+    // changes failed sends to "pending", while media messages use "sending".
+    @Query("SELECT * FROM local_messages WHERE status IN ('sending', 'pending', 'failed') ORDER BY createdAt ASC")
     suspend fun getPendingMessages(): List<MessageEntity>
 
     @Query("SELECT DISTINCT chatId FROM local_messages")
@@ -245,7 +248,7 @@ interface MessageDao {
     suspend fun updateMessageDelivered(id: String, deliveredAt: String, status: String)
 
     @Query("UPDATE local_messages SET status = :status, seenAt = :seenAt WHERE id = :id")
-    suspend fun updateMessageSeen(id: String, seenAt: String, status: String)
+    suspend fun updateMessageSeen(id: String, seenAt: String)
 
     @Query("UPDATE local_messages SET reactionsJson = :reactionsJson WHERE id = :id")
     suspend fun updateMessageReactions(id: String, reactionsJson: String)
