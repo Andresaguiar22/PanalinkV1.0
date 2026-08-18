@@ -30,7 +30,18 @@ interface CommentDao {
     suspend fun deleteByTarget(targetId: String, isReel: Boolean)
 
     @Query("DELETE FROM local_comments WHERE targetId = :targetId AND isReel = :isReel AND id NOT IN (:remoteIds) AND syncStatus != 'pending_add'")
-    suspend fun deleteStaleComments(targetId: String, isReel: Boolean, remoteIds: List<String>)
+    private suspend fun deleteStaleCommentsInternal(targetId: String, isReel: Boolean, remoteIds: List<String>)
+
+    /**
+     * An empty remote response is not proof that the post has no comments;
+     * it can be caused by a transient/RLS/network read problem. Never wipe
+     * durable local comments in that case.
+     */
+    suspend fun deleteStaleComments(targetId: String, isReel: Boolean, remoteIds: List<String>) {
+        if (remoteIds.isNotEmpty()) {
+            deleteStaleCommentsInternal(targetId, isReel, remoteIds)
+        }
+    }
 
     @Query("DELETE FROM local_comments")
     suspend fun deleteAll()
