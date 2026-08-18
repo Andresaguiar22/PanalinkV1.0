@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 44,
-    "identityHash": "4d9394a7a2bcb01c183f4faa798afa32",
+    "identityHash": "6c195b661ca00997f6f7c3d34fe96b01",
     "entities": [
       {
         "tableName": "local_messages",
@@ -1492,7 +1492,7 @@
       },
       {
         "tableName": "local_posts",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `authorId` TEXT NOT NULL, `type` TEXT, `content` TEXT, `mediaUrlsJson` TEXT, `audioUrl` TEXT, `privacy` TEXT, `likesCount` INTEGER NOT NULL, `commentsCount` INTEGER NOT NULL, `shareCount` INTEGER NOT NULL, `currentUserLiked` INTEGER NOT NULL, `currentUserSaved` INTEGER NOT NULL, `visibility` TEXT, `deletedAt` TEXT, `createdAt` TEXT, `updatedAt` TEXT, `syncedAt` INTEGER NOT NULL, `previewMetadataJson` TEXT, `customMediaIdsJson` TEXT, PRIMARY KEY(`id`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `authorId` TEXT NOT NULL, `type` TEXT, `content` TEXT, `mediaUrlsJson` TEXT, `audioUrl` TEXT, `privacy` TEXT, `likesCount` INTEGER NOT NULL, `commentsCount` INTEGER NOT NULL, `shareCount` INTEGER NOT NULL, `currentUserLiked` INTEGER NOT NULL, `visibility` TEXT, `deletedAt` TEXT, `createdAt` TEXT, `updatedAt` TEXT, `syncedAt` INTEGER NOT NULL, `previewMetadataJson` TEXT, `customMediaIdsJson` TEXT, PRIMARY KEY(`id`))",
         "fields": [
           {
             "fieldPath": "id",
@@ -1552,12 +1552,6 @@
           {
             "fieldPath": "currentUserLiked",
             "columnName": "currentUserLiked",
-            "affinity": "INTEGER",
-            "notNull": true
-          },
-          {
-            "fieldPath": "currentUserSaved",
-            "columnName": "currentUserSaved",
             "affinity": "INTEGER",
             "notNull": true
           },
@@ -1887,7 +1881,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '4d9394a7a2bcb01c183f4faa798afa32')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '6c195b661ca00997f6f7c3d34fe96b01')"
     ]
   }
 }

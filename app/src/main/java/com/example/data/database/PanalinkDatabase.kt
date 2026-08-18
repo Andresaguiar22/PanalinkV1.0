@@ -29,9 +29,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         PostEntity::class,
         CommentEntity::class,
         PendingSocialActionEntity::class,
-        LocalNotificationEntity::class
+        LocalNotificationEntity::class,
+        ReelCommentReactionEntity::class
     ],
-    version = 42,
+    version = 44,
     exportSchema = true
 )
 abstract class PanalinkDatabase : RoomDatabase() {
@@ -54,10 +55,31 @@ abstract class PanalinkDatabase : RoomDatabase() {
     abstract fun postDao(): PostDao
     abstract fun commentDao(): CommentDao
     abstract fun pendingSocialActionDao(): PendingSocialActionDao
+    abstract fun reelCommentReactionDao(): ReelCommentReactionDao
 
     companion object {
         @Volatile
         private var INSTANCE: PanalinkDatabase? = null
+
+        val MIGRATION_42_44 = object : Migration(42, 44) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `reel_comment_reactions` (
+                        `commentId` TEXT NOT NULL,
+                        `userId` TEXT NOT NULL,
+                        `reaction` TEXT NOT NULL,
+                        `createdAt` INTEGER NOT NULL,
+                        `updatedAt` INTEGER NOT NULL,
+                        `syncStatus` TEXT NOT NULL,
+                        PRIMARY KEY(`commentId`, `userId`)
+                    )
+                """.trimIndent())
+
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_reel_comment_reactions_commentId` ON `reel_comment_reactions` (`commentId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_reel_comment_reactions_userId` ON `reel_comment_reactions` (`userId`)")
+            }
+        }
+
 
         val MIGRATION_11_12 = object : Migration(11, 12) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -568,7 +590,7 @@ abstract class PanalinkDatabase : RoomDatabase() {
                     MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33,
                     MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36, MIGRATION_36_37,
                     MIGRATION_37_38, MIGRATION_38_39, MIGRATION_39_40, MIGRATION_40_41,
-                    MIGRATION_41_42
+                    MIGRATION_41_42, MIGRATION_42_44
                 )
                 .build()
                 INSTANCE = instance
