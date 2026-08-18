@@ -30,14 +30,16 @@ interface PostDao {
     suspend fun hasPendingCommentAction(postId: String): Boolean
 
     /**
-     * Refreshes posts from the server without overwriting local optimistic
-     * engagement while the corresponding durable action is still pending.
+     * Refresh posts from the server. If the caller could not resolve the
+     * current user's likes (for example because the like SELECT was denied
+     * or the network failed), preserve the locally persisted like state
+     * instead of silently turning every post into "not liked".
      */
     @Transaction
-    suspend fun upsertAll(entities: List<PostEntity>) {
+    suspend fun upsertAll(entities: List<PostEntity>, preserveLocalLikeState: Boolean = false) {
         entities.forEach { remote ->
             val local = getPostById(remote.id)
-            val preserveLike = hasPendingLikeAction(remote.id)
+            val preserveLike = preserveLocalLikeState || hasPendingLikeAction(remote.id)
             val preserveComment = hasPendingCommentAction(remote.id)
 
             val merged = if (local != null) {
