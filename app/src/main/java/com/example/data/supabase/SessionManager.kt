@@ -1,7 +1,10 @@
 package com.example.data.supabase
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.util.Log
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
 import com.example.data.model.*
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.Types
@@ -13,11 +16,11 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import retrofit2.Response
 
 object SessionManager {
     private const val TAG = "SessionManager"
-    private const val PREFS_NAME = "panalink_session_prefs"
+    private const val PREFS_NAME = "panalink_session_secure_prefs"
+    private const val LEGACY_PREFS_NAME = "panalink_session_prefs"
     private const val KEY_ACCESS_TOKEN = "access_token"
     private const val KEY_REFRESH_TOKEN = "refresh_token"
     private const val KEY_USER_JSON = "user_json"
@@ -49,17 +52,53 @@ object SessionManager {
         SYNC_NEEDED
     }
 
+    private fun securePrefs(): SharedPreferences {
+        val masterKey = MasterKey.Builder(context)
+            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+            .build()
+        return EncryptedSharedPreferences.create(
+            context,
+            PREFS_NAME,
+            masterKey,
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+        )
+    }
+
+    private fun migrateLegacySessionIfNeeded() {
+        try {
+            val secure = securePrefs()
+            if (secure.contains(KEY_ACCESS_TOKEN)) return
+            val legacy = context.getSharedPreferences(LEGACY_PREFS_NAME, Context.MODE_PRIVATE)
+            val access = legacy.getString(KEY_ACCESS_TOKEN, null)
+            val user = legacy.getString(KEY_USER_JSON, null)
+            if (access.isNullOrEmpty() || user.isNullOrEmpty()) return
+
+            secure.edit().apply {
+                putString(KEY_ACCESS_TOKEN, access)
+                legacy.getString(KEY_REFRESH_TOKEN, null)?.let { putString(KEY_REFRESH_TOKEN, it) }
+                putString(KEY_USER_JSON, user)
+                legacy.getString(KEY_PROFILE_JSON, null)?.let { putString(KEY_PROFILE_JSON, it) }
+                commit()
+            }
+            legacy.edit().clear().commit()
+            Log.i(TAG, "Migrated legacy session credentials to encrypted storage")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to migrate legacy session storage", e)
+        }
+    }
+
     fun init(context: Context) {
         if (isInitialized) return
         this.context = context.applicationContext
         isInitialized = true
         Log.i(TAG, "SessionManager initialized")
+        migrateLegacySessionIfNeeded()
         restoreSession()
-        
-        // Start periodic token validation / refresh loop
+
         scope.launch {
             while (isActive) {
-                delay(120_000) // Every 2 minutes
+                delay(120_000)
                 if (SupabaseClient.currentToken != null) {
                     validateAndRefreshSessionIfNeeded()
                 }
@@ -73,21 +112,15 @@ object SessionManager {
         }
         if (!isInitialized) return SupabaseClient.currentProfile
         return try {
-            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            val json = prefs.getString(KEY_PROFILE_JSON, null)
-            if (json != null) {
-                val parsed = profileAdapter.fromJson(json)
-                if (parsed != null) parsed else SupabaseClient.currentProfile
-            } else {
-                SupabaseClient.currentProfile
-            }
+            val json = securePrefs().getString(KEY_PROFILE_JSON, null)
+            if (json != null) profileAdapter.fromJson(json) ?: SupabaseClient.currentProfile
+            else SupabaseClient.currentProfile
         } catch (e: Exception) {
             Log.e(TAG, "Error getting cached profile", e)
             SupabaseClient.currentProfile
         }
     }
 
-    // Save session automatically
     fun saveSession(accessToken: String?, refreshToken: String?, user: AuthUser?, profile: Profile?) {
         if (!isInitialized) return
         if (accessToken.isNullOrEmpty() || user == null) {
@@ -96,20 +129,16 @@ object SessionManager {
             return
         }
 
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val prefs = securePrefs()
         val existingProfileJson = prefs.getString(KEY_PROFILE_JSON, null)
-
         var profileToSave: Profile? = profile
         if (existingProfileJson != null) {
             try {
                 val existing = profileAdapter.fromJson(existingProfileJson)
-                if (existing != null && existing.isProfileComplete) {
-                    if (profile == null || !profile.isProfileComplete) {
-                        Log.i(TAG, "Retaining existing complete profile from SharedPreferences.")
-                        profileToSave = existing
-                        if (SupabaseClient.currentProfile == null || !SupabaseClient.currentProfile!!.isProfileComplete) {
-                            SupabaseClient.currentProfile = existing
-                        }
+                if (existing != null && existing.isProfileComplete && (profile == null || !profile.isProfileComplete)) {
+                    profileToSave = existing
+                    if (SupabaseClient.currentProfile == null || !SupabaseClient.currentProfile!!.isProfileComplete) {
+                        SupabaseClient.currentProfile = existing
                     }
                 }
             } catch (e: Exception) {
@@ -119,82 +148,68 @@ object SessionManager {
 
         prefs.edit().apply {
             putString(KEY_ACCESS_TOKEN, accessToken)
-            putString(KEY_REFRESH_TOKEN, refreshToken)
-            try {
-                putString(KEY_USER_JSON, userAdapter.toJson(user))
-            } catch (e: Exception) {
-                Log.e(TAG, "Error serializing user", e)
-            }
+            if (!refreshToken.isNullOrEmpty()) putString(KEY_REFRESH_TOKEN, refreshToken)
+            try { putString(KEY_USER_JSON, userAdapter.toJson(user)) }
+            catch (e: Exception) { Log.e(TAG, "Error serializing user", e) }
             if (profileToSave != null) {
-                try {
-                    putString(KEY_PROFILE_JSON, profileAdapter.toJson(profileToSave))
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error serializing profile", e)
-                }
+                try { putString(KEY_PROFILE_JSON, profileAdapter.toJson(profileToSave)) }
+                catch (e: Exception) { Log.e(TAG, "Error serializing profile", e) }
             }
             apply()
         }
-        Log.d(TAG, "Session saved. AccessToken length: ${accessToken.length}, User: ${user.email}, Profile complete: ${profileToSave?.isProfileComplete}")
+        Log.d(TAG, "Session saved. Access token length=${accessToken.length}")
     }
 
-    // Restore session automatically
     fun restoreSession() {
         if (!isInitialized) return
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val accessToken = prefs.getString(KEY_ACCESS_TOKEN, null)
-        val refreshToken = prefs.getString(KEY_REFRESH_TOKEN, null)
-        val userJson = prefs.getString(KEY_USER_JSON, null)
-        val profileJson = prefs.getString(KEY_PROFILE_JSON, null)
+        try {
+            val prefs = securePrefs()
+            val accessToken = prefs.getString(KEY_ACCESS_TOKEN, null)
+            val refreshToken = prefs.getString(KEY_REFRESH_TOKEN, null)
+            val userJson = prefs.getString(KEY_USER_JSON, null)
+            val profileJson = prefs.getString(KEY_PROFILE_JSON, null)
 
-        if (accessToken != null && userJson != null) {
-            SupabaseClient.currentToken = accessToken
-            SupabaseClient.currentRefreshToken = refreshToken
-            try {
-                SupabaseClient.currentUser = userAdapter.fromJson(userJson)
-                if (profileJson != null) {
-                    SupabaseClient.currentProfile = profileAdapter.fromJson(profileJson)
-                } else {
-                    SupabaseClient.currentProfile = null
-                }
-                Log.i(TAG, "Session restored successfully for user: ${SupabaseClient.currentUser?.email}, profile complete: ${SupabaseClient.currentProfile?.isProfileComplete}")
-                
-                // Validate restored session
-                scope.launch {
-                    val isValid = validateAndRefreshSessionIfNeeded()
-                    if (isValid && SupabaseClient.currentToken != null) {
-                        val userId = SupabaseClient.currentUser?.id
-                        if (userId != null) {
-                            val profilesRepo = com.example.data.repository.ProfilesRepository()
-                            val profResult = profilesRepo.getProfile(userId)
-                            val freshProfile = profResult.getOrNull()
-                            if (freshProfile != null && (freshProfile.isProfileComplete || SupabaseClient.currentProfile == null)) {
-                                SupabaseClient.currentProfile = freshProfile
-                                saveSession(
-                                    SupabaseClient.currentToken,
-                                    SupabaseClient.currentRefreshToken,
-                                    SupabaseClient.currentUser,
-                                    freshProfile
-                                )
+            if (accessToken != null && userJson != null) {
+                SupabaseClient.currentToken = accessToken
+                SupabaseClient.currentRefreshToken = refreshToken
+                try {
+                    SupabaseClient.currentUser = userAdapter.fromJson(userJson)
+                    SupabaseClient.currentProfile = profileJson?.let { profileAdapter.fromJson(it) }
+                    Log.i(TAG, "Session restored successfully")
+                    scope.launch {
+                        val isValid = validateAndRefreshSessionIfNeeded()
+                        if (isValid && SupabaseClient.currentToken != null) {
+                            val userId = SupabaseClient.currentUser?.id
+                            if (userId != null) {
+                                val profilesRepo = com.example.data.repository.ProfilesRepository()
+                                val freshProfile = profilesRepo.getProfile(userId).getOrNull()
+                                if (freshProfile != null && (freshProfile.isProfileComplete || SupabaseClient.currentProfile == null)) {
+                                    SupabaseClient.currentProfile = freshProfile
+                                    saveSession(SupabaseClient.currentToken, SupabaseClient.currentRefreshToken, SupabaseClient.currentUser, freshProfile)
+                                }
+                            }
+                            if (SupabaseClient.currentProfile?.isProfileComplete == true) {
+                                SupabaseClient.connectRealtime()
+                                _sessionEvent.emit(SessionEvent.SYNC_NEEDED)
                             }
                         }
-                        if (SupabaseClient.currentProfile?.isProfileComplete == true) {
-                            SupabaseClient.connectRealtime()
-                            _sessionEvent.emit(SessionEvent.SYNC_NEEDED)
-                        }
                     }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to parse restored session", e)
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to parse restored session", e)
+            } else {
+                Log.i(TAG, "No saved session found to restore")
             }
-        } else {
-            Log.i(TAG, "No saved session found to restore")
+        } catch (e: Exception) {
+            Log.e(TAG, "Unable to access encrypted session storage", e)
+            clearSession()
         }
     }
 
     fun clearSession() {
         if (!isInitialized) return
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        prefs.edit().clear().apply()
+        try { securePrefs().edit().clear().apply() } catch (e: Exception) { Log.e(TAG, "Error clearing secure session", e) }
+        try { context.getSharedPreferences(LEGACY_PREFS_NAME, Context.MODE_PRIVATE).edit().clear().apply() } catch (_: Exception) { }
         SupabaseClient.currentToken = null
         SupabaseClient.currentRefreshToken = null
         SupabaseClient.currentUser = null
@@ -205,155 +220,100 @@ object SessionManager {
 
     fun getJwtUserId(token: String?): String? {
         if (token.isNullOrBlank()) return null
-        try {
+        return try {
             val parts = token.split(".")
             if (parts.size < 2) return null
-            val payloadBase64 = parts[1]
-            val decodedBytes = android.util.Base64.decode(payloadBase64, android.util.Base64.DEFAULT or android.util.Base64.NO_WRAP)
-            val decodedString = String(decodedBytes, Charsets.UTF_8)
-            val json = org.json.JSONObject(decodedString)
-            if (json.has("sub")) {
-                return json.optString("sub")
-            }
+            val decodedBytes = android.util.Base64.decode(parts[1], android.util.Base64.DEFAULT or android.util.Base64.NO_WRAP)
+            val json = org.json.JSONObject(String(decodedBytes, Charsets.UTF_8))
+            if (json.has("sub")) json.optString("sub") else null
         } catch (e: Exception) {
             Log.e(TAG, "Error parsing JWT sub claim", e)
+            null
         }
-        return null
     }
 
     fun isJwtExpired(token: String?): Boolean {
         if (token.isNullOrBlank()) return true
-        try {
+        return try {
             val parts = token.split(".")
             if (parts.size < 2) return true
-            val payloadBase64 = parts[1]
-            val decodedBytes = android.util.Base64.decode(payloadBase64, android.util.Base64.DEFAULT or android.util.Base64.NO_WRAP)
-            val decodedString = String(decodedBytes, Charsets.UTF_8)
-            val json = org.json.JSONObject(decodedString)
+            val decodedBytes = android.util.Base64.decode(parts[1], android.util.Base64.DEFAULT or android.util.Base64.NO_WRAP)
+            val json = org.json.JSONObject(String(decodedBytes, Charsets.UTF_8))
             if (json.has("exp")) {
                 val exp = json.getLong("exp")
                 val nowSeconds = System.currentTimeMillis() / 1000
-                // Expired if current time is within 90 seconds of expiration
-                return nowSeconds >= (exp - 90)
-            }
+                nowSeconds >= (exp - 90)
+            } else true
         } catch (e: Exception) {
             Log.e(TAG, "Error parsing JWT", e)
+            true
         }
-        return true
     }
 
-    // Refresh token synchronously via mutex to avoid concurrent refreshes (single-flight)
     suspend fun refreshSession(): Boolean = mutex.withLock {
         if (!SupabaseClient.isConfigured) return@withLock true
-
-        // Double-check if token was already refreshed by a concurrent caller
         val activeToken = SupabaseClient.currentToken
-        if (activeToken != null && !isJwtExpired(activeToken)) {
-            Log.i(TAG, "Session was already refreshed by a concurrent task.")
-            return@withLock true
-        }
-        
+        if (activeToken != null && !isJwtExpired(activeToken)) return@withLock true
+
         var rToken = SupabaseClient.currentRefreshToken
         if (rToken.isNullOrEmpty() && isInitialized) {
-            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            rToken = prefs.getString(KEY_REFRESH_TOKEN, null)
-            if (!rToken.isNullOrEmpty()) {
-                SupabaseClient.currentRefreshToken = rToken
-            }
+            rToken = try { securePrefs().getString(KEY_REFRESH_TOKEN, null) } catch (_: Exception) { null }
+            if (!rToken.isNullOrEmpty()) SupabaseClient.currentRefreshToken = rToken
         }
-
         if (rToken.isNullOrEmpty()) {
             Log.w(TAG, "No refresh token available to refresh session")
             return@withLock false
         }
 
-        Log.i(TAG, "Attempting to refresh session via API...")
         try {
-            val service = SupabaseClient.apiService
-            if (service == null) {
-                Log.e(TAG, "apiService is null")
-                return@withLock false
-            }
-
-            val request = RefreshTokenRequest(rToken)
-            val response = service.refreshToken(SupabaseClient.supabaseAnonKey, request)
+            val service = SupabaseClient.apiService ?: return@withLock false
+            val response = service.refreshToken(SupabaseClient.supabaseAnonKey, RefreshTokenRequest(rToken))
             if (response.isSuccessful) {
                 val authBody = response.body()
                 if (authBody != null) {
-                    // Update tokens FIRST so subsequent queries use valid token
                     SupabaseClient.currentToken = authBody.accessToken
                     SupabaseClient.currentRefreshToken = authBody.refreshToken ?: rToken
                     SupabaseClient.currentUser = authBody.user
-
-                    if (SupabaseClient.currentProfile == null) {
-                        SupabaseClient.currentProfile = getCachedProfile()
-                    }
-
-                    saveSession(
-                        SupabaseClient.currentToken,
-                        SupabaseClient.currentRefreshToken,
-                        SupabaseClient.currentUser,
-                        SupabaseClient.currentProfile
-                    )
+                    if (SupabaseClient.currentProfile == null) SupabaseClient.currentProfile = getCachedProfile()
+                    saveSession(SupabaseClient.currentToken, SupabaseClient.currentRefreshToken, SupabaseClient.currentUser, SupabaseClient.currentProfile)
                     _isOffline.value = false
-                    Log.i(TAG, "Session refreshed successfully. New token updated.")
-
-                    try {
-                        if (SupabaseClient.currentProfile?.isProfileComplete == true) {
-                            SupabaseClient.connectRealtime()
-                        }
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Error reconnecting realtime after session refresh", e)
-                    }
-
+                    try { if (SupabaseClient.currentProfile?.isProfileComplete == true) SupabaseClient.connectRealtime() } catch (e: Exception) { Log.w(TAG, "Error reconnecting realtime", e) }
                     _sessionEvent.emit(SessionEvent.REFRESHED)
                     return@withLock true
                 }
             } else {
                 val code = response.code()
                 val errBody = response.errorBody()?.string() ?: ""
-                Log.e(TAG, "Session refresh failed (HTTP $code): $errBody")
-                if ((code == 400 || code == 401) && (errBody.contains("invalid_grant") || errBody.contains("invalid_refresh_token"))) {
-                    Log.w(TAG, "Refresh token permanently rejected by server ($code). Clearing session.")
-                    clearSession()
-                }
+                Log.e(TAG, "Session refresh failed (HTTP $code)")
+                if ((code == 400 || code == 401) && (errBody.contains("invalid_grant") || errBody.contains("invalid_refresh_token"))) clearSession()
             }
         } catch (e: Exception) {
             Log.e(TAG, "Network or server exception during session refresh", e)
-            _isOffline.value = true // Mark offline status on network errors, retain session credentials
+            _isOffline.value = true
         }
-        return@withLock false
+        false
     }
 
-    // Checks current session, refreshes if expired
     suspend fun validateAndRefreshSessionIfNeeded(): Boolean {
         if (SupabaseClient.currentToken == null && isInitialized) {
-            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            val accessToken = prefs.getString(KEY_ACCESS_TOKEN, null)
-            val refreshToken = prefs.getString(KEY_REFRESH_TOKEN, null)
-            val userJson = prefs.getString(KEY_USER_JSON, null)
-            val profileJson = prefs.getString(KEY_PROFILE_JSON, null)
-            if (accessToken != null && userJson != null) {
-                SupabaseClient.currentToken = accessToken
-                SupabaseClient.currentRefreshToken = refreshToken
-                try {
+            try {
+                val prefs = securePrefs()
+                val accessToken = prefs.getString(KEY_ACCESS_TOKEN, null)
+                val refreshToken = prefs.getString(KEY_REFRESH_TOKEN, null)
+                val userJson = prefs.getString(KEY_USER_JSON, null)
+                val profileJson = prefs.getString(KEY_PROFILE_JSON, null)
+                if (accessToken != null && userJson != null) {
+                    SupabaseClient.currentToken = accessToken
+                    SupabaseClient.currentRefreshToken = refreshToken
                     SupabaseClient.currentUser = userAdapter.fromJson(userJson)
-                    if (profileJson != null) {
-                        SupabaseClient.currentProfile = profileAdapter.fromJson(profileJson)
-                    }
-                    Log.i(TAG, "validateAndRefreshSessionIfNeeded: Restored session synchronously during pre-flight check")
-                } catch (e: Exception) {
-                    Log.e(TAG, "validateAndRefreshSessionIfNeeded: Failed to parse restored session synchronously", e)
+                    SupabaseClient.currentProfile = profileJson?.let { profileAdapter.fromJson(it) }
                 }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to restore session during pre-flight", e)
             }
         }
-
         val token = SupabaseClient.currentToken
-        if (token != null && isJwtExpired(token)) {
-            Log.i(TAG, "Current JWT is expired. Refreshing token...")
-            return refreshSession()
-        }
-        return token != null
+        return if (token != null && isJwtExpired(token)) refreshSession() else token != null
     }
 
     fun <T> saveCache(key: String, obj: T, elementClass: Class<T>) {
@@ -361,68 +321,38 @@ object SessionManager {
         try {
             val adapter = moshi.adapter(elementClass)
             val json = adapter.toJson(obj)
-            val prefs = context.getSharedPreferences("panalink_cache_prefs", Context.MODE_PRIVATE)
-            prefs.edit().putString(key, json).apply()
-            Log.d(TAG, "Saved cache for key: $key")
-        } catch (e: Exception) {
-            Log.e(TAG, "Error saving cache for key: $key", e)
-        }
+            context.getSharedPreferences("panalink_cache_prefs", Context.MODE_PRIVATE).edit().putString(key, json).apply()
+        } catch (e: Exception) { Log.e(TAG, "Error saving cache for key: $key", e) }
     }
 
     fun <T> getCache(key: String, elementClass: Class<T>): T? {
         if (!isInitialized) return null
-        try {
-            val prefs = context.getSharedPreferences("panalink_cache_prefs", Context.MODE_PRIVATE)
-            val json = prefs.getString(key, null) ?: return null
-            val adapter = moshi.adapter(elementClass)
-            return adapter.fromJson(json)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error getting cache for key: $key", e)
-            return null
-        }
+        return try {
+            val json = context.getSharedPreferences("panalink_cache_prefs", Context.MODE_PRIVATE).getString(key, null) ?: return null
+            moshi.adapter(elementClass).fromJson(json)
+        } catch (e: Exception) { Log.e(TAG, "Error getting cache for key: $key", e); null }
     }
 
-    // Generic Moshi list caching helper
     fun <T> saveCacheList(key: String, list: List<T>, elementClass: Class<T>) {
         if (!isInitialized) return
         try {
             val type = Types.newParameterizedType(List::class.java, elementClass)
             val adapter = moshi.adapter<List<T>>(type)
-            val json = adapter.toJson(list)
-            val prefs = context.getSharedPreferences("panalink_cache_prefs", Context.MODE_PRIVATE)
-            prefs.edit().putString(key, json).apply()
-            Log.d(TAG, "Saved cache list for key: $key, size: ${list.size}")
-        } catch (e: Exception) {
-            Log.e(TAG, "Error saving cache list for key: $key", e)
-        }
+            context.getSharedPreferences("panalink_cache_prefs", Context.MODE_PRIVATE).edit().putString(key, adapter.toJson(list)).apply()
+        } catch (e: Exception) { Log.e(TAG, "Error saving cache list for key: $key", e) }
     }
 
     fun <T> getCacheList(key: String, elementClass: Class<T>): List<T> {
         if (!isInitialized) return emptyList()
-        try {
-            val prefs = context.getSharedPreferences("panalink_cache_prefs", Context.MODE_PRIVATE)
-            val json = prefs.getString(key, null) ?: return emptyList()
+        return try {
+            val json = context.getSharedPreferences("panalink_cache_prefs", Context.MODE_PRIVATE).getString(key, null) ?: return emptyList()
             val type = Types.newParameterizedType(List::class.java, elementClass)
-            val adapter = moshi.adapter<List<T>>(type)
-            return adapter.fromJson(json) ?: emptyList()
-        } catch (e: Exception) {
-            Log.e(TAG, "Error getting cache list for key: $key", e)
-            return emptyList()
-        }
+            moshi.adapter<List<T>>(type).fromJson(json) ?: emptyList()
+        } catch (e: Exception) { Log.e(TAG, "Error getting cache list for key: $key", e); emptyList() }
     }
 
-    // Trigger explicit sync
-    fun triggerSync() {
-        scope.launch {
-            _sessionEvent.emit(SessionEvent.SYNC_NEEDED)
-        }
-    }
-
-    fun setOffline(offline: Boolean) {
-        _isOffline.value = offline
-    }
-
+    fun triggerSync() { scope.launch { _sessionEvent.emit(SessionEvent.SYNC_NEEDED) } }
+    fun setOffline(offline: Boolean) { _isOffline.value = offline }
     fun getUserAuthToken(): String? = SupabaseClient.currentToken
-
     fun getCurrentUserId(): String? = SupabaseClient.currentUser?.id
 }

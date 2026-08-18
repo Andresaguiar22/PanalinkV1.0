@@ -18,7 +18,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
-
 import coil.imageLoader
 import coil.request.ImageRequest
 import coil.transform.CircleCropTransformation
@@ -47,10 +46,17 @@ class PanalinkFirebaseMessagingService : FirebaseMessagingService() {
                 .apply()
         }
 
+        fun clearSavedToken(context: Context) {
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .remove(KEY_FCM_TOKEN)
+                .apply()
+        }
+
         fun sendTokenToSupabase(context: Context, token: String, explicitUserId: String? = null) {
             val currentUserId = explicitUserId ?: SupabaseClient.currentUser?.id
             if (!currentUserId.isNullOrEmpty()) {
-                Log.d(TAG, "Sending FCM Token to Supabase for user $currentUserId: $token")
+                Log.d(TAG, "Sending FCM token to Supabase for authenticated user")
                 val profilesRepo = ProfilesRepository()
                 CoroutineScope(Dispatchers.IO).launch {
                     val resFingerprint = profilesRepo.updateDeviceFingerprint(currentUserId, token)
@@ -59,34 +65,36 @@ class PanalinkFirebaseMessagingService : FirebaseMessagingService() {
                     Log.d(TAG, "FCM Edge function save-token result: ${resEdge.isSuccess}")
                 }
             } else {
-                Log.d(TAG, "Cannot send token to Supabase, user is not logged in yet.")
+                Log.d(TAG, "Cannot send FCM token to Supabase, user is not logged in yet.")
             }
         }
     }
 
     override fun onNewToken(token: String) {
         super.onNewToken(token)
-        Log.d(TAG, "onNewToken triggered. Token: $token")
+        Log.d(TAG, "onNewToken triggered")
         saveToken(applicationContext, token)
         sendTokenToSupabase(applicationContext, token)
+    }
+
+    override fun onUnregistered(installationId: String) {
+        super.onUnregistered(installationId)
+        Log.i(TAG, "FCM installation unregistered: $installationId")
+        clearSavedToken(applicationContext)
     }
 
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
         super.onMessageReceived(remoteMessage)
         Log.d(TAG, "onMessageReceived from: ${remoteMessage.from}")
 
-        // Handle in scope to allow background loading of images
         serviceScope.launch {
             try {
-                // Ensure notification channels are initialized
                 NotificationHelper.createNotificationChannels(applicationContext)
 
-                // Log payload data if any
                 if (remoteMessage.data.isNotEmpty()) {
-                    Log.d(TAG, "Message data payload: ${remoteMessage.data}")
+                    Log.d(TAG, "Message data payload received")
                 }
 
-                // Handle notification payload
                 val notificationTitle = remoteMessage.notification?.title ?: remoteMessage.data["title"] ?: "Pana 💬"
                 val notificationBody = remoteMessage.notification?.body ?: remoteMessage.data["body"] ?: "Nueva notificación recibida"
                 val chatId = remoteMessage.data["chat_id"] ?: remoteMessage.data["chatId"] ?: ""
@@ -108,14 +116,13 @@ class PanalinkFirebaseMessagingService : FirebaseMessagingService() {
                     return@launch
                 }
 
-                val isChatActive = notificationType == "new_message" && 
-                        SupabaseClient.isChatScreenActive && 
+                val isChatActive = notificationType == "new_message" &&
+                        SupabaseClient.isChatScreenActive &&
                         SupabaseClient.activeChatId == chatId
 
                 if (isChatActive) {
-                    // If the chat is active in foreground, play gentle active chat sound
                     NotificationHelper.playActiveChatSound(applicationContext)
-                    Log.d(TAG, "User is actively reading this chat. Skipping system notification pop.")
+                    Log.d(TAG, "Active chat: skipping system notification pop.")
                 } else if (notificationType == "new_message") {
                     PanaLinkNotificationManager.showChatNotification(
                         context = applicationContext,
@@ -125,42 +132,36 @@ class PanalinkFirebaseMessagingService : FirebaseMessagingService() {
                         chatId = chatId
                     )
                 } else {
-                    // Determine appropriate channel based on type
                     val channelId = when (notificationType) {
                         "new_story", "new_reel" -> NotificationHelper.CHANNEL_ALERTS
                         "system_news", "app_update", "new_content" -> NotificationHelper.CHANNEL_ALERTS
                         "llamada_entrante" -> NotificationHelper.CHANNEL_CALLS
                         else -> NotificationHelper.CHANNEL_MESSAGES
                     }
-                    
+
                     val extrasMap = mutableMapOf<String, String>()
                     if (notificationType == "llamada_entrante") {
                         val callerId = remoteMessage.data["callerId"] ?: ""
                         val callerName = remoteMessage.data["callerName"] ?: ""
                         val callType = remoteMessage.data["callType"] ?: ""
                         val sdp = remoteMessage.data["sdp"] ?: ""
-
                         extrasMap["callerId"] = callerId
                         extrasMap["callerName"] = callerName
                         extrasMap["callType"] = callType
                         extrasMap["sdp"] = sdp
-
-                        // Proactively notify CallManager to start ringing/service even if app is in background
                         com.example.call.CallManager.getInstance(applicationContext)
                             .handleFCMIncomingCall(callerId, callerName, callType, sdp)
                     }
 
                     val senderName = remoteMessage.data["sender_name"] ?: remoteMessage.data["senderName"] ?: notificationTitle
-
-                    // Load large icon (avatar) or big picture if available
                     var largeIconBitmap: android.graphics.Bitmap? = null
                     val loadUrl = thumbnailUrl ?: mediaUrl ?: senderAvatar
-                    
+
                     if (!loadUrl.isNullOrEmpty()) {
                         try {
                             val request = ImageRequest.Builder(applicationContext)
                                 .data(loadUrl)
-                                .size(512, 512) // Optimize for notification size
+                                .size(512, 512)
                                 .build()
                             val result = applicationContext.imageLoader.execute(request)
                             largeIconBitmap = result.drawable?.toBitmap()
@@ -169,7 +170,6 @@ class PanalinkFirebaseMessagingService : FirebaseMessagingService() {
                         }
                     }
 
-                    // Show status bar notification
                     NotificationHelper.showNotification(
                         context = applicationContext,
                         title = if (notificationType == "new_message") senderName else notificationTitle,

@@ -56,14 +56,19 @@ object ExoPlayerManager {
 
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                1500, // Min buffer
-                5000, // Max buffer
-                1000, // Playback start buffer
-                1500  // Rebuffer
+                5000,   // minBufferMs
+                15000,  // maxBufferMs
+                500,    // bufferForPlaybackMs
+                3000    // bufferForPlaybackAfterRebufferMs
             )
             .build()
 
+        val mediaSourceFactory = DefaultMediaSourceFactory(
+            com.example.data.video.CacheDataSourceFactory.getCacheDataSourceFactory(context)
+        )
+
         return ExoPlayer.Builder(context, renderersFactory)
+            .setMediaSourceFactory(mediaSourceFactory)
             .setLoadControl(loadControl)
             .build().apply {
                 repeatMode = Player.REPEAT_MODE_ONE

@@ -467,25 +467,28 @@ class StatesRepository {
                 }
             }
 
-            // 2. Insert record in user_reels or user_stories table using a map with only valid DB columns
-            val stateMap = mutableMapOf<String, Any?>(
-                "id" to stateId,
-                "author_id" to currentUid,
-                "media_url" to mediaUrl,
-                "audio_url" to audioUrl,
-                "media_type" to mediaType,
-                "caption" to caption,
-                "created_at" to nowStr
-            )
-            
-            if (!isReel) {
-                stateMap["expires_at"] = expiresAtStr
-            }
-
-            // Insert into the appropriate table
+            // 2. Insert record in user_reels or user_stories table using a robust DTO
             val createResponse = if (isReel) {
-                service.createReel(apiKey, bearer, stateMap)
+                val reelDto = com.example.data.model.ReelDto(
+                    id = stateId,
+                    authorId = currentUid,
+                    mediaUrl = mediaUrl ?: "",
+                    mediaType = mediaType,
+                    caption = caption,
+                    createdAt = nowStr
+                )
+                service.createReel(apiKey, bearer, reelDto)
             } else {
+                val stateMap = mutableMapOf<String, Any?>(
+                    "id" to stateId,
+                    "author_id" to currentUid,
+                    "media_url" to mediaUrl,
+                    "audio_url" to audioUrl,
+                    "media_type" to mediaType,
+                    "caption" to caption,
+                    "created_at" to nowStr,
+                    "expires_at" to expiresAtStr
+                )
                 service.createStory(apiKey, bearer, stateMap)
             }
 
@@ -495,35 +498,21 @@ class StatesRepository {
                     authorId = currentUid,
                     userIdField = currentUid,
                     mediaUrl = mediaUrl,
-                    audioUrl = audioUrl,
                     mediaType = mediaType,
                     caption = caption,
                     visibility = "public",
-                    expiresAt = expiresAtStr,
-                    type = stateType,
-                    createdAt = nowStr
+                    createdAt = nowStr,
+                    type = stateType
                 )
                 Result.success(newState)
             } else {
                 val errorBody = createResponse.errorBody()?.string()
-                if (errorBody?.contains("23505") == true) {
-                     // If it already exists, return success with what we have
-                     val newState = UserState(
-                        id = stateId,
-                        authorId = currentUid,
-                        userIdField = currentUid,
-                        mediaUrl = mediaUrl,
-                        mediaType = mediaType,
-                        caption = caption,
-                        visibility = "public",
-                        expiresAt = expiresAtStr,
-                        type = stateType,
-                        createdAt = nowStr
-                    )
-                    Result.success(newState)
-                } else {
-                    Result.failure(Exception("Error creating database state: $errorBody"))
-                }
+                Log.e(TAG, "🚨 [DIAGNOSTIC] Fallo en ${if(isReel) "createReel" else "createStory"}")
+                Log.e(TAG, "HTTP STATUS: ${createResponse.code()}")
+                Log.e(TAG, "ERROR BODY: $errorBody")
+                Log.e(TAG, "PAYLOAD: ID=$stateId, Author=$currentUid, URL=$mediaUrl, Type=$mediaType, Caption=$caption")
+                
+                Result.failure(Exception("Supabase Error ${createResponse.code()}: $errorBody"))
             }
         } catch (e: Exception) {
             Log.e(TAG, "createState exception", e)

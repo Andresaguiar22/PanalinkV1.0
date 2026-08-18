@@ -308,15 +308,16 @@ class ProfileViewModel(
                 val liveData = workManager.getWorkInfoByIdLiveData(uploadWorkRequest.id)
                 val observer = object : androidx.lifecycle.Observer<androidx.work.WorkInfo> {
                     override fun onChanged(value: androidx.work.WorkInfo) {
-                        if (value != null) {
-                            if (value.state == androidx.work.WorkInfo.State.SUCCEEDED) {
+                        when (value.state) {
+                            androidx.work.WorkInfo.State.SUCCEEDED -> {
                                 viewModelScope.launch {
                                     val entity = db.pendingUploadDao().getUploadById(uploadId)
                                     val remoteUrl = entity?.remoteUrl ?: ""
                                     onSuccess(remoteUrl)
                                 }
                                 liveData.removeObserver(this)
-                            } else if (value.state == androidx.work.WorkInfo.State.FAILED) {
+                            }
+                            androidx.work.WorkInfo.State.FAILED -> {
                                 viewModelScope.launch {
                                     val entity = db.pendingUploadDao().getUploadById(uploadId)
                                     val errorMsg = entity?.errorMessage ?: "Error al subir la imagen"
@@ -324,6 +325,7 @@ class ProfileViewModel(
                                 }
                                 liveData.removeObserver(this)
                             }
+                            else -> Unit
                         }
                     }
                 }
@@ -385,15 +387,16 @@ class ProfileViewModel(
                 val liveData = workManager.getWorkInfoByIdLiveData(uploadWorkRequest.id)
                 val observer = object : androidx.lifecycle.Observer<androidx.work.WorkInfo> {
                     override fun onChanged(value: androidx.work.WorkInfo) {
-                        if (value != null) {
-                            if (value.state == androidx.work.WorkInfo.State.SUCCEEDED) {
+                        when (value.state) {
+                            androidx.work.WorkInfo.State.SUCCEEDED -> {
                                 viewModelScope.launch {
                                     val entity = db.pendingUploadDao().getUploadById(uploadId)
                                     val remoteUrl = entity?.remoteUrl ?: ""
                                     onSuccess(remoteUrl)
                                 }
                                 liveData.removeObserver(this)
-                            } else if (value.state == androidx.work.WorkInfo.State.FAILED) {
+                            }
+                            androidx.work.WorkInfo.State.FAILED -> {
                                 viewModelScope.launch {
                                     val entity = db.pendingUploadDao().getUploadById(uploadId)
                                     val errorMsg = entity?.errorMessage ?: "Error al subir la portada"
@@ -401,6 +404,7 @@ class ProfileViewModel(
                                 }
                                 liveData.removeObserver(this)
                             }
+                            else -> Unit
                         }
                     }
                 }

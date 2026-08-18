@@ -1,5 +1,6 @@
 package com.example.ui.viewmodel
 
+import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -43,11 +44,11 @@ class AuthViewModel(private val authManager: AuthManager = AuthManager()) : View
         if (prof == null) {
             val profilesRepo = ProfilesRepository()
             prof = profilesRepo.getProfile(user.id).getOrNull()
-            
+
             if (prof == null) {
                 // Try to recover from metadata if DB entry is missing
-                val fallbackName = user.userMetadata?.get("display_name")?.toString() 
-                    ?: user.email?.substringBefore("@") 
+                val fallbackName = user.userMetadata?.get("display_name")?.toString()
+                    ?: user.email?.substringBefore("@")
                     ?: "Pana"
                 prof = Profile(id = user.id, displayName = fallbackName, avatarUrl = null, isProfileComplete = false)
             }
@@ -106,12 +107,12 @@ class AuthViewModel(private val authManager: AuthManager = AuthManager()) : View
                 .onFailure { error ->
                     val rawMessage = error.message ?: ""
                     val friendlyMessage = when {
-                        rawMessage.contains("over_email_send_rate_limit", ignoreCase = true) || 
-                        rawMessage.contains("rate limit", ignoreCase = true) || 
+                        rawMessage.contains("over_email_send_rate_limit", ignoreCase = true) ||
+                        rawMessage.contains("rate limit", ignoreCase = true) ||
                         rawMessage.contains("429") ->
                             "¡Cálmate un poquito, pana! 😂 Supabase dice que se han enviado muchos correos. Espera un par de minutos e intenta de nuevo."
 
-                        rawMessage.contains("User already registered", ignoreCase = true) || 
+                        rawMessage.contains("User already registered", ignoreCase = true) ||
                         rawMessage.contains("already exists", ignoreCase = true) ||
                         rawMessage.contains("already registered", ignoreCase = true) ->
                             "Este correo ya tiene cuenta. ¡Dale a 'Inicia sesión' mejor!"
@@ -161,13 +162,13 @@ class AuthViewModel(private val authManager: AuthManager = AuthManager()) : View
                     val friendlyMessage = when {
                         rawMessage.contains("Debes confirmar tu correo electrónico", ignoreCase = true) ||
                         rawMessage.contains("Email not confirmed", ignoreCase = true) ||
-                        rawMessage.contains("email_not_confirmed", ignoreCase = true) -> 
+                        rawMessage.contains("email_not_confirmed", ignoreCase = true) ->
                             "Debes confirmar tu correo electrónico antes de entrar a Panalink."
-                        rawMessage.contains("Invalid login credentials", ignoreCase = true) -> 
+                        rawMessage.contains("Invalid login credentials", ignoreCase = true) ->
                             "Email o contraseña incorrectos. Revisa tus datos, pana."
-                        rawMessage.contains("Rate limit exceeded", ignoreCase = true) -> 
+                        rawMessage.contains("Rate limit exceeded", ignoreCase = true) ->
                             "Demasiados intentos fallidos. Por seguridad, espera un ratico e intenta de nuevo."
-                        rawMessage.contains("User not found", ignoreCase = true) -> 
+                        rawMessage.contains("User not found", ignoreCase = true) ->
                             "No encontramos ninguna cuenta con ese email."
                         else -> "Error de inicio de sesión. Inténtalo de nuevo. (${rawMessage.take(120)})"
                     }
@@ -287,16 +288,16 @@ class AuthViewModel(private val authManager: AuthManager = AuthManager()) : View
         authManager.signOut()
         _uiState.value = AuthUiState.LoggedOut
         try {
-            com.google.firebase.messaging.FirebaseMessaging.getInstance().deleteToken()
+            com.google.firebase.messaging.FirebaseMessaging.getInstance().unregister()
                 .addOnCompleteListener { task ->
                     if (task.isSuccessful) {
-                        Log.d("AuthViewModel", "FCM Token deleted successfully on logout")
+                        Log.d("AuthViewModel", "FCM messaging unregistered successfully on logout")
                     } else {
-                        Log.e("AuthViewModel", "Failed to delete FCM token on logout", task.exception)
+                        Log.e("AuthViewModel", "Failed to unregister FCM on logout", task.exception)
                     }
                 }
         } catch (e: Exception) {
-            Log.e("AuthViewModel", "Error deleting FCM token on logout", e)
+            Log.e("AuthViewModel", "Error unregistering FCM on logout", e)
         }
     }
 
@@ -367,8 +368,18 @@ class AuthViewModel(private val authManager: AuthManager = AuthManager()) : View
     }
 
     private fun extractQueryOrFragmentParam(url: String, key: String): String? {
-        val pattern = Regex("[?&#]$key=([^&#]*)")
-        val match = pattern.find(url)
-        return match?.groupValues?.get(1)
+        val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return null
+        uri.getQueryParameter(key)?.let { return it }
+
+        val fragment = uri.fragment ?: return null
+        fragment.split('&').forEach { pair ->
+            val separator = pair.indexOf('=')
+            if (separator <= 0) return@forEach
+            val fragmentKey = Uri.decode(pair.substring(0, separator))
+            if (fragmentKey == key) {
+                return Uri.decode(pair.substring(separator + 1))
+            }
+        }
+        return null
     }
 }

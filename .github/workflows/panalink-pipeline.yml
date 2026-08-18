@@ -2,7 +2,7 @@ name: PanaLink V2.0 Unified Pipeline
 
 on:
   push:
-    branches: [ "main", "master", "develop" ]
+    branches: [ "main", "master", "develop", "refactor/full-app-turbo" ]
     tags:
       - 'v*'
   workflow_dispatch:
@@ -20,8 +20,9 @@ on:
         required: false
         default: '1'
 
+# The workflow only builds and uploads artifacts; it does not need repository write access.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build-and-deploy:
@@ -43,21 +44,20 @@ jobs:
         run: |
           wget -q https://services.gradle.org/distributions/gradle-9.3.1-bin.zip
           unzip -q gradle-9.3.1-bin.zip
-          echo "$GITHUB_WORKSPACE/gradle-9.3.1/bin" >> $GITHUB_PATH
+          echo "$GITHUB_WORKSPACE/gradle-9.3.1/bin" >> "$GITHUB_PATH"
 
       - name: Setup Android Build Tools
         run: |
-          BUILD_TOOLS_VERSION=$(ls $ANDROID_SDK_ROOT/build-tools | tail -n 1)
+          BUILD_TOOLS_VERSION=$(ls "$ANDROID_SDK_ROOT/build-tools" | tail -n 1)
           echo "Using Android Build Tools: $BUILD_TOOLS_VERSION"
-          echo "$ANDROID_SDK_ROOT/build-tools/$BUILD_TOOLS_VERSION" >> $GITHUB_PATH
+          echo "$ANDROID_SDK_ROOT/build-tools/$BUILD_TOOLS_VERSION" >> "$GITHUB_PATH"
 
       - name: Inyectar Google Services JSON
         env:
           GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
         run: |
           if [ -n "$GOOGLE_SERVICES_JSON" ]; then
-            echo "$GOOGLE_SERVICES_JSON" > app/google-services.json
-            echo "google-services.json inyectado correctamente."
+            printf '%s' "$GOOGLE_SERVICES_JSON" > app/google-services.json
           else
             echo "::error::GOOGLE_SERVICES_JSON secret is missing!"
             exit 1
@@ -66,25 +66,27 @@ jobs:
       - name: Decode Keystore & Write Properties
         run: |
           if [ -z "${{ secrets.KEYSTORE_BASE64 }}" ]; then
-            echo "::error::KEYSTORE_BASE64 secret is missing! Build will likely fail."
+            echo "::error::KEYSTORE_BASE64 secret is missing!"
             exit 1
           fi
-          cat << 'EOF' > base64_temp.txt
-          ${{ secrets.KEYSTORE_BASE64 }}
-          EOF
-          base64 --decode --ignore-garbage base64_temp.txt > app/release-key.jks
+          printf '%s' "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode --ignore-garbage > app/release-key.jks
           cp app/release-key.jks release-key.jks
+          printf '%s\n' \
+            'KEYSTORE_FILE=release-key.jks' \
+            'KEYSTORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }}' \
+            'KEY_ALIAS=${{ secrets.KEY_ALIAS }}' \
+            'KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}' > app/secrets.properties
 
-          # Escribir las propiedades requeridas por el build.gradle.kts en app/secrets.properties
-          echo "KEYSTORE_FILE=release-key.jks" > app/secrets.properties
-          echo "KEYSTORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }}" >> app/secrets.properties
-          echo "KEY_ALIAS=${{ secrets.KEY_ALIAS }}" >> app/secrets.properties
-          echo "KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}" >> app/secrets.properties
-
-      - name: Test Keystore Integrity & Fingerprint
+      - name: Test Keystore Integrity
         run: |
-          keytool -list -v -keystore app/release-key.jks --storepass "${{ secrets.KEYSTORE_PASSWORD }}" || true
-          echo "¡BOVEDA ABIERTA CON ÉXITO!"
+          keytool -list -keystore app/release-key.jks --storepass "${{ secrets.KEYSTORE_PASSWORD }}" >/dev/null
+
+      # Quality gates run before release packaging so compilation-only regressions cannot ship.
+      - name: Unit tests
+        run: gradle testDebugUnitTest --no-daemon --stacktrace
+
+      - name: Android lint
+        run: gradle lintRelease --no-daemon --stacktrace
 
       - name: Build Release APK
         env:
@@ -92,14 +94,15 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: gradle assembleRelease --no-daemon
+        run: gradle assembleRelease --no-daemon --stacktrace
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: app-release
           path: app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
 
-      - name: Clean up Keystore
+      - name: Clean up sensitive build files
         if: always()
-        run: rm -f app/release-key.jks release-key.jks base64_temp.txt app/secrets.properties
+        run: rm -f app/release-key.jks release-key.jks app/secrets.properties app/google-services.json gradle-9.3.1-bin.zip

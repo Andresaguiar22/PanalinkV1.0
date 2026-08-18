@@ -33,7 +33,6 @@ class SocialMediaUploadWorker(
             return Result.failure()
         }
 
-        // Validate local file
         val file = File(entity.localFilePath)
         if (!file.exists()) {
             Log.e(TAG, "Local file does not exist: ${entity.localFilePath}")
@@ -46,12 +45,11 @@ class SocialMediaUploadWorker(
             return Result.failure()
         }
 
-        // Update state to uploading
-        val uploadingEntity = entity.copy(
+        var workingEntity = entity.copy(
             status = "uploading",
             updatedAt = System.currentTimeMillis()
         )
-        pendingUploadDao.updateUpload(uploadingEntity)
+        pendingUploadDao.updateUpload(workingEntity)
 
         var intermediateTempFile: File? = null
 
@@ -65,7 +63,7 @@ class SocialMediaUploadWorker(
                 "uploadType" to entity.uploadType
             ))
 
-            var uploadedUrl: String? = entity.remoteUrl
+            var uploadedUrl: String? = workingEntity.remoteUrl
             var finalUploadFile = file
 
             if (uploadedUrl == null && entity.mimeType.startsWith("video/") && !file.name.contains("_compressed_")) {
@@ -80,7 +78,7 @@ class SocialMediaUploadWorker(
                 try {
                     val pendingMediaDir = File(context.filesDir, "pending_media")
                     if (!pendingMediaDir.exists()) pendingMediaDir.mkdirs()
-                    
+
                     val compressed = com.example.util.VideoCompressorHelper.compressVideo(
                         context,
                         android.net.Uri.fromFile(file),
@@ -99,23 +97,17 @@ class SocialMediaUploadWorker(
                     if (compressed.exists() && compressed.length() > 0 && compressed.absolutePath != file.absolutePath) {
                         intermediateTempFile = compressed
                         finalUploadFile = compressed
-                        val updatedEntity = uploadingEntity.copy(
-                            updatedAt = System.currentTimeMillis()
-                        )
-                        pendingUploadDao.updateUpload(updatedEntity)
+                        workingEntity = workingEntity.copy(updatedAt = System.currentTimeMillis())
+                        pendingUploadDao.updateUpload(workingEntity)
                         Log.i(TAG, "Video compressed successfully: ${compressed.absolutePath}")
-                    } else {
-                        // Cleanup failed compressed file if created
-                        if (compressed.exists() && compressed.absolutePath != file.absolutePath) {
-                            try { compressed.delete() } catch (e: Exception) {}
-                        }
+                    } else if (compressed.exists() && compressed.absolutePath != file.absolutePath) {
+                        try { compressed.delete() } catch (_: Exception) {}
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Fallo al comprimir video, subiendo original", e)
                 }
             }
 
-            // 1. Upload CDN if not already uploaded
             if (uploadedUrl == null) {
                 val totalLength = finalUploadFile.length().coerceAtLeast(1L)
                 setProgress(workDataOf(
@@ -127,7 +119,6 @@ class SocialMediaUploadWorker(
                     "uploadType" to entity.uploadType
                 ))
 
-                // Perform direct upload to CDN via UploadRepository (this guarantees we don't delete on fail)
                 val currentUid = entity.userId.ifEmpty { SupabaseClient.currentUser?.id ?: "anonymous" }
                 val captionForUpload = entity.caption ?: "Social Media Upload"
                 var lastUpdateMs = 0L
@@ -157,16 +148,20 @@ class SocialMediaUploadWorker(
                 if (uploadResult.isSuccess) {
                     uploadedUrl = uploadResult.getOrThrow().url
                     Log.d(TAG, "CDN upload successful: $uploadedUrl")
-                    // Save remoteUrl in DB in case of future steps failing, so we don't re-upload to CDN!
-                    val partialSavedEntity = uploadingEntity.copy(
+
+                    // Critical invariant: once CDN upload succeeds, persist the URL
+                    // before any Supabase registration work. A later retry must reuse
+                    // this URL instead of uploading the same media again.
+                    workingEntity = workingEntity.copy(
+                        status = "uploading",
                         remoteUrl = uploadedUrl,
                         updatedAt = System.currentTimeMillis()
                     )
-                    pendingUploadDao.updateUpload(partialSavedEntity)
+                    pendingUploadDao.updateUpload(workingEntity)
                 } else {
                     val error = uploadResult.exceptionOrNull()?.localizedMessage ?: "Unknown CDN upload error"
                     Log.e(TAG, "CDN upload failed: $error")
-                    return handleFailure(entity, error)
+                    return handleFailure(workingEntity, error)
                 }
             }
 
@@ -179,7 +174,6 @@ class SocialMediaUploadWorker(
                 "uploadType" to entity.uploadType
             ))
 
-            // 2. Register record in Supabase depending on uploadType
             var createdState: com.example.data.model.UserState? = null
             val success = when (entity.uploadType) {
                 "STATE" -> {
@@ -213,7 +207,6 @@ class SocialMediaUploadWorker(
                     stateResult.isSuccess
                 }
                 "PROFILE" -> {
-                    // Get displayName from user profile first, then update profile photo url
                     val currentUid = entity.userId.ifEmpty { SupabaseClient.currentUser?.id ?: "anonymous" }
                     val profileResult = profilesRepository.getProfile(currentUid)
                     val displayName = profileResult.getOrNull()?.displayName ?: SupabaseClient.currentProfile?.displayName ?: ""
@@ -228,14 +221,13 @@ class SocialMediaUploadWorker(
 
             if (success) {
                 Log.i(TAG, "Upload completed successfully for $uploadId")
-                
-                // --- Save to Local States DB for Instant Visibility ---
+
                 try {
                     val currentUid = entity.userId.ifEmpty { SupabaseClient.currentUser?.id ?: "anonymous" }
-                    val myProfile = profilesRepository.getProfile(currentUid).getOrNull() 
-                        ?: SupabaseClient.currentProfile 
+                    val myProfile = profilesRepository.getProfile(currentUid).getOrNull()
+                        ?: SupabaseClient.currentProfile
                         ?: com.example.data.model.Profile(currentUid, "", null)
-                    
+
                     val newState = createdState ?: com.example.data.model.UserState(
                         id = java.util.UUID.randomUUID().toString(),
                         authorId = currentUid,
@@ -251,10 +243,8 @@ class SocialMediaUploadWorker(
                         type = if (entity.uploadType == "REEL") "reel" else "story",
                         localVideoPath = entity.localFilePath
                     )
-                    
+
                     val stateWithUser = com.example.data.model.UserStateWithUser(newState, myProfile)
-                    
-                    // Cleanup optimistic states for this user/caption to avoid duplicates
                     try {
                         db.statesDao().deleteById("optimistic_$uploadId")
                         db.statesDao().deleteOptimistic(currentUid, entity.caption)
@@ -262,7 +252,6 @@ class SocialMediaUploadWorker(
                         Log.w(TAG, "Failed to cleanup optimistic states", e)
                     }
 
-                    // Save to Room via Repository
                     statesRepository.saveStateLocally(stateWithUser, entity.localFilePath)
                     Log.i(TAG, "Saved new state locally for instant UI update")
                 } catch (e: Exception) {
@@ -278,16 +267,13 @@ class SocialMediaUploadWorker(
                     "uploadType" to entity.uploadType
                 ))
 
-                // Update Room to completed
-                val completedEntity = entity.copy(
+                val completedEntity = workingEntity.copy(
                     status = "completed",
                     remoteUrl = uploadedUrl,
                     updatedAt = System.currentTimeMillis()
                 )
                 pendingUploadDao.updateUpload(completedEntity)
 
-                // Delete local file on absolute success ONLY if it's NOT a reel/story
-                // For reels/stories, we keep the local file for instant playback from ROM (Internal Storage)
                 try {
                     if (entity.uploadType != "REEL" && entity.uploadType != "STATE") {
                         if (finalUploadFile.exists()) {
@@ -306,19 +292,19 @@ class SocialMediaUploadWorker(
 
                 return Result.success()
             } else {
-                return handleFailure(entity, "Fallo al registrar en la base de datos de Supabase")
+                return handleFailure(workingEntity, "Fallo al registrar en la base de datos de Supabase")
             }
 
         } catch (e: Exception) {
             Log.e(TAG, "Exception during social upload", e)
-            return handleFailure(entity, e.localizedMessage ?: "Excepción desconocida")
+            return handleFailure(workingEntity, e.localizedMessage ?: "Excepción desconocida")
         } finally {
             intermediateTempFile?.let { temp ->
                 if (temp.exists() && temp.absolutePath != entity.localFilePath) {
                     try {
                         temp.delete()
                         Log.i(TAG, "Cleaned up intermediate temp file: ${temp.absolutePath}")
-                    } catch (ignored: Exception) {}
+                    } catch (_: Exception) {}
                 }
             }
         }
@@ -339,7 +325,7 @@ class SocialMediaUploadWorker(
         } else {
             Log.w(TAG, "Temporary failure ($nextRetryCount/3). Scheduling retry. Error: $error")
             val retryingEntity = entity.copy(
-                status = "pending", // Reset to pending for retry flow representation
+                status = "pending",
                 retryCount = nextRetryCount,
                 errorMessage = error,
                 updatedAt = System.currentTimeMillis()

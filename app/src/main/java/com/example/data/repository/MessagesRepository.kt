@@ -1575,9 +1575,14 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
             val isDm = identity.kind == ChatKind.DM
 
             if (identity.kind == ChatKind.UNKNOWN || (isDm && identity.threadId.isNullOrEmpty())) {
-                Log.w(TAG, "sendMessage: Chat $chatId identity UNKNOWN or missing threadId. Keeping message local and scheduling sync.")
-                scheduleSync()
-                return@withContext Result.success(message)
+                Log.i(TAG, "sendMessage: Chat $chatId identity UNKNOWN or missing threadId. Forcing fresh canonical identity resolve.")
+                val freshIdentity = resolveChatIdentity(chatId, receiverUid)
+                if (freshIdentity.kind == ChatKind.UNKNOWN || (freshIdentity.kind == ChatKind.DM && freshIdentity.threadId.isNullOrEmpty())) {
+                    Log.w(TAG, "sendMessage: Chat $chatId identity STILL UNKNOWN after fresh resolve. Keeping message local and scheduling sync.")
+                    scheduleSync()
+                    return@withContext Result.success(message)
+                }
+                finalReceiverUid = freshIdentity.receiverId ?: receiverUid
             }
 
             // We need to use Supabase API to insert the message

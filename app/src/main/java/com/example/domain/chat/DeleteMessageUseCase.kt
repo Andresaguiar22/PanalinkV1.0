@@ -15,12 +15,19 @@ class DeleteMessageUseCase(private val context: Context) {
         deleteForEveryone: Boolean = true
     ): ResultState<Unit> = withContext(Dispatchers.IO) {
         try {
-            if (deleteForEveryone) {
+            val result = if (deleteForEveryone) {
                 messagesRepository.deleteMessageForEveryone(messageId)
             } else {
                 messagesRepository.deleteMessageForMe(messageId)
             }
-            ResultState.Success(Unit)
+
+            if (result.isSuccess) {
+                ResultState.Success(Unit)
+            } else {
+                val error = result.exceptionOrNull()
+                    ?: Exception("No se pudo eliminar el mensaje")
+                ResultState.Error(ErrorMapper.map(error))
+            }
         } catch (e: Exception) {
             ResultState.Error(ErrorMapper.map(e))
         }
