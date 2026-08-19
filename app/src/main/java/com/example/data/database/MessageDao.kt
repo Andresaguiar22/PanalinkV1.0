@@ -17,9 +17,9 @@ interface MessageDao {
     @Query("SELECT * FROM local_messages WHERE chatId = :chatId AND (:oldestTimestamp IS NULL OR createdAt < :oldestTimestamp) ORDER BY createdAt DESC LIMIT :limit")
     suspend fun getMessagesForChatPaged(chatId: String, limit: Int, oldestTimestamp: String?): List<MessageEntity>
 
-    // Outgoing queue: only transient states are eligible for background retry.
+    // Outgoing queue: all transient states are eligible for background retry.
     // "failed" is terminal and must not be re-enqueued indefinitely by sync.
-    @Query("SELECT * FROM local_messages WHERE status IN ('sending', 'pending') ORDER BY createdAt ASC")
+    @Query("SELECT * FROM local_messages WHERE status IN ('sending', 'pending', 'pending_media') ORDER BY createdAt ASC")
     suspend fun getPendingMessages(): List<MessageEntity>
 
     @Query("SELECT DISTINCT chatId FROM local_messages")
