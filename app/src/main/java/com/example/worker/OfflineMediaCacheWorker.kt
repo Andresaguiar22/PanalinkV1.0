@@ -4,7 +4,6 @@ import android.content.Context
 import android.util.Log
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
-import com.example.PanaApplication
 import com.example.data.database.PanalinkDatabase
 import com.example.data.repository.CdnManager
 import com.example.util.OfflineMediaCache
@@ -44,16 +43,14 @@ class OfflineMediaCacheWorker(
                     if (!mediaUrl.isNullOrBlank() && message.messageType != "text") {
                         val resolved = CdnManager.resolveMediaUrl(mediaUrl)
                         if (OfflineMediaCache.existingUri(applicationContext, resolved, message.mediaMime) == null) {
-                            if (!download(resolved, message.mediaMime)) failures++
-                            else processed++
+                            if (!download(resolved, message.mediaMime)) failures++ else processed++
                         }
                     }
                     val thumbUrl = message.thumbnailUrl
                     if (!thumbUrl.isNullOrBlank()) {
                         val resolvedThumb = CdnManager.resolveMediaUrl(thumbUrl)
                         if (OfflineMediaCache.existingUri(applicationContext, resolvedThumb, "image/jpeg") == null) {
-                            if (!download(resolvedThumb, "image/jpeg")) failures++
-                            else processed++
+                            if (!download(resolvedThumb, "image/jpeg")) failures++ else processed++
                         }
                     }
                 }
