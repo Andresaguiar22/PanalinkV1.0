@@ -1,17 +1,115 @@
 import re
+from pathlib import Path
 
-with open("app/src/main/java/com/example/ui/viewmodel/ChatViewModel.kt", "r") as f:
-    content = f.read()
+TARGET = Path("app/src/main/java/com/example/ui/viewmodel/ChatViewModel.kt")
+content = TARGET.read_text()
 
-content = content.replace("caption = null", "caption = \"\"")
-content = content.replace("com.example.ui.components.chat.voice.VoiceGestureEvent.START", "com.example.ui.components.chat.voice.VoiceGestureEvent.StartRecording")
-content = content.replace("com.example.ui.components.chat.voice.VoiceGestureEvent.LOCK", "com.example.ui.components.chat.voice.VoiceGestureEvent.LockRecording")
-content = content.replace("com.example.ui.components.chat.voice.VoiceGestureEvent.CANCEL", "com.example.ui.components.chat.voice.VoiceGestureEvent.CancelRecording")
-content = content.replace("com.example.ui.components.chat.voice.VoiceGestureEvent.SEND", "com.example.ui.components.chat.voice.VoiceGestureEvent.FinishRecording")
+# Add only the coroutine operators required by the media-send state observer.
+imports = [
+    "import kotlinx.coroutines.flow.first",
+    "import kotlinx.coroutines.flow.mapNotNull",
+    "import kotlinx.coroutines.withTimeoutOrNull",
+]
+anchor = "import kotlinx.coroutines.flow.asStateFlow\n"
+for line in imports:
+    if line not in content:
+        content = content.replace(anchor, anchor + line + "\n", 1)
 
-# Add else branch to when(event)
-content = content.replace("            com.example.ui.components.chat.voice.VoiceGestureEvent.FinishRecording -> {\n                val file = audioRecorder?.stopRecording()", "            com.example.ui.components.chat.voice.VoiceGestureEvent.FinishRecording -> {\n                val file = audioRecorder?.stopRecording()\n")
-content = re.sub(r'(\s+)com.example.ui.components.chat.voice.VoiceGestureEvent.FinishRecording -> \{[\s\S]*?\}\n        \}', r'\1com.example.ui.components.chat.voice.VoiceGestureEvent.FinishRecording -> {\n\1    val file = audioRecorder?.stopRecording()\n\1    _recordState.value = RecordState.IDLE\n\1    if (file != null) {\n\1        uploadAndSendMedia(\n\1            file = file,\n\1            mimeType = "audio/mp4",\n\1            typeLabel = "Audio",\n\1            replyToId = replyToId,\n\1            context = context,\n\1            onProgress = onProgress\n\1        )\n\1    }\n\1}\n\1else -> {} // ignore other states\n        }', content)
+# Replace only the current uploadAndSendMedia implementation. The temporary
+# Room row is already persisted by MessagesRepository and is reconciled by
+# MediaUploadWorker using clientMessageUuid. Waiting on the existing chat Flow
+# keeps the UI progress tied to the actual worker lifecycle instead of merely
+# to WorkManager enqueue success.
+pattern = re.compile(
+    r"fun uploadAndSendMedia\(\n.*?\n    }\n    \n    fun editMessage",
+    re.DOTALL,
+)
+replacement = '''fun uploadAndSendMedia(
+        uri: android.net.Uri? = null,
+        file: java.io.File? = null,
+        mimeType: String,
+        typeLabel: String,
+        replyToId: String?,
+        context: android.content.Context,
+        fileName: String? = null,
+        onProgress: (Boolean) -> Unit
+    ) {
+        val chatId = currentChatId ?: return
 
-with open("app/src/main/java/com/example/ui/viewmodel/ChatViewModel.kt", "w") as f:
-    f.write(content)
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            onProgress(true)
+
+            val result = messagesRepo.sendMultimediaMessage(
+                chatId = chatId,
+                context = context,
+                sourceUri = uri,
+                sourceFile = file,
+                mimeType = mimeType,
+                typeLabel = typeLabel,
+                content = "[$typeLabel]",
+                replyToId = replyToId,
+                isGhost = _isGhostMode.value,
+                receiverId = currentOtherUserId
+            )
+
+            val message = result.getOrNull()
+            val finalMessage = if (message != null) {
+                kotlinx.coroutines.withTimeoutOrNull(120_000L) {
+                    messagesRepo.getMessagesFlow(chatId)
+                        .mapNotNull { messages ->
+                            messages.firstOrNull { candidate ->
+                                candidate.clientMessageUuid == message.clientMessageUuid &&
+                                    candidate.status in setOf("sent", "delivered", "seen", "failed")
+                            }
+                        }
+                        .first()
+                }
+            } else {
+                null
+            }
+
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                onProgress(false)
+
+                when {
+                    result.isFailure -> {
+                        try {
+                            android.widget.Toast.makeText(
+                                context,
+                                "Error procesando archivo",
+                                android.widget.Toast.LENGTH_LONG
+                            ).show()
+                        } catch (t: Throwable) {}
+                    }
+                    finalMessage?.status == "failed" -> {
+                        try {
+                            android.widget.Toast.makeText(
+                                context,
+                                "No se pudo enviar el archivo",
+                                android.widget.Toast.LENGTH_LONG
+                            ).show()
+                        } catch (t: Throwable) {}
+                    }
+                    finalMessage == null && message != null -> {
+                        // The worker remains persisted in WorkManager. Do not
+                        // leave a screen-level spinner running forever if the
+                        // device is offline or the upload is unusually slow.
+                        Log.w(
+                            "ChatViewModel",
+                            "Media send observer timed out for ${message.clientMessageUuid}; worker continues in background"
+                        )
+                    }
+                }
+            }
+        }
+    }
+    
+    fun editMessage'''
+
+match = pattern.search(content)
+if not match:
+    raise SystemExit("ERROR: uploadAndSendMedia block not found; file left unchanged")
+
+content = content[:match.start()] + replacement + content[match.end():]
+TARGET.write_text(content)
+print("Patched ChatViewModel.kt: media progress now follows Room/Worker terminal state.")
