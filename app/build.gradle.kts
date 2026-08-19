@@ -67,7 +67,9 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = true
+            // Fast Release: keep the official Release signing configuration,
+            // but disable R8/minification so Termux builds finish quickly.
+            isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
