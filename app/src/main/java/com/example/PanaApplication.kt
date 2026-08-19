@@ -31,9 +31,7 @@ class PanaApplication : Application(), ImageLoaderFactory, DefaultLifecycleObser
                     .build()
             }
             .diskCache {
-                // filesDir is intentional. cacheDir can be purged by Android when
-                // storage is under pressure, which would make already loaded media
-                // disappear while offline.
+                // Persistent application storage: Android may purge cacheDir while offline.
                 coil.disk.DiskCache.Builder()
                     .directory(filesDir.resolve("image_cache"))
                     .maxSizeBytes(150 * 1024 * 1024)
@@ -56,21 +54,17 @@ class PanaApplication : Application(), ImageLoaderFactory, DefaultLifecycleObser
                             return@Interceptor chain.proceed(currentRequest)
                         } catch (e: Exception) {
                             val isNetworkError = e is java.net.ConnectException ||
-                                                 e is java.net.SocketTimeoutException ||
-                                                 e is java.net.UnknownHostException ||
-                                                 e is java.io.IOException
-
+                                e is java.net.SocketTimeoutException ||
+                                e is java.net.UnknownHostException ||
+                                e is java.io.IOException
                             val hasRetried = request.headers["X-CDN-Retried"] == "true"
-
                             if (isNetworkError && !hasRetried && com.example.data.repository.CdnManager.isCdnRelated(data)) {
                                 android.util.Log.w("CoilInterceptor", "Network error resolving media, forcing CDN refresh: ${e.message}")
                                 kotlinx.coroutines.runBlocking {
                                     com.example.data.repository.CdnManager.getCDNUrl(forceRefresh = true)
                                 }
-
                                 val finalResolvedUrl = com.example.data.repository.CdnManager.resolveMediaUrlSync(data)
                                 if (finalResolvedUrl != resolvedUrl && finalResolvedUrl.isNotEmpty()) {
-                                    android.util.Log.i("CoilInterceptor", "CDN updated! Retrying with new URL: $finalResolvedUrl")
                                     val retryRequest = request.newBuilder()
                                         .data(finalResolvedUrl)
                                         .addHeader("X-CDN-Retried", "true")
@@ -93,7 +87,6 @@ class PanaApplication : Application(), ImageLoaderFactory, DefaultLifecycleObser
         super<Application>.onCreate()
         instance = this
 
-        // Shield System: Immediate Security Audit
         try {
             val audit = com.example.util.SecurityManager.getSecurityAudit(this)
             android.util.Log.i("Shield", "Application Shield Status: ${audit.status} (${audit.score}/100)")
@@ -128,13 +121,48 @@ class PanaApplication : Application(), ImageLoaderFactory, DefaultLifecycleObser
             android.util.Log.e("PanaApplication", "ProcessLifecycleOwner observer failed safely", e)
         }
 
-        // Pre-fetch dynamic CDN URL on startup asynchronously
         applicationScope.launch {
             try {
                 com.example.data.repository.CdnManager.getCDNUrl()
             } catch (e: Throwable) {
                 android.util.Log.e("PanaApplication", "Error pre-fetching CDN URL at startup", e)
             }
+        }
+
+        scheduleOfflineMediaWarmup()
+    }
+
+    private fun scheduleOfflineMediaWarmup() {
+        try {
+            val constraints = androidx.work.Constraints.Builder()
+                .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED)
+                .build()
+
+            val immediate = androidx.work.OneTimeWorkRequestBuilder<com.example.worker.OfflineMediaCacheWorker>()
+                .setConstraints(constraints)
+                .addTag("offline_media_warmup")
+                .build()
+
+            androidx.work.WorkManager.getInstance(this).enqueueUniqueWork(
+                "offline_media_warmup_now",
+                androidx.work.ExistingWorkPolicy.KEEP,
+                immediate
+            )
+
+            val periodic = androidx.work.PeriodicWorkRequestBuilder<com.example.worker.OfflineMediaCacheWorker>(
+                6, java.util.concurrent.TimeUnit.HOURS
+            )
+                .setConstraints(constraints)
+                .addTag("offline_media_periodic")
+                .build()
+
+            androidx.work.WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+                "offline_media_periodic",
+                androidx.work.ExistingPeriodicWorkPolicy.KEEP,
+                periodic
+            )
+        } catch (t: Throwable) {
+            android.util.Log.w("PanaApplication", "Offline media warm-up scheduling failed: ${t.message}")
         }
     }
 
