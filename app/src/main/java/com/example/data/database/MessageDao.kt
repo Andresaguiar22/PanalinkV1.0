@@ -163,35 +163,64 @@ interface MessageDao {
             local.updatedAt
         }
 
+        // Message status is monotonic. A stale realtime/HTTP response must
+        // never move a confirmed message back to "sending" or "pending".
+        // A stale failure must not overwrite a confirmed successful send.
+        val localStatus = local.status?.lowercase()
+        val remoteStatus = remote.status?.lowercase()
+        val successfulStatuses = setOf("sent", "delivered", "seen")
+        val transientStatuses = setOf("sending", "pending")
         val finalStatus = when {
             local.deletePending -> "deleted"
             local.editPending -> local.status
-            else -> remote.status
+            remoteStatus in successfulStatuses && localStatus in successfulStatuses -> {
+                when {
+                    localStatus == "seen" || remoteStatus == "seen" -> "seen"
+                    localStatus == "delivered" || remoteStatus == "delivered" -> "delivered"
+                    else -> "sent"
+                }
+            }
+            localStatus in successfulStatuses && remoteStatus !in successfulStatuses -> local.status
+            remoteStatus in successfulStatuses -> remote.status
+            localStatus == "failed" && remoteStatus in transientStatuses -> local.status
+            remoteStatus == "failed" && localStatus in transientStatuses -> remote.status
+            else -> remote.status ?: local.status
         }
 
         val finalContent = if (local.editPending) {
             local.content
         } else {
-            remote.content
+            remote.content ?: local.content
         }
 
         val finalDeletedAt = if (local.deletePending) {
             local.deletedAt ?: remote.deletedAt
         } else {
-            remote.deletedAt
+            remote.deletedAt ?: local.deletedAt
         }
 
         val finalReactionsJson = if (local.reactionPending) {
             local.reactionsJson
         } else {
-            mergeReactions(null, remote.reactionsJson)
+            mergeReactions(local.reactionsJson, remote.reactionsJson)
         }
 
         return remote.copy(
+            receiverId = remote.receiverId ?: local.receiverId,
             content = finalContent,
             status = finalStatus,
             deletedAt = finalDeletedAt,
             reactionsJson = finalReactionsJson,
+            deliveredAt = remote.deliveredAt ?: local.deliveredAt,
+            seenAt = remote.seenAt ?: local.seenAt,
+            thumbnailUrl = remote.thumbnailUrl ?: local.thumbnailUrl,
+            mediaUrl = remote.mediaUrl ?: local.mediaUrl,
+            mediaMime = remote.mediaMime ?: local.mediaMime,
+            mediaSize = remote.mediaSize ?: local.mediaSize,
+            mediaDuration = remote.mediaDuration ?: local.mediaDuration,
+            mediaWidth = remote.mediaWidth ?: local.mediaWidth,
+            mediaHeight = remote.mediaHeight ?: local.mediaHeight,
+            messageType = remote.messageType ?: local.messageType,
             updatedAt = mergedUpdatedAt,
             localMediaUri = local.localMediaUri ?: remote.localMediaUri,
             localThumbnailUri = local.localThumbnailUri ?: remote.localThumbnailUri,
@@ -204,7 +233,8 @@ interface MessageDao {
             editPending = local.editPending,
             reactionPending = local.reactionPending,
             deletePending = local.deletePending,
-            ghostOpenedAt = local.ghostOpenedAt ?: remote.ghostOpenedAt
+            ghostOpenedAt = local.ghostOpenedAt ?: remote.ghostOpenedAt,
+            musicPlaylistId = remote.musicPlaylistId ?: local.musicPlaylistId
         )
     }
 
