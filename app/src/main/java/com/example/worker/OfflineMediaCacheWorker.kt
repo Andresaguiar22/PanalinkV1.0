@@ -11,10 +11,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.concurrent.TimeUnit
 
-/**
- * Warms persistent media storage for the most recent messages. It is network
- * constrained and safe to run repeatedly: existing files are skipped.
- */
+/** Persistent warm-up for recent media without loading entire conversations into RAM. */
 class OfflineMediaCacheWorker(
     appContext: Context,
     params: WorkerParameters
@@ -27,17 +24,14 @@ class OfflineMediaCacheWorker(
     }
 
     override suspend fun doWork(): Result {
-        val db = PanalinkDatabase.getDatabase(applicationContext)
-        val dao = db.messageDao()
+        val dao = PanalinkDatabase.getDatabase(applicationContext).messageDao()
         var failures = 0
         var processed = 0
-
         return try {
-            val chatIds = dao.getDistinctChatIds()
-            for (chatId in chatIds) {
+            for (chatId in dao.getDistinctChatIds()) {
                 if (isStopped) break
-                val messages = dao.getMessagesForChat(chatId).takeLast(40)
-                for (message in messages) {
+                // Query only the newest 40 rows instead of materializing a whole chat.
+                for (message in dao.getMessagesForChatPaged(chatId, 40, null).asReversed()) {
                     if (isStopped) break
                     val mediaUrl = message.mediaUrl
                     if (!mediaUrl.isNullOrBlank() && message.messageType != "text") {
@@ -63,7 +57,7 @@ class OfflineMediaCacheWorker(
         }
     }
 
-    private suspend fun download(url: String, mime: String?): Boolean {
+    private fun download(url: String, mime: String?): Boolean {
         if (url.isBlank()) return false
         return try {
             val request = Request.Builder().url(url).get().build()
