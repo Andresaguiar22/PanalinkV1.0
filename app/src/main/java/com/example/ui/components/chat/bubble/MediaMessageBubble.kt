@@ -31,7 +31,7 @@ fun MediaMessageBubble(
     mediaUrls: List<String>,
     isVideo: Boolean = false,
     thumbnailUrl: String? = null,
-    durationLabel: String? = null, // ej. "1:06"
+    durationLabel: String? = null,
     captionText: String? = null,
     bubbleColor: Color = Color(0xFF1F2C34),
     isDownloading: Boolean = false,
@@ -50,13 +50,11 @@ fun MediaMessageBubble(
     ) {
         Column {
             if (mediaUrls.size > 1 && !isVideo) {
-                // Cuadrícula de múltiples imágenes
                 MultiImageGridBubble(
                     imageUrls = mediaUrls,
                     onImageClick = { index, url -> onMediaClick(index, url) }
                 )
             } else if (mediaUrls.isNotEmpty()) {
-                // Imagen o Video Individual
                 SingleMediaView(
                     url = mediaUrls.first(),
                     isVideo = isVideo,
@@ -66,7 +64,6 @@ fun MediaMessageBubble(
                 )
             }
 
-            // Indicador de Subtítulo / Enlace (ej. TikTok, YouTube o texto descriptivo)
             if (!captionText.isNullOrEmpty()) {
                 Spacer(modifier = Modifier.height(4.dp))
                 Column(
@@ -84,10 +81,12 @@ fun MediaMessageBubble(
             }
         }
 
-        // Overlay de Progreso de Carga / Descarga
+        // A completed progress value must never keep the loading overlay alive by itself.
+        // Active download/upload flags still force visibility, including indeterminate work.
+        val showProgressOverlay = isDownloading || isUploading || (progress != null && progress < 1f)
         DownloadProgressOverlay(
-            isVisible = isDownloading || isUploading || progress != null,
-            progress = progress,
+            isVisible = showProgressOverlay,
+            progress = progress?.coerceIn(0f, 1f),
             isUploading = isUploading,
             onCancelOrRetryClick = onCancelProgress,
             statusText = if (isUploading) "Subiendo..." else null
@@ -95,9 +94,6 @@ fun MediaMessageBubble(
     }
 }
 
-/**
- * Vista previa para un solo archivo multimedia (Imagen o Video grande)
- */
 @Composable
 private fun SingleMediaView(
     url: String,
@@ -124,14 +120,12 @@ private fun SingleMediaView(
         )
 
         if (isVideo) {
-            // Capa semitransparente oscura sobre la miniatura del video
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(Color.Black.copy(alpha = 0.35f))
             )
 
-            // Botón Central de Play
             Box(
                 modifier = Modifier
                     .size(52.dp)
@@ -147,7 +141,6 @@ private fun SingleMediaView(
                 )
             }
 
-            // Duración del video en la esquina inferior izquierda
             if (!durationLabel.isNullOrEmpty()) {
                 Box(
                     modifier = Modifier
@@ -180,12 +173,6 @@ private fun SingleMediaView(
     }
 }
 
-/**
- * Cuadrícula adaptable para múltiples imágenes
- * - 2 imágenes: 2 columnas iguales
- * - 3 imágenes: 1 grande a la izquierda, 2 pequeñas alineadas a la derecha
- * - 4+ imágenes: Cuadrícula 2x2. Si hay más de 4, la 4ª tiene overlay "+N"
- */
 @Composable
 fun MultiImageGridBubble(
     imageUrls: List<String>,
@@ -202,7 +189,6 @@ fun MultiImageGridBubble(
     ) {
         when {
             count == 2 -> {
-                // 2 Columnas iguales
                 Row(
                     modifier = Modifier.fillMaxSize(),
                     horizontalArrangement = Arrangement.spacedBy(2.dp)
@@ -224,7 +210,6 @@ fun MultiImageGridBubble(
                 }
             }
             count == 3 -> {
-                // 1 grande izquierda, 2 pequeñas derecha
                 Row(
                     modifier = Modifier.fillMaxSize(),
                     horizontalArrangement = Arrangement.spacedBy(2.dp)
@@ -260,7 +245,6 @@ fun MultiImageGridBubble(
                 }
             }
             else -> {
-                // 4 o más: Cuadrícula 2x2
                 val remainingCount = count - 4
                 Column(
                     modifier = Modifier.fillMaxSize(),
@@ -315,9 +299,6 @@ fun MultiImageGridBubble(
     }
 }
 
-/**
- * Elemento individual dentro de la cuadrícula de imágenes
- */
 @Composable
 private fun GridImageItem(
     url: String,
