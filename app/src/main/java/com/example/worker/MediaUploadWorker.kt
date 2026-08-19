@@ -85,6 +85,7 @@ class MediaUploadWorker(
         // retry or turn a delivered/read message into failed.
         if (entity.status in SERVER_CONFIRMED_STATUSES && !entity.mediaUrl.isNullOrBlank()) {
             Log.d(TAG, "Message $messageId is already server-confirmed (${entity.status}); upload work is complete")
+            cleanupLocalMedia(entity.localMediaUri, entity.localThumbnailUri)
             return Result.success()
         }
 
@@ -94,7 +95,11 @@ class MediaUploadWorker(
         // Room write and prevents duplicate media uploads.
         if (!entity.mediaUrl.isNullOrBlank()) {
             Log.d(TAG, "Media URL already persisted for $messageId; skipping binary re-upload and syncing metadata")
-            return syncOwnMessageMetadata(messageId)
+            val syncResult = syncOwnMessageMetadata(messageId)
+            if (syncResult is Result.Success) {
+                cleanupLocalMedia(entity.localMediaUri, entity.localThumbnailUri)
+            }
+            return syncResult
         }
 
         // A media message must remain pending until both stages finish:
@@ -153,6 +158,8 @@ class MediaUploadWorker(
                         Result.retry()
                     }
                 } else {
+                    val originalLocalMediaUri = entity.localMediaUri
+                    val originalLocalThumbnailUri = entity.localThumbnailUri
                     val updatedEntity = entity.copy(
                         mediaUrl = mediaInfo.url,
                         thumbnailUrl = mediaInfo.thumbnailUrl ?: entity.thumbnailUrl,
@@ -162,6 +169,7 @@ class MediaUploadWorker(
                         mediaWidth = mediaInfo.width,
                         mediaHeight = mediaInfo.height,
                         localMediaUri = null,
+                        localThumbnailUri = null,
                         status = "sending"
                     )
 
@@ -176,6 +184,7 @@ class MediaUploadWorker(
 
                     if (!shouldKeepAfterUpload) {
                         messageDao.deleteMessageById(updatedEntity.id)
+                        cleanupLocalMedia(originalLocalMediaUri, originalLocalThumbnailUri)
                         Result.success()
                     } else {
                         messageDao.insertMessage(updatedEntity)
@@ -183,6 +192,7 @@ class MediaUploadWorker(
                         // for replacing the temporary row or marking it SENT.
                         val syncResult = syncOwnMessageMetadata(messageId)
                         if (syncResult is Result.Success) {
+                            cleanupLocalMedia(originalLocalMediaUri, originalLocalThumbnailUri)
                             PanaLinkNotificationManager.showUploadSuccessNotification(context)
                         }
                         syncResult
@@ -198,6 +208,22 @@ class MediaUploadWorker(
                 Result.retry()
             }
         }
+    }
+
+    private fun cleanupLocalMedia(mediaPath: String?, thumbnailPath: String?) {
+        listOf(mediaPath, thumbnailPath)
+            .filterNot { it.isNullOrBlank() }
+            .map { File(it!!) }
+            .distinctBy { it.absolutePath }
+            .forEach { file ->
+                try {
+                    if (file.exists() && file.isFile) {
+                        file.delete()
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Unable to delete local media ${file.absolutePath}", e)
+                }
+            }
     }
 
     private companion object {
