@@ -37,8 +37,8 @@ class MediaUploadWorker(
                     Log.d(TAG, "Message $messageId was reconciled/replaced/deleted during metadata sync")
                     Result.success()
                 }
-                current.status == "sent" && !current.mediaUrl.isNullOrBlank() -> {
-                    Log.d(TAG, "Message $messageId metadata is synchronized")
+                current.status in SERVER_CONFIRMED_STATUSES && !current.mediaUrl.isNullOrBlank() -> {
+                    Log.d(TAG, "Message $messageId metadata is synchronized with status=${current.status}")
                     Result.success()
                 }
                 runAttemptCount >= MAX_ATTEMPTS -> {
@@ -81,11 +81,18 @@ class MediaUploadWorker(
             return Result.success()
         }
 
+        // Once the server has confirmed the message, this worker must never
+        // retry or turn a delivered/read message into failed.
+        if (entity.status in SERVER_CONFIRMED_STATUSES && !entity.mediaUrl.isNullOrBlank()) {
+            Log.d(TAG, "Message $messageId is already server-confirmed (${entity.status}); upload work is complete")
+            return Result.success()
+        }
+
         // If a previous attempt already persisted the remote media URL, never
         // upload the binary again. Only metadata reconciliation remains. This
         // closes the crash window between remote upload success and the local
         // Room write and prevents duplicate media uploads.
-        if (!entity.mediaUrl.isNullOrBlank() && entity.status != "sent") {
+        if (!entity.mediaUrl.isNullOrBlank()) {
             Log.d(TAG, "Media URL already persisted for $messageId; skipping binary re-upload and syncing metadata")
             return syncOwnMessageMetadata(messageId)
         }
@@ -95,7 +102,7 @@ class MediaUploadWorker(
         // 2) the message metadata is persisted in Supabase.
         val localUri = entity.localMediaUri
         if (localUri.isNullOrEmpty()) {
-            if (entity.status == "sent") {
+            if (entity.status in SERVER_CONFIRMED_STATUSES) {
                 return Result.success()
             }
 
@@ -195,5 +202,6 @@ class MediaUploadWorker(
 
     private companion object {
         const val MAX_ATTEMPTS = 5
+        val SERVER_CONFIRMED_STATUSES = setOf("sent", "delivered", "seen")
     }
 }
