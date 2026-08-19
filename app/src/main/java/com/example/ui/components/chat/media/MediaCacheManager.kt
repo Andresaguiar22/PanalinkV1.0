@@ -13,19 +13,39 @@ object MediaCacheManager {
     fun prefetchImage(context: Context, url: String) {
         if (url.isEmpty()) return
         scope.launch {
-            val request = ImageRequest.Builder(context)
+            val request = ImageRequest.Builder(context.applicationContext)
                 .data(url)
                 .build()
-            context.imageLoader.enqueue(request)
+            context.applicationContext.imageLoader.enqueue(request)
         }
     }
 
     fun isImageCached(context: Context, url: String): Boolean {
-        return context.imageLoader.diskCache?.get(url) != null
+        return context.applicationContext.imageLoader.diskCache?.get(url) != null
     }
 
+    /**
+     * Clears only RAM. Disk media is intentionally preserved so an offline
+     * restart does not turn previously loaded chat media into blank cards.
+     */
+    fun clearMemoryCache(context: Context) {
+        context.applicationContext.imageLoader.memoryCache?.clear()
+    }
+
+    /**
+     * Explicit destructive operation. Call this only from a user-confirmed
+     * "clear media cache" action.
+     */
+    fun clearAllCache(context: Context) {
+        context.applicationContext.imageLoader.memoryCache?.clear()
+        context.applicationContext.imageLoader.diskCache?.clear()
+    }
+
+    @Deprecated(
+        message = "Use clearMemoryCache() to preserve offline media, or clearAllCache() only after explicit user confirmation",
+        replaceWith = ReplaceWith("clearMemoryCache(context)")
+    )
     fun clearCache(context: Context) {
-        context.imageLoader.memoryCache?.clear()
-        context.imageLoader.diskCache?.clear()
+        clearMemoryCache(context)
     }
 }
