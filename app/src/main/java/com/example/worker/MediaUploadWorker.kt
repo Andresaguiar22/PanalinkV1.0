@@ -4,7 +4,6 @@ import android.content.Context
 import android.util.Log
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
-import com.example.PanaApplication
 import com.example.data.database.PanalinkDatabase
 import com.example.util.PanalinkMediaManager
 import com.example.data.repository.MessagesRepository
@@ -21,22 +20,42 @@ class MediaUploadWorker(
     private val uploadRepository = UploadRepository()
     private val messagesRepository = MessagesRepository.getInstance()
 
+    companion object {
+        private const val MAX_UPLOAD_ATTEMPTS = 5
+    }
+
+    private suspend fun markFailed(messageId: String) {
+        try {
+            messageDao.updateMessageStatus(messageId, "failed")
+        } catch (dbEx: Exception) {
+            Log.e(TAG, "Failed to persist terminal failed state for $messageId", dbEx)
+        }
+    }
+
     override suspend fun doWork(): Result {
         val messageId = inputData.getString("messageId") ?: return Result.failure()
-        Log.i(TAG, "Starting media upload for message: $messageId")
+        Log.i(TAG, "Starting media upload for message: $messageId (attempt=$runAttemptCount)")
 
         val entity = messageDao.getMessageById(messageId) ?: return Result.failure()
-        val localUri = entity.localMediaUri ?: return Result.success() // Nothing to upload
+        val localUri = entity.localMediaUri
+
+        // A worker can legitimately be replayed after the media URL was already
+        // persisted. In that case there is nothing left to upload; let the
+        // normal metadata reconciliation finish the message.
+        if (localUri.isNullOrBlank()) {
+            if (!entity.mediaUrl.isNullOrBlank()) {
+                messagesRepository.scheduleSync()
+                return Result.success()
+            }
+            markFailed(messageId)
+            return Result.failure()
+        }
 
         return try {
             val file = File(localUri)
             if (!file.exists()) {
                 Log.e(TAG, "Local file does not exist: $localUri")
-                try {
-                    messageDao.updateMessageStatus(messageId, "failed")
-                } catch (dbEx: Exception) {
-                    Log.e(TAG, "Failed to update db status to failed on missing file", dbEx)
-                }
+                markFailed(messageId)
                 return Result.failure()
             }
 
@@ -59,7 +78,6 @@ class MediaUploadWorker(
                 val mediaInfo = uploadResult.getOrThrow()
                 Log.i(TAG, "Upload successful: mediaUrl=${mediaInfo.url}, thumbUrl=${mediaInfo.thumbnailUrl}")
 
-                // Update Room with remote URLs and full metadata
                 val updatedEntity = entity.copy(
                     mediaUrl = mediaInfo.url,
                     thumbnailUrl = mediaInfo.thumbnailUrl ?: entity.thumbnailUrl,
@@ -69,9 +87,9 @@ class MediaUploadWorker(
                     mediaWidth = mediaInfo.width,
                     mediaHeight = mediaInfo.height,
                     localMediaUri = null,
-                    status = "sending" // Ready for metadata sync
+                    status = "sending"
                 )
-                val msgsRepo = com.example.data.repository.MessagesRepository.getInstance()
+                val msgsRepo = MessagesRepository.getInstance()
                 val effectiveClearedAt = msgsRepo.getEffectiveClearedAt(updatedEntity.chatId, null)
                 val shouldKeep = com.example.util.MessageFilter.shouldKeepMessage(
                     messageId = updatedEntity.id,
@@ -86,17 +104,26 @@ class MediaUploadWorker(
                     messageDao.deleteMessageById(updatedEntity.id)
                 }
 
-                // Trigger metadata sync
                 messagesRepository.scheduleSync()
-
                 Result.success()
             } else {
-                Log.e(TAG, "Upload failed: ${uploadResult.exceptionOrNull()?.message}")
-                Result.retry()
+                val error = uploadResult.exceptionOrNull()
+                Log.e(TAG, "Upload failed (attempt=$runAttemptCount): ${error?.message}", error)
+                if (runAttemptCount + 1 >= MAX_UPLOAD_ATTEMPTS) {
+                    markFailed(messageId)
+                    Result.failure()
+                } else {
+                    Result.retry()
+                }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error in MediaUploadWorker: ${e.localizedMessage}", e)
-            Result.retry()
+            Log.e(TAG, "Error in MediaUploadWorker (attempt=$runAttemptCount): ${e.localizedMessage}", e)
+            if (runAttemptCount + 1 >= MAX_UPLOAD_ATTEMPTS) {
+                markFailed(messageId)
+                Result.failure()
+            } else {
+                Result.retry()
+            }
         }
     }
 }
