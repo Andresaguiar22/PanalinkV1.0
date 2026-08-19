@@ -9,7 +9,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -22,8 +21,10 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
+import com.example.data.video.CacheDataSourceFactory
 import com.example.ui.components.chat.media.loading.MediaLoadingState
 import com.example.ui.components.chat.media.loading.PremiumMediaLoadingOverlay
 
@@ -37,29 +38,35 @@ fun SmartVideoPlayer(
     val context = LocalContext.current
     var isPlaying by remember { mutableStateOf(false) }
     var loadingState by remember { mutableStateOf<MediaLoadingState>(MediaLoadingState.Idle) }
-    
-    val exoPlayer = remember {
-        ExoPlayer.Builder(context).build().apply {
-            setMediaItem(MediaItem.fromUri(videoUrl))
-            repeatMode = Player.REPEAT_MODE_ONE
-            addListener(object : Player.Listener {
-                override fun onPlaybackStateChanged(state: Int) {
-                    loadingState = when (state) {
-                        Player.STATE_BUFFERING -> MediaLoadingState.Loading
-                        Player.STATE_READY -> MediaLoadingState.Success
-                        Player.STATE_IDLE -> MediaLoadingState.Idle
-                        else -> MediaLoadingState.Idle
-                    }
-                }
 
-                override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                    loadingState = MediaLoadingState.Error(error.message)
-                }
-            })
-        }
+    val exoPlayer = remember(videoUrl) {
+        ExoPlayer.Builder(context)
+            .setMediaSourceFactory(
+                DefaultMediaSourceFactory(context)
+                    .setDataSourceFactory(CacheDataSourceFactory.getCacheDataSourceFactory(context))
+            )
+            .build()
+            .apply {
+                setMediaItem(MediaItem.fromUri(videoUrl))
+                repeatMode = Player.REPEAT_MODE_ONE
+                addListener(object : Player.Listener {
+                    override fun onPlaybackStateChanged(state: Int) {
+                        loadingState = when (state) {
+                            Player.STATE_BUFFERING -> MediaLoadingState.Loading
+                            Player.STATE_READY -> MediaLoadingState.Success
+                            Player.STATE_IDLE -> MediaLoadingState.Idle
+                            else -> MediaLoadingState.Idle
+                        }
+                    }
+
+                    override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                        loadingState = MediaLoadingState.Error(error.message)
+                    }
+                })
+            }
     }
 
-    DisposableEffect(Unit) {
+    DisposableEffect(exoPlayer) {
         onDispose {
             exoPlayer.release()
         }
@@ -80,13 +87,13 @@ fun SmartVideoPlayer(
                 modifier = Modifier.fillMaxSize(),
                 contentScale = androidx.compose.ui.layout.ContentScale.Crop
             )
-            
+
             Box(
                 modifier = Modifier
                     .size(56.dp)
                     .clip(CircleShape)
                     .background(Color.Black.copy(alpha = 0.6f))
-                    .clickable { 
+                    .clickable {
                         isPlaying = true
                         exoPlayer.prepare()
                         exoPlayer.play()
