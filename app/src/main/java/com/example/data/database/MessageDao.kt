@@ -29,6 +29,9 @@ interface MessageDao {
     @Query("SELECT * FROM local_messages WHERE clientMessageUuid = :uuid")
     suspend fun getMessagesByUuid(uuid: String): List<MessageEntity>
 
+    @Query("SELECT * FROM local_messages WHERE clientMessageUuid = :uuid LIMIT 1")
+    fun observeMessageByClientUuid(uuid: String): Flow<MessageEntity?>
+
     @Query("SELECT * FROM local_messages WHERE editPending = 1")
     suspend fun getEditPendingMessages(): List<MessageEntity>
 
