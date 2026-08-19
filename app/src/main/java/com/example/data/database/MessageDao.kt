@@ -17,10 +17,9 @@ interface MessageDao {
     @Query("SELECT * FROM local_messages WHERE chatId = :chatId AND (:oldestTimestamp IS NULL OR createdAt < :oldestTimestamp) ORDER BY createdAt DESC LIMIT :limit")
     suspend fun getMessagesForChatPaged(chatId: String, limit: Int, oldestTimestamp: String?): List<MessageEntity>
 
-    // Outgoing queue: include every transient local status so a failed immediate send
-    // cannot become permanently invisible to WorkManager. In particular, sendMessage()
-    // changes failed sends to "pending", while media messages use "sending".
-    @Query("SELECT * FROM local_messages WHERE status IN ('sending', 'pending', 'failed') ORDER BY createdAt ASC")
+    // Outgoing queue: only transient states are eligible for background retry.
+    // "failed" is terminal and must not be re-enqueued indefinitely by sync.
+    @Query("SELECT * FROM local_messages WHERE status IN ('sending', 'pending') ORDER BY createdAt ASC")
     suspend fun getPendingMessages(): List<MessageEntity>
 
     @Query("SELECT DISTINCT chatId FROM local_messages")
@@ -347,22 +346,3 @@ interface MessageDao {
 
     @Query("UPDATE local_messages SET deletePending = 0 WHERE id = :id")
     suspend fun clearMessageDeletePending(id: String)
-
-    @Query("UPDATE local_messages SET ghostOpenedAt = :openedAt WHERE id = :id")
-    suspend fun updateGhostOpenedAt(id: String, openedAt: String)
-
-    @Query("UPDATE local_messages SET receiverId = :receiverId WHERE id = :id")
-    suspend fun updateMessageReceiverId(id: String, receiverId: String)
-
-    @Query("SELECT * FROM local_messages WHERE chatId = :chatId ORDER BY createdAt DESC LIMIT 1")
-    suspend fun getLastMessageForChat(chatId: String): MessageEntity?
-
-    @Query("SELECT COUNT(*) FROM local_messages WHERE chatId = :chatId AND senderId != :myUserId AND status != 'seen' AND seenAt IS NULL")
-    suspend fun getUnreadCountForChat(chatId: String, myUserId: String): Int
-
-    @Query("SELECT createdAt FROM local_messages WHERE chatId = :chatId ORDER BY createdAt ASC LIMIT 1")
-    suspend fun getOldestMessageTimestamp(chatId: String): String?
-
-    @Query("SELECT createdAt FROM local_messages WHERE chatId = :chatId ORDER BY createdAt DESC LIMIT 1")
-    suspend fun getNewestMessageTimestamp(chatId: String): String?
-}
