@@ -31,9 +31,12 @@ class PanaApplication : Application(), ImageLoaderFactory, DefaultLifecycleObser
                     .build()
             }
             .diskCache {
+                // filesDir is intentional. cacheDir can be purged by Android when
+                // storage is under pressure, which would make already loaded media
+                // disappear while offline.
                 coil.disk.DiskCache.Builder()
-                    .directory(cacheDir.resolve("image_cache"))
-                    .maxSizeBytes(100 * 1024 * 1024)
+                    .directory(filesDir.resolve("image_cache"))
+                    .maxSizeBytes(150 * 1024 * 1024)
                     .build()
             }
             .components {
@@ -48,23 +51,23 @@ class PanaApplication : Application(), ImageLoaderFactory, DefaultLifecycleObser
                         if (resolvedUrl != data) {
                             currentRequest = request.newBuilder().data(resolvedUrl).build()
                         }
-                        
+
                         try {
                             return@Interceptor chain.proceed(currentRequest)
                         } catch (e: Exception) {
-                            val isNetworkError = e is java.net.ConnectException || 
-                                                 e is java.net.SocketTimeoutException || 
+                            val isNetworkError = e is java.net.ConnectException ||
+                                                 e is java.net.SocketTimeoutException ||
                                                  e is java.net.UnknownHostException ||
                                                  e is java.io.IOException
 
                             val hasRetried = request.headers["X-CDN-Retried"] == "true"
-                            
+
                             if (isNetworkError && !hasRetried && com.example.data.repository.CdnManager.isCdnRelated(data)) {
                                 android.util.Log.w("CoilInterceptor", "Network error resolving media, forcing CDN refresh: ${e.message}")
                                 kotlinx.coroutines.runBlocking {
                                     com.example.data.repository.CdnManager.getCDNUrl(forceRefresh = true)
                                 }
-                                
+
                                 val finalResolvedUrl = com.example.data.repository.CdnManager.resolveMediaUrlSync(data)
                                 if (finalResolvedUrl != resolvedUrl && finalResolvedUrl.isNotEmpty()) {
                                     android.util.Log.i("CoilInterceptor", "CDN updated! Retrying with new URL: $finalResolvedUrl")
@@ -105,20 +108,20 @@ class PanaApplication : Application(), ImageLoaderFactory, DefaultLifecycleObser
         } catch (e: Throwable) {
             android.util.Log.e("PanaApplication", "FirebaseApp initialization failed safely", e)
         }
-        
+
         try {
             SessionManager.init(this)
             com.example.data.repository.CdnManager.init(this)
         } catch (e: Throwable) {
             android.util.Log.e("PanaApplication", "SessionManager/CdnManager init failed safely", e)
         }
-        
+
         try {
             com.example.util.NetworkMonitor.startMonitoring(this)
         } catch (e: Throwable) {
             android.util.Log.e("PanaApplication", "NetworkMonitor start failed safely", e)
         }
-        
+
         try {
             ProcessLifecycleOwner.get().lifecycle.addObserver(this)
         } catch (e: Throwable) {
