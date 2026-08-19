@@ -114,9 +114,6 @@ interface MessageDao {
 
         insertMessageRaw(normalizedMessage)
 
-        // Only a genuinely new row may increment unread. Re-saves caused by
-        // Realtime reconciliation, edits, reactions or a repeated sync must
-        // update chat metadata without inflating unreadCount.
         val shouldIncrementUnread = existingById == null && existingByUuid == null
         updateChatMetadataForMessage(normalizedMessage, shouldIncrementUnread)
     }
@@ -218,9 +215,6 @@ interface MessageDao {
 
     @Transaction
     suspend fun insertOrMergeMessages(remoteList: List<MessageEntity>) {
-        // Historical/incremental HTTP sync must never increase unreadCount.
-        // Realtime/new-message reconciliation uses mergeAndSaveMessage() and
-        // can increment unread only when the message is actually new.
         remoteList.forEach { remote ->
             mergeAndSaveMessage(remote, allowUnreadIncrement = false)
         }
@@ -346,3 +340,22 @@ interface MessageDao {
 
     @Query("UPDATE local_messages SET deletePending = 0 WHERE id = :id")
     suspend fun clearMessageDeletePending(id: String)
+
+    @Query("UPDATE local_messages SET ghostOpenedAt = :openedAt WHERE id = :id")
+    suspend fun updateGhostOpenedAt(id: String, openedAt: String)
+
+    @Query("UPDATE local_messages SET receiverId = :receiverId WHERE id = :id")
+    suspend fun updateMessageReceiverId(id: String, receiverId: String)
+
+    @Query("SELECT * FROM local_messages WHERE chatId = :chatId ORDER BY createdAt DESC LIMIT 1")
+    suspend fun getLastMessageForChat(chatId: String): MessageEntity?
+
+    @Query("SELECT COUNT(*) FROM local_messages WHERE chatId = :chatId AND senderId != :myUserId AND status != 'seen' AND seenAt IS NULL")
+    suspend fun getUnreadCountForChat(chatId: String, myUserId: String): Int
+
+    @Query("SELECT createdAt FROM local_messages WHERE chatId = :chatId ORDER BY createdAt ASC LIMIT 1")
+    suspend fun getOldestMessageTimestamp(chatId: String): String?
+
+    @Query("SELECT createdAt FROM local_messages WHERE chatId = :chatId ORDER BY createdAt DESC LIMIT 1")
+    suspend fun getNewestMessageTimestamp(chatId: String): String?
+}
