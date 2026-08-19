@@ -3,6 +3,7 @@ package com.example.util
 import android.content.Context
 import android.net.Uri
 import android.util.Log
+import com.example.data.repository.CdnManager
 import java.io.File
 import java.io.FileOutputStream
 import java.net.URI
@@ -17,9 +18,16 @@ object OfflineMediaCache {
     private fun root(context: Context): File =
         context.applicationContext.filesDir.resolve(DIRECTORY).also { it.mkdirs() }
 
-    private fun key(url: String): String {
+    private fun canonicalKey(url: String): String {
+        val trimmed = url.trim()
+        val identity = if (CdnManager.isCdnRelated(trimmed)) {
+            val path = try { URI(trimmed).path.orEmpty() } catch (_: Exception) { trimmed }
+            "cdn:${path.substringAfterLast('/')}"
+        } else {
+            trimmed
+        }
         val digest = MessageDigest.getInstance("SHA-256")
-            .digest(url.trim().toByteArray(Charsets.UTF_8))
+            .digest(identity.toByteArray(Charsets.UTF_8))
         return digest.joinToString("") { "%02x".format(it) }
     }
 
@@ -43,7 +51,7 @@ object OfflineMediaCache {
     }
 
     fun fileFor(context: Context, url: String, mime: String? = null): File =
-        root(context).resolve(key(url) + extension(url, mime))
+        root(context).resolve(canonicalKey(url) + extension(url, mime))
 
     fun existingUri(context: Context, url: String?, mime: String? = null): String? {
         if (url.isNullOrBlank()) return null
