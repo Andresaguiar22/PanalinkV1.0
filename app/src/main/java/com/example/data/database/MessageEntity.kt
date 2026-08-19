@@ -2,7 +2,9 @@ package com.example.data.database
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
+import com.example.PanaApplication
 import com.example.data.model.Message
+import com.example.util.OfflineMediaCache
 
 @Entity(
     tableName = "local_messages",
@@ -18,10 +20,10 @@ data class MessageEntity(
     val receiverId: String? = null,
     val content: String? = null,
     val createdAt: String,
-    val status: String? = "sent", // "sending", "sent", "delivered", "seen", "failed"
+    val status: String? = "sent",
     val replyToMessageId: String? = null,
     val clientMessageUuid: String? = null,
-    val reactionsJson: String = "{}", // JSON string mapping userId -> emoji reaction
+    val reactionsJson: String = "{}",
     val deliveredAt: String? = null,
     val seenAt: String? = null,
     val thumbnailUrl: String? = null,
@@ -46,6 +48,13 @@ data class MessageEntity(
     val musicPlaylistId: String? = null
 ) {
     fun toMessage(): Message {
+        val persistentMedia = try {
+            OfflineMediaCache.existingUri(PanaApplication.instance, mediaUrl, mediaMime)
+        } catch (_: Throwable) { null }
+        val persistentThumb = try {
+            OfflineMediaCache.existingUri(PanaApplication.instance, thumbnailUrl, "image/jpeg")
+        } catch (_: Throwable) { null }
+
         return Message(
             id = id,
             chatId = chatId,
@@ -58,8 +67,8 @@ data class MessageEntity(
             clientMessageUuid = clientMessageUuid ?: "",
             deliveredAt = deliveredAt,
             seenAt = seenAt,
-            thumbnailUrl = thumbnailUrl ?: localThumbnailUri,
-            mediaUrl = mediaUrl ?: localMediaUri,
+            thumbnailUrl = localThumbnailUri ?: persistentThumb ?: thumbnailUrl,
+            mediaUrl = localMediaUri ?: persistentMedia ?: mediaUrl,
             mediaMime = mediaMime,
             mediaSize = mediaSize,
             duration = mediaDuration,
