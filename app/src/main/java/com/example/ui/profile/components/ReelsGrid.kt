@@ -20,6 +20,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.example.data.repository.CdnManager
 import com.example.data.supabase.SupabaseClient
 import com.example.ui.viewmodel.ProfileViewModel
 
@@ -28,7 +29,7 @@ fun ReelsGrid(viewModel: ProfileViewModel, onNavigateToReel: (String) -> Unit) {
     val reelsState by viewModel.reelsState.collectAsState()
     val currentUid = SupabaseClient.currentUser?.id ?: ""
     var reelToDelete by remember { mutableStateOf<com.example.data.model.UserState?>(null) }
-    
+
     if (reelsState.isSuccess) {
         val reels = reelsState.getOrNull() ?: emptyList()
         if (reels.isEmpty()) {
@@ -69,6 +70,9 @@ fun ReelsGrid(viewModel: ProfileViewModel, onNavigateToReel: (String) -> Unit) {
                         for (i in 0 until 3) {
                             if (i < rowReels.size) {
                                 val reel = rowReels[i]
+                                val resolvedMediaUrl = remember(reel.state.mediaUrl) {
+                                    CdnManager.resolveMediaUrlSync(reel.state.mediaUrl)
+                                }
                                 Box(
                                     modifier = Modifier
                                         .weight(1f)
@@ -85,12 +89,12 @@ fun ReelsGrid(viewModel: ProfileViewModel, onNavigateToReel: (String) -> Unit) {
                                         }
                                 ) {
                                     AsyncImage(
-                                        model = reel.state.mediaUrl,
+                                        model = resolvedMediaUrl,
                                         contentDescription = "Reel",
                                         modifier = Modifier.fillMaxSize(),
                                         contentScale = ContentScale.Crop
                                     )
-                                    
+
                                     Box(
                                         modifier = Modifier
                                             .fillMaxSize()
