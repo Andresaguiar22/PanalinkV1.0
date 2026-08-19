@@ -20,6 +20,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -660,10 +663,10 @@ fun uploadAndSendMedia(
         onProgress: (Boolean) -> Unit
     ) {
         val chatId = currentChatId ?: return
-        
+
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             onProgress(true)
-            
+
             val result = messagesRepo.sendMultimediaMessage(
                 chatId = chatId,
                 context = context,
@@ -676,17 +679,54 @@ fun uploadAndSendMedia(
                 isGhost = _isGhostMode.value,
                 receiverId = currentOtherUserId
             )
-            
+
+            val message = result.getOrNull()
+            val finalMessage = if (message != null) {
+                kotlinx.coroutines.withTimeoutOrNull(120_000L) {
+                    messagesRepo.getMessagesFlow(chatId)
+                        .mapNotNull { messages ->
+                            messages.firstOrNull { candidate ->
+                                candidate.clientMessageUuid == message.clientMessageUuid &&
+                                    candidate.status in setOf("sent", "delivered", "seen", "failed")
+                            }
+                        }
+                        .first()
+                }
+            } else {
+                null
+            }
+
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
                 onProgress(false)
-                if (result.isFailure) {
-                    try {
-                        android.widget.Toast.makeText(
-                            context,
-                            "Error procesando archivo",
-                            android.widget.Toast.LENGTH_LONG
-                        ).show()
-                    } catch (t: Throwable) {}
+
+                when {
+                    result.isFailure -> {
+                        try {
+                            android.widget.Toast.makeText(
+                                context,
+                                "Error procesando archivo",
+                                android.widget.Toast.LENGTH_LONG
+                            ).show()
+                        } catch (t: Throwable) {}
+                    }
+                    finalMessage?.status == "failed" -> {
+                        try {
+                            android.widget.Toast.makeText(
+                                context,
+                                "No se pudo enviar el archivo",
+                                android.widget.Toast.LENGTH_LONG
+                            ).show()
+                        } catch (t: Throwable) {}
+                    }
+                    finalMessage == null && message != null -> {
+                        // The worker remains persisted in WorkManager. Do not
+                        // leave a screen-level spinner running forever if the
+                        // device is offline or the upload is unusually slow.
+                        Log.w(
+                            "ChatViewModel",
+                            "Media send observer timed out for ${message.clientMessageUuid}; worker continues in background"
+                        )
+                    }
                 }
             }
         }
