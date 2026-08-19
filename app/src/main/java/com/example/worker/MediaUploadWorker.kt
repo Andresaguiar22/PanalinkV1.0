@@ -81,16 +81,20 @@ class MediaUploadWorker(
             return Result.success()
         }
 
+        // If a previous attempt already persisted the remote media URL, never
+        // upload the binary again. Only metadata reconciliation remains. This
+        // closes the crash window between remote upload success and the local
+        // Room write and prevents duplicate media uploads.
+        if (!entity.mediaUrl.isNullOrBlank() && entity.status != "sent") {
+            Log.d(TAG, "Media URL already persisted for $messageId; skipping binary re-upload and syncing metadata")
+            return syncOwnMessageMetadata(messageId)
+        }
+
         // A media message must remain pending until both stages finish:
         // 1) the binary is uploaded and a mediaUrl exists;
         // 2) the message metadata is persisted in Supabase.
         val localUri = entity.localMediaUri
         if (localUri.isNullOrEmpty()) {
-            if (!entity.mediaUrl.isNullOrBlank() && entity.status != "sent") {
-                Log.d(TAG, "Media already uploaded for $messageId; syncing message metadata")
-                return syncOwnMessageMetadata(messageId)
-            }
-
             if (entity.status == "sent") {
                 return Result.success()
             }
