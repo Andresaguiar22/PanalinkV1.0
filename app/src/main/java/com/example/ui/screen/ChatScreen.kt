@@ -716,7 +716,9 @@ fun ChatScreen(
                     IconButton(
                         onClick = {
                             if (otherUser != null) {
-                                com.example.call.CallManager.getInstance(context).startCall(
+                                com.example.call.CallPermissionGate.startCallIfPermitted(
+                                    activity = null,
+                                    context = context,
                                     targetUserId = otherUser.id,
                                     targetUserName = otherUser.displayName,
                                     type = com.example.call.CallType.VIDEO
@@ -730,7 +732,9 @@ fun ChatScreen(
                     IconButton(
                         onClick = {
                             if (otherUser != null) {
-                                com.example.call.CallManager.getInstance(context).startCall(
+                                com.example.call.CallPermissionGate.startCallIfPermitted(
+                                    activity = null,
+                                    context = context,
                                     targetUserId = otherUser.id,
                                     targetUserName = otherUser.displayName,
                                     type = com.example.call.CallType.AUDIO

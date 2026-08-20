@@ -65,6 +65,13 @@ class SignalingClient(private val userId: String) {
                         reconnectionDelayMax = 5000
                         reconnectionAttempts = Int.MAX_VALUE
                         transports = arrayOf("websocket")
+                        // Server middleware (server/index.js) requires a Supabase JWT
+                        // with a valid 'sub' claim. Without this, the connection is
+                        // rejected and call signaling never works.
+                        val token = com.example.data.supabase.SupabaseClient.currentToken
+                        if (!token.isNullOrBlank()) {
+                            auth = mapOf("token" to token)
+                        }
                     }
                     if (socket == null) {
                         socket = IO.socket(backendUrl, options)

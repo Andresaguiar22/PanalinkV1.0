@@ -333,7 +333,9 @@ fun ContactsTabContent(
                                 if (!isSelectingContactOnly) {
                                     IconButton(
                                         onClick = {
-                                            com.example.call.CallManager.getInstance(context).startCall(
+                                            com.example.call.CallPermissionGate.startCallIfPermitted(
+                                                activity = null,
+                                                context = context,
                                                 targetUserId = contact.id,
                                                 targetUserName = contact.displayName,
                                                 type = com.example.call.CallType.AUDIO
@@ -348,7 +350,9 @@ fun ContactsTabContent(
                                     }
                                     IconButton(
                                         onClick = {
-                                            com.example.call.CallManager.getInstance(context).startCall(
+                                            com.example.call.CallPermissionGate.startCallIfPermitted(
+                                                activity = null,
+                                                context = context,
                                                 targetUserId = contact.id,
                                                 targetUserName = contact.displayName,
                                                 type = com.example.call.CallType.VIDEO
