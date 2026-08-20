@@ -521,20 +521,27 @@ fun UserStoryViewer(
     }
 
     // Background Audio Player Loop
-    val musicUrl = remember(metadata.musicName) {
-        val name = metadata.musicName ?: ""
-        when {
-            name.contains("Lofi Joropo", ignoreCase = true) -> "https://assets.mixkit.co/music/preview/mixkit-lofi-band-925.mp3"
-            name.contains("Tambor Remix", ignoreCase = true) -> "https://assets.mixkit.co/music/preview/mixkit-tribal-drums-958.mp3"
-            name.contains("Gaita Pop", ignoreCase = true) -> "https://assets.mixkit.co/music/preview/mixkit-pop-05-1522.mp3"
-            else -> "https://assets.mixkit.co/music/preview/mixkit-dreaming-big-31.mp3"
+    val musicUrl = remember(metadata.musicName, state.audioUrl) {
+        // Prefer real uploaded audio; fallback to catalog lookup by name.
+        val uploadedUrl = state.audioUrl?.takeIf { it.isNotBlank() }
+        if (uploadedUrl != null) {
+            uploadedUrl
+        } else {
+            val name = metadata.musicName ?: ""
+            when {
+                name.contains("Lofi Joropo", ignoreCase = true) -> "https://assets.mixkit.co/music/preview/mixkit-lofi-band-925.mp3"
+                name.contains("Tambor Remix", ignoreCase = true) -> "https://assets.mixkit.co/music/preview/mixkit-tribal-drums-958.mp3"
+                name.contains("Gaita Pop", ignoreCase = true) -> "https://assets.mixkit.co/music/preview/mixkit-pop-05-1522.mp3"
+                name.isNotBlank() -> "https://assets.mixkit.co/music/preview/mixkit-dreaming-big-31.mp3"
+                else -> ""
+            }
         }
     }
-    
+
     val bgMediaPlayer = remember { android.media.MediaPlayer() }
-    
+
     DisposableEffect(musicUrl, state.id) {
-        if (state.mediaType != "video" && metadata.musicName != null && musicUrl.isNotEmpty()) {
+        if (state.mediaType != "video" && (metadata.musicName != null || !state.audioUrl.isNullOrBlank()) && musicUrl.isNotEmpty()) {
             try {
                 bgMediaPlayer.reset()
                 bgMediaPlayer.setDataSource(context, android.net.Uri.parse(musicUrl))
@@ -561,7 +568,7 @@ fun UserStoryViewer(
     
     LaunchedEffect(isPaused) {
         try {
-            if (state.mediaType != "video" && metadata.musicName != null && musicUrl.isNotEmpty()) {
+            if (state.mediaType != "video" && (metadata.musicName != null || !state.audioUrl.isNullOrBlank()) && musicUrl.isNotEmpty()) {
                 if (isPaused) {
                     if (bgMediaPlayer.isPlaying) bgMediaPlayer.pause()
                 } else {

@@ -896,9 +896,9 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
 
-                            // Story Editor Screen (FASE 4B)
+                            // Story Editor Screen (editor limpio, foto/vídeo/texto + audio real)
                             composable("createStory") {
-                                StoryEditorScreen(
+                                CleanStoryEditorScreen(
                                     viewModel = statesViewModel,
                                     onBack = { mainNavController.popBackStack() }
                                 )
