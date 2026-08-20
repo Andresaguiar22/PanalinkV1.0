@@ -86,7 +86,7 @@ object CdnManager {
         return try {
             val request = Request.Builder().url("$cdnUrl/health").head().build()
             client.newCall(request).execute().use { response ->
-                response.code in 200..404
+                response.code in 200..299
             }
         } catch (e: Exception) {
             Log.w(TAG, "CDN health check failed: ${e.message}")
@@ -150,25 +150,32 @@ object CdnManager {
     }
 
     /**
-     * True only for known CDN hosts or the currently active CDN host.
-     * URL path names alone never make an URL CDN-related, preventing
-     * accidental rewriting of Supabase Storage and third-party URLs.
+     * True only for known CDN hosts, the currently active CDN host, or
+     * Supabase Storage media paths that are explicitly supported by the
+     * CDN-backed avatar/media flow. Generic Supabase URLs remain untouched.
      */
     fun isCdnRelated(originalUrl: String): Boolean {
         if (originalUrl.isBlank()) return false
         if (originalUrl.startsWith("content://") || originalUrl.startsWith("file://") ||
             originalUrl.startsWith("android.resource://") || originalUrl.startsWith("/")) return false
 
-        val host = try { URI(originalUrl).host?.lowercase() } catch (_: Exception) { null } ?: return false
+        val uri = try { URI(originalUrl) } catch (_: Exception) { return false }
+        val host = uri.host?.lowercase() ?: return false
+        val path = uri.path.orEmpty().lowercase()
         val supabaseHost = try { URI(SupabaseClient.supabaseUrl).host?.lowercase() } catch (_: Exception) { null }
-        if (!supabaseHost.isNullOrBlank() && host == supabaseHost) return false
 
         val activeHost = try { URI(cachedCdnUrl.orEmpty()).host?.lowercase() } catch (_: Exception) { null }
         if (!activeHost.isNullOrBlank() && host == activeHost) return true
 
-        return host == "localhost" || host == "10.0.2.2" ||
+        if (host == "localhost" || host == "10.0.2.2" ||
             host == "bore.pub" || host.endsWith(".bore.pub") ||
-            host == "trycloudflare.com" || host.endsWith(".trycloudflare.com")
+            host == "trycloudflare.com" || host.endsWith(".trycloudflare.com")) return true
+
+        // Do not rewrite arbitrary Supabase API/Storage resources. Only the
+        // avatar bucket path is eligible for the CDN fallback handled below.
+        return !supabaseHost.isNullOrBlank() && host == supabaseHost &&
+            (path.contains("/storage/v1/object/public/avatars/") ||
+                path.contains("/storage/v1/object/public/avatar/"))
     }
 
     private fun currentCachedCdnBase(): String {
@@ -241,6 +248,15 @@ object CdnManager {
             trimmed.startsWith("avatars/") || trimmed.startsWith("/avatars/") -> "$storageBase/${trimmed.removePrefix("/")}"
             else -> "$storageBase/avatars/${trimmed.removePrefix("/")}"
         }
+
+        // Profile/avatar uploads in the current CDN backend are returned under
+        // /video/<filename>. If the DB still contains the legacy Supabase
+        // Storage URL, translate only the avatars bucket to the active CDN.
+        val activeBase = currentCachedCdnBase()
+        if (activeBase.isNotBlank() && isCdnRelated(absolute)) {
+            return reconstructCdnUrl(absolute, activeBase).ifEmpty { null }
+        }
+
         return resolveMediaUrlSync(absolute).ifEmpty { null }
     }
 }
