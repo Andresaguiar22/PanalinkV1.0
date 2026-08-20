@@ -32,7 +32,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         LocalNotificationEntity::class,
         ReelCommentReactionEntity::class
     ],
-    version = 44,
+    version = 45,
     exportSchema = true
 )
 abstract class PanalinkDatabase : RoomDatabase() {
@@ -577,6 +577,53 @@ abstract class PanalinkDatabase : RoomDatabase() {
             }
         }
 
+        // Corrige local_messages: clientMessageUuid pasÃ³ a ser nullable en la Entity (v39->v42)
+        // pero ninguna migraciÃ³n reconstruyÃ³ la tabla fÃ­sica, asÃ­ que seguÃ­a NOT NULL en disco.
+        // SQLite no permite ALTER COLUMN, asÃ­ que reconstruimos la tabla completa.
+        val MIGRATION_44_45 = object : Migration(44, 45) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `local_messages_new` (
+                        `id` TEXT NOT NULL, `chatId` TEXT NOT NULL, `senderId` TEXT NOT NULL,
+                        `receiverId` TEXT, `content` TEXT, `createdAt` TEXT NOT NULL, `status` TEXT,
+                        `replyToMessageId` TEXT, `clientMessageUuid` TEXT, `reactionsJson` TEXT NOT NULL,
+                        `deliveredAt` TEXT, `seenAt` TEXT, `thumbnailUrl` TEXT, `mediaUrl` TEXT,
+                        `mediaMime` TEXT, `mediaSize` INTEGER, `mediaDuration` INTEGER, `mediaWidth` INTEGER,
+                        `mediaHeight` INTEGER, `messageType` TEXT, `localMediaUri` TEXT, `localThumbnailUri` TEXT,
+                        `isFavorited` INTEGER NOT NULL, `isEdited` INTEGER NOT NULL, `deletedAt` TEXT,
+                        `isGhost` INTEGER NOT NULL, `ghostOpenedAt` TEXT, `updatedAt` TEXT,
+                        `editPending` INTEGER NOT NULL, `reactionPending` INTEGER NOT NULL,
+                        `deletePending` INTEGER NOT NULL, `musicPlaylistId` TEXT, PRIMARY KEY(`id`)
+                    )
+                """.trimIndent())
+
+                db.execSQL("""
+                    INSERT INTO `local_messages_new` (
+                        `id`, `chatId`, `senderId`, `receiverId`, `content`, `createdAt`, `status`,
+                        `replyToMessageId`, `clientMessageUuid`, `reactionsJson`, `deliveredAt`, `seenAt`,
+                        `thumbnailUrl`, `mediaUrl`, `mediaMime`, `mediaSize`, `mediaDuration`, `mediaWidth`,
+                        `mediaHeight`, `messageType`, `localMediaUri`, `localThumbnailUri`, `isFavorited`,
+                        `isEdited`, `deletedAt`, `isGhost`, `ghostOpenedAt`, `updatedAt`, `editPending`,
+                        `reactionPending`, `deletePending`, `musicPlaylistId`
+                    )
+                    SELECT
+                        `id`, `chatId`, `senderId`, `receiverId`, `content`, `createdAt`, `status`,
+                        `replyToMessageId`, NULLIF(`clientMessageUuid`, ''), `reactionsJson`, `deliveredAt`, `seenAt`,
+                        `thumbnailUrl`, `mediaUrl`, `mediaMime`, `mediaSize`, `mediaDuration`, `mediaWidth`,
+                        `mediaHeight`, `messageType`, `localMediaUri`, `localThumbnailUri`, `isFavorited`,
+                        `isEdited`, `deletedAt`, `isGhost`, `ghostOpenedAt`, `updatedAt`, `editPending`,
+                        `reactionPending`, `deletePending`, `musicPlaylistId`
+                    FROM `local_messages`
+                """.trimIndent())
+
+                db.execSQL("DROP TABLE `local_messages`")
+                db.execSQL("ALTER TABLE `local_messages_new` RENAME TO `local_messages`")
+
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_local_messages_chatId_createdAt` ON `local_messages` (`chatId`, `createdAt`)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_local_messages_clientMessageUuid` ON `local_messages` (`clientMessageUuid`)")
+            }
+        }
+
         fun getDatabase(context: Context): PanalinkDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -590,7 +637,7 @@ abstract class PanalinkDatabase : RoomDatabase() {
                     MIGRATION_29_30, MIGRATION_30_31, MIGRATION_31_32, MIGRATION_32_33,
                     MIGRATION_33_34, MIGRATION_34_35, MIGRATION_35_36, MIGRATION_36_37,
                     MIGRATION_37_38, MIGRATION_38_39, MIGRATION_39_40, MIGRATION_40_41,
-                    MIGRATION_41_42, MIGRATION_42_44
+                    MIGRATION_41_42, MIGRATION_42_44, MIGRATION_44_45
                 )
                 .build()
                 INSTANCE = instance
