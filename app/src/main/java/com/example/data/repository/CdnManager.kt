@@ -1,7 +1,6 @@
 package com.example.data.repository
 
 import android.content.Context
-import android.net.Uri
 import android.util.Log
 import com.example.data.supabase.SupabaseClient
 import kotlinx.coroutines.CoroutineScope
@@ -24,11 +23,17 @@ object CdnManager {
     private const val PREFS_NAME = "panalink_cdn_prefs"
     private const val KEY_CACHED_CDN_URL = "cached_cdn_url"
 
+    private val MEDIA_PATH_MARKERS = listOf(
+        "/video/", "/files/", "/documents/", "/uploads/",
+        "/images/", "/avatars/", "/audios/"
+    )
+
     @Volatile private var cachedCdnUrl: String? = null
     private var context: Context? = null
     private val cdnMutex = Mutex()
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val isListenerStarted = AtomicBoolean(false)
+    private val isWarmingCdn = AtomicBoolean(false)
 
     fun init(appContext: Context) {
         if (context != null) return
@@ -44,6 +49,9 @@ object CdnManager {
     }
 
     private fun cleanBase(url: String): String = url.trim().removeSuffix("/")
+
+    private fun isLocalHost(host: String): Boolean =
+        host == "localhost" || host == "127.0.0.1" || host == "10.0.2.2"
 
     private fun startRealtimeListener() {
         if (isListenerStarted.compareAndSet(false, true)) {
@@ -150,9 +158,11 @@ object CdnManager {
     }
 
     /**
-     * True only for known CDN hosts, the currently active CDN host, or
-     * Supabase Storage media paths that are explicitly supported by the
-     * CDN-backed avatar/media flow. Generic Supabase URLs remain untouched.
+     * CDN-related when the URL points to the active CDN host, a known local
+     * tunnel host, or any host serving a known media folder (legacy/dead CDN
+     * hosts included, so they get re-anchored to the active CDN). The Supabase
+     * origin is never rewritten: its Storage URLs are always reachable, so
+     * touching them would only risk loops and 404s on the CDN.
      */
     fun isCdnRelated(originalUrl: String): Boolean {
         if (originalUrl.isBlank()) return false
@@ -164,18 +174,16 @@ object CdnManager {
         val path = uri.path.orEmpty().lowercase()
         val supabaseHost = try { URI(SupabaseClient.supabaseUrl).host?.lowercase() } catch (_: Exception) { null }
 
+        if (!supabaseHost.isNullOrBlank() && host == supabaseHost) return false
+
         val activeHost = try { URI(cachedCdnUrl.orEmpty()).host?.lowercase() } catch (_: Exception) { null }
         if (!activeHost.isNullOrBlank() && host == activeHost) return true
 
-        if (host == "localhost" || host == "10.0.2.2" ||
+        if (isLocalHost(host) ||
             host == "bore.pub" || host.endsWith(".bore.pub") ||
             host == "trycloudflare.com" || host.endsWith(".trycloudflare.com")) return true
 
-        // Do not rewrite arbitrary Supabase API/Storage resources. Only the
-        // avatar bucket path is eligible for the CDN fallback handled below.
-        return !supabaseHost.isNullOrBlank() && host == supabaseHost &&
-            (path.contains("/storage/v1/object/public/avatars/") ||
-                path.contains("/storage/v1/object/public/avatar/"))
+        return MEDIA_PATH_MARKERS.any { path.contains(it) }
     }
 
     private fun currentCachedCdnBase(): String {
@@ -190,20 +198,30 @@ object CdnManager {
         return base
     }
 
+    /**
+     * Re-anchors [originalUrl] onto the active CDN base preserving its full
+     * relative path and query: http://dead-host/images/a.png becomes
+     * <cdn-base>/images/a.png. URLs already on the CDN host are returned as-is.
+     */
     private fun reconstructCdnUrl(originalUrl: String, activeCdnBase: String): String {
         val normalizedBase = cleanBase(activeCdnBase)
-        val currentPrefix = "$normalizedBase/video/"
-        if (originalUrl.startsWith(currentPrefix)) return originalUrl
+        if (normalizedBase.isBlank()) return originalUrl
 
-        val filename = try {
-            val path = URI(originalUrl).path.orEmpty()
-            path.substringAfterLast('/').takeIf { it.isNotBlank() }.orEmpty()
-        } catch (_: Exception) {
-            originalUrl.substringAfterLast('/').substringBefore('?')
+        val uri = try { URI(originalUrl) } catch (_: Exception) { return originalUrl }
+        val path = uri.rawPath.orEmpty()
+        if (path.isBlank()) return originalUrl
+
+        val baseHost = try { URI(normalizedBase).host?.lowercase() } catch (_: Exception) { null }
+        if (!baseHost.isNullOrBlank() && uri.host?.lowercase() == baseHost) return originalUrl
+
+        return buildString {
+            append(normalizedBase)
+            append(path)
+            if (!uri.rawQuery.isNullOrBlank()) {
+                append('?')
+                append(uri.rawQuery)
+            }
         }
-
-        if (filename.isBlank()) return originalUrl
-        return "$normalizedBase/video/${Uri.encode(filename)}"
     }
 
     fun resolveMediaUrlSync(originalUrl: String?): String {
@@ -214,7 +232,21 @@ object CdnManager {
         if (!isCdnRelated(raw)) return raw
 
         val base = currentCachedCdnBase()
-        if (base.isBlank()) return raw
+        if (base.isBlank()) {
+            // Cold start race: don't fail silently, warm the cache so the next
+            // load resolves through the active CDN.
+            if (context != null && isWarmingCdn.compareAndSet(false, true)) {
+                scope.launch {
+                    try {
+                        getCDNUrl()
+                    } catch (_: Exception) {
+                    } finally {
+                        isWarmingCdn.set(false)
+                    }
+                }
+            }
+            return raw
+        }
         return reconstructCdnUrl(raw, base)
     }
 
@@ -249,14 +281,8 @@ object CdnManager {
             else -> "$storageBase/avatars/${trimmed.removePrefix("/")}"
         }
 
-        // Profile/avatar uploads in the current CDN backend are returned under
-        // /video/<filename>. If the DB still contains the legacy Supabase
-        // Storage URL, translate only the avatars bucket to the active CDN.
-        val activeBase = currentCachedCdnBase()
-        if (activeBase.isNotBlank() && isCdnRelated(absolute)) {
-            return reconstructCdnUrl(absolute, activeBase).ifEmpty { null }
-        }
-
+        // Supabase Storage URLs are excluded from CDN rewriting, so avatars
+        // load straight from Supabase; only tunnel/legacy hosts get re-anchored.
         return resolveMediaUrlSync(absolute).ifEmpty { null }
     }
 }

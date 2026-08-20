@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <!-- Release policy: HTTPS only. Local HTTP is not permitted by the production manifest. -->
-    <base-config cleartextTrafficPermitted="false" />
+    <!-- The CDN host is configured at runtime (global_server_config) and may be
+         plain HTTP, so cleartext must be permitted or every media load fails. -->
+    <base-config cleartextTrafficPermitted="true" />
 </network-security-config>
