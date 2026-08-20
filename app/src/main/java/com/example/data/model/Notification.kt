@@ -4,7 +4,7 @@ import com.squareup.moshi.Json
 import com.squareup.moshi.JsonClass
 
 enum class NotificationType {
-    LIKE, COMMENT, FOLLOWER, MESSAGE, CALL, FAVORITE, SHARE, EVENT, GROUP, REEL, POST, VIEW
+    LIKE, COMMENT, FOLLOWER, MESSAGE, CALL, FAVORITE, SHARE, EVENT, GROUP, REEL, POST, VIEW, TRENDING
 }
 
 data class Notification(
@@ -41,6 +41,7 @@ data class NotificationDto(
             "share" -> NotificationType.SHARE
             "reel", "status", "state" -> NotificationType.REEL
             "post" -> NotificationType.POST
+            "trending", "viral" -> NotificationType.TRENDING
             "view" -> NotificationType.VIEW
             else -> NotificationType.LIKE
         }
@@ -56,6 +57,7 @@ data class NotificationDto(
             NotificationType.REEL -> "publicó un nuevo estado."
             NotificationType.POST -> "hizo una nueva publicación."
             NotificationType.VIEW -> "vio tu historia o contenido."
+            NotificationType.TRENDING -> "¡tu contenido se está volviendo tendencia! 🚀"
             else -> "interactuó contigo."
         }
         return Notification(

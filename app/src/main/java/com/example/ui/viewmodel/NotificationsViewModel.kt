@@ -60,6 +60,29 @@ class NotificationsViewModel(
         }
     }
 
+    /**
+     * Categories muted in UI (filter only; does not affect backend state).
+     * Stored in SharedPreferences so the choice persists across app restarts.
+     */
+    private val mutedKey = "notifications_muted_categories"
+    fun getMutedCategories(): Set<NotificationType> {
+        val stored = repository.getPreferences().getStringSet(mutedKey, emptySet()) ?: emptySet()
+        return stored.mapNotNull { runCatching { NotificationType.valueOf(it) }.getOrNull() }.toSet()
+    }
+
+    fun toggleMute(category: NotificationType) {
+        val current = getMutedCategories().toMutableSet()
+        if (!current.add(category)) current.remove(category)
+        repository.getPreferences().edit().putStringSet(mutedKey, current.map { it.name }.toSet()).apply()
+    }
+
+    fun markAllRead() {
+        viewModelScope.launch {
+            val notifications = (_uiState.value as? NotificationsUiState.Success)?.notifications ?: emptyList()
+            notifications.forEach { repository.markAsRead(it.id) }
+        }
+    }
+
     fun clearAllNotifications() {
         viewModelScope.launch {
             repository.clearAllNotifications()

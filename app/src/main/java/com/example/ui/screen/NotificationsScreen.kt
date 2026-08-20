@@ -49,6 +49,7 @@ fun NotificationsScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
+    var showMuteMenu by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -60,10 +61,14 @@ fun NotificationsScreen(
                     }
                 },
                 actions = {
-                    if (uiState is NotificationsUiState.Success && (uiState as NotificationsUiState.Success).notifications.isNotEmpty()) {
-                        IconButton(onClick = { viewModel.clearAllNotifications() }) {
-                            Icon(Icons.Default.ClearAll, contentDescription = "Limpiar todas")
-                        }
+                    IconButton(onClick = { showMuteMenu = true }) {
+                        Icon(Icons.Default.NotificationsOff, contentDescription = "Silenciar categorías")
+                    }
+                    IconButton(onClick = { viewModel.clearAllNotifications() }) {
+                        Icon(Icons.Default.ClearAll, contentDescription = "Borrar todas")
+                    }
+                    IconButton(onClick = { viewModel.markAllRead() }) {
+                        Icon(Icons.Default.DoneAll, contentDescription = "Marcar leídas todas")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -81,6 +86,28 @@ fun NotificationsScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
+            DropdownMenu(
+                expanded = showMuteMenu,
+                onDismissRequest = { showMuteMenu = false }
+            ) {
+                NotificationType.values().forEach { type ->
+                    DropdownMenuItem(
+                        text = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                val muted = viewModel.getMutedCategories().contains(type)
+                                Icon(
+                                    imageVector = if (muted) Icons.Default.NotificationsOff else Icons.Default.Notifications,
+                                    contentDescription = null,
+                                    tint = if (muted) Color.Gray else Color(0xFF25D366)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(type.name.lowercase().replaceFirstChar { it.uppercase() })
+                            }
+                        },
+                        onClick = { viewModel.toggleMute(type) }
+                    )
+                }
+            }
             when (val state = uiState) {
                 is NotificationsUiState.Loading -> {
                     NotificationLoading()
@@ -95,8 +122,9 @@ fun NotificationsScreen(
                     if (state.notifications.isEmpty()) {
                         EmptyNotificationView("Aún no tienes notificaciones")
                     } else {
-                        val grouped = groupNotificationsByDate(state.notifications)
-                        
+                        val muted = viewModel.getMutedCategories()
+                        val grouped = groupNotificationsByDate(state.notifications.filter { !muted.contains(it.type) })
+
                         LazyColumn(
                             modifier = Modifier.fillMaxSize(),
                             contentPadding = PaddingValues(bottom = 80.dp)
@@ -109,22 +137,15 @@ fun NotificationsScreen(
                                     NotificationCard(
                                         notification = notification,
                                         onClick = {
-                                            viewModel.clearNotification(notification.id)
-                                            when (notification.type) {
-                                                NotificationType.LIKE, NotificationType.COMMENT, NotificationType.FAVORITE, NotificationType.SHARE, NotificationType.VIEW, NotificationType.POST -> {
-                                                    onNavigateToPostDetail(notification.sourceId)
-                                                }
-                                                NotificationType.REEL -> {
-                                                    onNavigateToReel(notification.sourceId)
-                                                }
-                                                NotificationType.MESSAGE, NotificationType.CALL -> {
-                                                    onNavigateToChat(notification.sourceId, notification.profile?.id ?: "")
-                                                }
-                                                NotificationType.FOLLOWER -> {
-                                                    onNavigateToProfile(notification.profile?.id ?: "")
-                                                }
-                                                else -> {}
-                                            }
+                                            viewModel.markAsRead(notification.id)
+                                            handleNotificationNavigation(
+                                                notification = notification,
+                                                onNavigateToPostDetail = onNavigateToPostDetail,
+                                                onNavigateToReel = onNavigateToReel,
+                                                onNavigateToChat = onNavigateToChat,
+                                                onNavigateToProfile = onNavigateToProfile,
+                                                onNavigateToState = onNavigateToState
+                                            )
                                         }
                                     )
                                 }
@@ -249,7 +270,20 @@ fun NotificationCard(
                 )
             }
         }
-        
+
+        // Rich thumbnail for visual content (post, reel, story, video cover)
+        if (shouldShowThumbnail(notification)) {
+            Spacer(modifier = Modifier.width(12.dp))
+            AsyncImage(
+                model = thumbnailUrlFor(notification),
+                contentDescription = null,
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(RoundedCornerShape(8.dp)),
+                contentScale = ContentScale.Crop
+            )
+        }
+
         if (!notification.isRead) {
             Spacer(modifier = Modifier.width(8.dp))
             Box(
@@ -259,6 +293,24 @@ fun NotificationCard(
             )
         }
     }
+}
+
+private fun shouldShowThumbnail(notification: Notification): Boolean {
+    // Visual types where shows a small preview thumbnail (video cover, image).
+    return notification.type == NotificationType.POST ||
+           notification.type == NotificationType.REEL ||
+           notification.type == NotificationType.VIEW ||
+           notification.type == NotificationType.TRENDING ||
+           notification.type == NotificationType.SHARE ||
+           notification.type == NotificationType.FAVORITE ||
+           notification.type == NotificationType.LIKE ||
+           notification.type == NotificationType.COMMENT
+}
+
+private fun thumbnailUrlFor(notification: Notification): String? {
+    // Use the avatar URL as the safe thumbnail on social/visual types.
+    // Backend can later replace this with a real preview_url if provided.
+    return notification.profile.avatarUrl
 }
 
 @Composable
@@ -321,6 +373,56 @@ fun NotificationLoading() {
 }
 
 // Helpers
+
+fun handleNotificationNavigation(
+    notification: Notification,
+    onNavigateToPostDetail: (String) -> Unit,
+    onNavigateToReel: (String) -> Unit,
+    onNavigateToChat: (String, String) -> Unit,
+    onNavigateToProfile: (String) -> Unit,
+    onNavigateToState: (String) -> Unit
+) {
+    // Route the notification to its appropriate destination.
+    // We intentionally do NOT auto-delete notifications on click; the user
+    // expects to be able to come back and re-read them.
+    when (notification.type) {
+        NotificationType.MESSAGE, NotificationType.CALL -> {
+            // "sourceId" is the chat or thread id; profile.id is the other user.
+            if (notification.sourceId.isNotEmpty()) {
+                onNavigateToChat(
+                    notification.sourceId,
+                    notification.profile.id
+                )
+            } else {
+                onNavigateToChat(notification.profile.id, notification.profile.id)
+            }
+        }
+        NotificationType.FOLLOWER -> {
+            onNavigateToProfile(notification.profile.id)
+        }
+        NotificationType.REEL -> {
+            if (notification.sourceId.isNotEmpty()) {
+                onNavigateToReel(notification.sourceId)
+            }
+        }
+        NotificationType.LIKE,
+        NotificationType.COMMENT,
+        NotificationType.FAVORITE,
+        NotificationType.SHARE,
+        NotificationType.VIEW,
+        NotificationType.POST,
+        NotificationType.TRENDING,
+        NotificationType.EVENT,
+        NotificationType.GROUP -> {
+            // Likes/comments/favorites/shares/views/posts/trending always route to the
+            // corresponding content in detail view (post, reel or state).
+            if (notification.sourceId.isNotEmpty()) {
+                onNavigateToPostDetail(notification.sourceId)
+            }
+        }
+        // TRENDING falls through to POST/VIEW when backend tags it as 'view' or 'post'.
+    }
+}
 fun getNotificationIcon(type: NotificationType): Pair<ImageVector, Color> {
     return when (type) {
         NotificationType.LIKE -> Pair(Icons.Default.Favorite, Color.Red)
@@ -331,6 +433,7 @@ fun getNotificationIcon(type: NotificationType): Pair<ImageVector, Color> {
         NotificationType.FAVORITE -> Pair(Icons.Default.Star, Color(0xFFFFD600))
         NotificationType.SHARE -> Pair(Icons.Default.Share, Color(0xFF00B0FF))
         NotificationType.VIEW -> Pair(Icons.Default.Visibility, Color(0xFF00E676))
+        NotificationType.TRENDING -> Pair(Icons.Default.TrendingUp, Color(0xFFFF3D00))
         else -> Pair(Icons.Default.Notifications, Color.Gray)
     }
 }

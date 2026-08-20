@@ -20,6 +20,16 @@ class NotificationsRepository {
     private val repoScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val dao = PanalinkDatabase.getDatabase(PanaApplication.instance).localNotificationDao()
 
+    /**
+     * SharedPreferences used for UI-level muting/badges. Provided through the
+     * application context, so it requires the app to be running with PanaApplication.
+     */
+    fun getPreferences(): android.content.SharedPreferences =
+        PanaApplication.instance.getSharedPreferences(
+            "notifications_preferences",
+            android.content.Context.MODE_PRIVATE
+        )
+
     val notifications: Flow<List<Notification>> = dao.getNotificationsFlow().map { list ->
         list.map { it.toDomain() }
     }
