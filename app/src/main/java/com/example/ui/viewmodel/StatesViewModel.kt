@@ -33,6 +33,7 @@ class StatesViewModel(private val statesRepository: StatesRepository = StatesRep
     private val _createStateFlow = MutableStateFlow<CreateStateUiState>(CreateStateUiState.Idle)
     val createStateFlow: StateFlow<CreateStateUiState> = _createStateFlow
     private val commentsJobs = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Job>()
+    private var activeCommentsId: String? = null
     private val _currentComments = MutableStateFlow<List<Comment>>(emptyList())
     val currentComments: StateFlow<List<Comment>> = _currentComments
     private val _currentSpectators = MutableStateFlow<List<StatusViewer>>(emptyList())
@@ -77,8 +78,11 @@ class StatesViewModel(private val statesRepository: StatesRepository = StatesRep
         viewModelScope.launch { try { val chatsRepo = com.example.data.repository.ChatsRepository(); val messagesRepo = com.example.data.repository.MessagesRepository.getInstance(); val chatResult = chatsRepo.createDirectChat(authorId); if (chatResult.isSuccess) { val chat = chatResult.getOrThrow(); val sendResult = messagesRepo.sendMessage(chatId = chat.id, content = messageText, receiverUid = authorId); if (sendResult.isSuccess) onSuccess() else onError?.invoke(sendResult.exceptionOrNull()?.localizedMessage ?: "Error al enviar mensaje por DM") } else onError?.invoke(chatResult.exceptionOrNull()?.localizedMessage ?: "No se pudo iniciar el chat con el autor") } catch (e: Exception) { onError?.invoke(e.localizedMessage ?: "Error inesperado al enviar DM") } }
     }
     fun loadComments(stateId: String) {
-        val existingTemps = _currentComments.value.filter { it.stateId == stateId && it.id.startsWith("temp_") }; commentsJobs[stateId]?.cancel()
-        commentsJobs[stateId] = viewModelScope.launch(errorHandler + Dispatchers.IO) { val currentState = findState(stateId); val isReel = currentState?.let { isReelState(it.state) } ?: false; launch { statesRepository.getCommentsFlow(stateId, isReel).collect { comments -> val ids = comments.map { it.id }.toSet(); _currentComments.value = (comments + existingTemps.filter { it.id !in ids }).sortedByDescending { it.createdAt } } }; statesRepository.getStateComments(stateId, isReel) }
+        activeCommentsId = stateId
+        val existingTemps = _currentComments.value.filter { it.stateId == stateId && it.id.startsWith("temp_") }
+        commentsJobs.values.forEach { it.cancel() }
+        commentsJobs.clear()
+        commentsJobs[stateId] = viewModelScope.launch(errorHandler + Dispatchers.IO) { val currentState = findState(stateId); val isReel = currentState?.let { isReelState(it.state) } ?: false; launch { statesRepository.getCommentsFlow(stateId, isReel).collect { comments -> if (activeCommentsId != stateId) return@collect; val ids = comments.map { it.id }.toSet(); _currentComments.value = (comments + existingTemps.filter { it.id !in ids }).sortedByDescending { it.createdAt } } }; statesRepository.getStateComments(stateId, isReel) }
     }
     fun loadSpectators(stateId: String) { viewModelScope.launch(errorHandler + Dispatchers.IO) { val currentState = findState(stateId); val isReel = currentState?.let { isReelState(it.state) } ?: false; statesRepository.getStatusViews(stateId, isReel).onSuccess { _currentSpectators.value = it.sortedBy { viewer -> viewer.viewedAt } }.onFailure { _currentSpectators.value = emptyList() } } }
     fun deleteStateForMe(stateId: String, onSuccess: () -> Unit) { viewModelScope.launch { com.example.data.database.PanalinkDatabase.getDatabase(com.example.PanaApplication.instance).statesDao().deleteById(stateId); onSuccess() } }

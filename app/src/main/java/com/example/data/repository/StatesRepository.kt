@@ -756,7 +756,29 @@ class StatesRepository {
 
                         if (response != null && response.isSuccessful) {
                             val commentsDto = response.body() ?: emptyList()
-                            val comments = commentsDto.map { it.toDomain() }
+                            val baseComments = commentsDto.map { it.toDomain() }
+
+                            // Resolve author identity through public_profiles so the
+                            // comment never falls back to generic/blank names.
+                            val authorIds = baseComments.map { it.userId }.filter { it.isNotBlank() }.distinct()
+                            val profilesMap = if (authorIds.isNotEmpty()) {
+                                try {
+                                    val profileResult = PublicProfileRepository.getInstance().getPublicProfiles(authorIds)
+                                    if (profileResult is PublicProfileFetchResult.Success) {
+                                        profileResult.data.mapNotNull { (id, value) ->
+                                            if (value is PublicProfileFetchResult.Success) id to value.data else null
+                                        }.toMap()
+                                    } else emptyMap()
+                                } catch (e: Exception) { emptyMap() }
+                            } else emptyMap()
+
+                            val comments = baseComments.map { comment ->
+                                val pub = profilesMap[comment.userId]
+                                if (pub == null) comment else comment.copy(
+                                    authorName = PublicProfileResolver.resolveDisplayName(pub, comment.authorName, comment.userId),
+                                    avatarUrl = CdnManager.resolveAvatarUrl(pub.avatarUrl) ?: comment.avatarUrl
+                                )
+                            }
 
                             // Save to Room
                             val entities = comments.map { com.example.data.database.CommentEntity.fromStateComment(it, isReel) }

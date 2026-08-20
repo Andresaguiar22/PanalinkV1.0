@@ -9,6 +9,7 @@ import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.FileDataSource
 import androidx.media3.datasource.cache.CacheDataSink
 import androidx.media3.datasource.cache.CacheDataSource
+import androidx.media3.datasource.cache.CacheKeyFactory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -18,6 +19,20 @@ import androidx.media3.common.util.UnstableApi
 @UnstableApi
 object CacheDataSourceFactory {
     private const val TAG = "CacheDataSourceFactory"
+
+    /**
+     * Stable cache keys based on the media's path (and query). The CDN manager
+     * rewrites the host whenever the active tunnel changes, so indexing by the
+     * full URI would break cache hits across sessions.
+     */
+    private val stableCacheKeyFactory = CacheKeyFactory { dataSpec ->
+        val uri = dataSpec.uri
+        val pathKey = buildString {
+            append(uri.path?.let { it.ifBlank { null } } ?: uri.toString())
+            append(uri.query?.let { "?$it" } ?: "")
+        }
+        pathKey.ifBlank { uri.toString() }
+    }
 
     fun getCacheDataSourceFactory(context: Context): DataSource.Factory {
         // DefaultHttpDataSource setup with snappy timeouts optimized for quick loading and robust user-agent to bypass CDN blocks
@@ -32,6 +47,7 @@ object CacheDataSourceFactory {
             if (simpleCache != null) {
                 CacheDataSource.Factory()
                     .setCache(simpleCache)
+                    .setCacheKeyFactory(stableCacheKeyFactory)
                     .setUpstreamDataSourceFactory(httpDataSourceFactory)
                     .setCacheReadDataSourceFactory(FileDataSource.Factory())
                     .setCacheWriteDataSinkFactory(CacheDataSink.Factory().setCache(simpleCache))

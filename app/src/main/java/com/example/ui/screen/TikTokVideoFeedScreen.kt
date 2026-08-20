@@ -1632,7 +1632,8 @@ fun TikTokPageItem(
                                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
                                         Text(
-                                            text = if (comment.deletedAt != null) "Eliminado" else comment.authorName,
+                                            text = if (comment.deletedAt != null) "Eliminado"
+                                                else com.example.data.repository.PublicProfileResolver.formatForUi(comment.authorName, "Pana"),
                                             color = Color.White.copy(alpha = 0.9f),
                                             fontWeight = FontWeight.Bold,
                                             fontSize = if (isReply) 12.sp else 13.sp,
@@ -1712,7 +1713,7 @@ fun TikTokPageItem(
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Text(
-                                text = "Respondiendo a @${currentReplyingTo.authorName}",
+                                text = "Respondiendo a @${com.example.data.repository.PublicProfileResolver.formatForUi(currentReplyingTo.authorName, "Pana")}",
                                 color = Color(0xFF25D366),
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.SemiBold
