@@ -1086,6 +1086,27 @@ class ProfilesRepository {
         }
     }
 
+    suspend fun getSentFriendRequests(): Result<List<FriendRequestEntity>> = withContext(Dispatchers.IO) {
+        try {
+            val service = SupabaseClient.apiService ?: return@withContext Result.failure(Exception("Supabase not configured"))
+            val response = runCall { b ->
+                service.getSentFriendRequests(
+                    apiKey = SupabaseClient.supabaseAnonKey,
+                    authorization = b,
+                    senderFilter = "eq.${SupabaseClient.currentUser?.id}"
+                )
+            }
+            if (response != null && response.isSuccessful) {
+                Result.success(response.body() ?: emptyList())
+            } else {
+                Result.failure(Exception("Error getting sent friend requests"))
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error getting sent friend requests", e)
+            Result.failure(e)
+        }
+    }
+
     suspend fun acceptFriendRequest(requestId: String): Result<Unit> = withContext(Dispatchers.IO) {
         try {
             val service = SupabaseClient.apiService ?: return@withContext Result.failure(Exception("Supabase not configured"))

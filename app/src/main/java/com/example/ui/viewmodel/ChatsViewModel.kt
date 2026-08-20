@@ -54,6 +54,9 @@ class ChatsViewModel(
     private val _friendRequestsState = MutableStateFlow<FriendRequestsUiState>(FriendRequestsUiState.Loading)
     val friendRequestsState: StateFlow<FriendRequestsUiState> = _friendRequestsState
 
+    private val _sentFriendRequestsState = MutableStateFlow<FriendRequestsUiState>(FriendRequestsUiState.Idle)
+    val sentFriendRequestsState: StateFlow<FriendRequestsUiState> = _sentFriendRequestsState
+
     private var isChatsLoading = false
     private var isContactsLoading = false
 
@@ -309,6 +312,19 @@ class ChatsViewModel(
                 }
                 .onFailure { error ->
                     _friendRequestsState.value = FriendRequestsUiState.Error(error.localizedMessage ?: "Error cargando solicitudes")
+                }
+        }
+    }
+
+    fun loadSentFriendRequests() {
+        viewModelScope.launch {
+            _sentFriendRequestsState.value = FriendRequestsUiState.Loading
+            profilesRepository.getSentFriendRequests()
+                .onSuccess { requests ->
+                    _sentFriendRequestsState.value = FriendRequestsUiState.Success(requests)
+                }
+                .onFailure { error ->
+                    _sentFriendRequestsState.value = FriendRequestsUiState.Error(error.localizedMessage ?: "Error cargando solicitudes enviadas")
                 }
         }
     }

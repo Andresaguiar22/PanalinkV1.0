@@ -481,11 +481,13 @@ fun ChatsListScreen(
             val toastMsg = if (state.response.isAlreadyContact == true) {
                 "Ya $contactName es de tus contactos"
             } else {
-                "Se agregó a $contactName como nuevo contacto"
+                "Solicitud enviada a $contactName: si acepta, será contacto mutuo"
             }
             android.widget.Toast.makeText(context, toastMsg, android.widget.Toast.LENGTH_LONG).show()
             
             chatsViewModel.loadContacts(forceRefresh = true)
+            chatsViewModel.loadFriendRequests()
+            chatsViewModel.loadSentFriendRequests()
             chatsViewModel.loadChats()
 
             val threadId = state.response.threadId
@@ -509,6 +511,7 @@ fun ChatsListScreen(
         chatsViewModel.loadChats()
         chatsViewModel.loadContacts()
         chatsViewModel.loadFriendRequests()
+        chatsViewModel.loadSentFriendRequests()
         statesViewModel.loadActiveStates()
     }
 

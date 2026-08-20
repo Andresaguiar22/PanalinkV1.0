@@ -134,6 +134,7 @@ fun ContactsTabContent(
             val contacts = contactsState.contacts
             android.util.Log.d("CONTACTS_DEBUG", "cantidad finalmente mostrada por la UI: ${contacts.size}")
             val requestsState by chatsViewModel.friendRequestsState.collectAsState()
+            val sentRequestsState by chatsViewModel.sentFriendRequestsState.collectAsState()
 
             LazyColumn(modifier = Modifier.fillMaxSize()) {
                 if (requestsState is FriendRequestsUiState.Success) {
@@ -141,7 +142,7 @@ fun ContactsTabContent(
                     if (requests.isNotEmpty()) {
                         item {
                             Text(
-                                text = "Solicitudes de amistad (${requests.size})",
+                                text = "Solicitudes pendientes (${requests.size})",
                                 color = Color.White,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
@@ -149,6 +150,28 @@ fun ContactsTabContent(
                             )
                         }
                         items(requests) { request ->
+                            com.example.ui.components.ContactRequestRow(
+                                request = request,
+                                onAccept = { chatsViewModel.acceptFriendRequest(request.id) },
+                                onDecline = { chatsViewModel.declineFriendRequest(request.id) }
+                            )
+                        }
+                    }
+                }
+
+                if (sentRequestsState is FriendRequestsUiState.Success) {
+                    val sentRequests = (sentRequestsState as FriendRequestsUiState.Success).requests
+                    if (sentRequests.isNotEmpty()) {
+                        item {
+                            Text(
+                                text = "Mis solicitudes (${sentRequests.size})",
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(16.dp, 8.dp)
+                            )
+                        }
+                        items(sentRequests) { request ->
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -156,23 +179,23 @@ fun ContactsTabContent(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 com.example.ui.components.PanaAvatar(
-                                    avatarUrl = request.sender?.avatarUrl,
-                                    userId = request.sender?.id,
-                                    placeholderName = request.sender?.displayName ?: "",
+                                    avatarUrl = request.receiver?.avatarUrl,
+                                    userId = request.receiver?.id,
+                                    placeholderName = request.receiver?.displayName ?: "",
                                     size = 40.dp,
                                     modifier = Modifier.size(40.dp)
                                 )
                                 Spacer(modifier = Modifier.width(12.dp))
-                                Text(
-                                    text = request.sender?.displayName ?: "",
-                                    color = Color.White,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                IconButton(onClick = { chatsViewModel.acceptFriendRequest(request.id) }) {
-                                    Icon(Icons.Default.Check, contentDescription = "Aceptar", tint = Color.Green)
-                                }
-                                IconButton(onClick = { chatsViewModel.declineFriendRequest(request.id) }) {
-                                    Icon(Icons.Default.Close, contentDescription = "Rechazar", tint = Color.Red)
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = request.receiver?.displayName ?: "Pana",
+                                        color = Color.White
+                                    )
+                                    Text(
+                                        text = "Esperando respuesta",
+                                        color = Color(0xFF90A4AE),
+                                        fontSize = 12.sp
+                                    )
                                 }
                             }
                         }

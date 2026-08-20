@@ -126,7 +126,7 @@ class EmbeddedProfileAdapter {
 }
 
 @JsonClass(generateAdapter = true)
-data class FriendRequestEntity(@Json(name = "id") val id: String = "", @Json(name = "sender_id") val senderId: String, @Json(name = "receiver_id") val receiverId: String, @Json(name = "status") val status: String, @Json(name = "created_at") val createdAt: String? = null, @Json(name = "sender") val sender: Profile? = null)
+data class FriendRequestEntity(@Json(name = "id") val id: String = "", @Json(name = "sender_id") val senderId: String, @Json(name = "receiver_id") val receiverId: String, @Json(name = "status") val status: String, @Json(name = "created_at") val createdAt: String? = null, @Json(name = "sender") val sender: Profile? = null, @Json(name = "receiver") val receiver: Profile? = null)
 
 @JsonClass(generateAdapter = true)
 data class ThreadMessage(

@@ -448,6 +448,15 @@ interface SupabaseApiService {
         @Query("status") statusFilter: String = "eq.pending"
     ): Response<List<FriendRequestEntity>>
 
+    @GET("rest/v1/friend_requests")
+    suspend fun getSentFriendRequests(
+        @Header("apikey") apiKey: String,
+        @Header("Authorization") authorization: String,
+        @Query("select") select: String = "*,receiver:profiles!receiver_id(*)",
+        @Query("sender_id") senderFilter: String,
+        @Query("status") statusFilter: String = "eq.pending"
+    ): Response<List<FriendRequestEntity>>
+
     @GET("rest/v1/contacts")
     suspend fun getContactsWithProfiles(
         @Header("apikey") apiKey: String,
