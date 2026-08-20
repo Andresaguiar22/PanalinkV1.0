@@ -172,5 +172,3 @@ fun QuickProfileMenuItem(
     }
 }
 
-
-@Composable

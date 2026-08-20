@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
+
 package com.example.ui.screen
 
 import com.example.ui.components.*
@@ -866,6 +868,4 @@ fun VideoThumbnail(
         }
     }
 }
-
-@OptIn(ExperimentalFoundationApi::class)
 

@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
+
 package com.example.ui.screen
 
 import com.example.ui.components.*
@@ -89,8 +91,7 @@ import java.util.*
 import com.example.ui.viewmodel.NotificationsViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
-
-
+@Composable
 fun PendingUploadsBanner(
     pendingUploadsViewModel: com.example.ui.viewmodel.PendingUploadsViewModel
 ) {

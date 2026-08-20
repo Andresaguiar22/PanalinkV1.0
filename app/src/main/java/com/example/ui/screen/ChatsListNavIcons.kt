@@ -335,5 +335,3 @@ fun NavLlamadasIcon(tint: Color) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
-
