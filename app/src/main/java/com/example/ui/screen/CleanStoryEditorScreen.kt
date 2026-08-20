@@ -71,6 +71,7 @@ private val FREE_MUSIC = listOf(
     FreeMusicOption("Atardecer", "https://assets.mixkit.co/music/preview/mixkit-dreaming-big-31.mp3"),
 )
 
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun CleanStoryEditorScreen(
     viewModel: StatesViewModel,

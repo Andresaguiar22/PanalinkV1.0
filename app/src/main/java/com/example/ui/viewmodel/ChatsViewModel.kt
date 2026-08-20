@@ -54,7 +54,7 @@ class ChatsViewModel(
     private val _friendRequestsState = MutableStateFlow<FriendRequestsUiState>(FriendRequestsUiState.Loading)
     val friendRequestsState: StateFlow<FriendRequestsUiState> = _friendRequestsState
 
-    private val _sentFriendRequestsState = MutableStateFlow<FriendRequestsUiState>(FriendRequestsUiState.Idle)
+    private val _sentFriendRequestsState = MutableStateFlow<FriendRequestsUiState>(FriendRequestsUiState.Success(emptyList()))
     val sentFriendRequestsState: StateFlow<FriendRequestsUiState> = _sentFriendRequestsState
 
     private var isChatsLoading = false
