@@ -38,6 +38,11 @@ android {
 
         val appUrl = System.getenv("APP_URL") ?: secrets.getProperty("BACKEND_URL") ?: "http://10.0.2.2:3000"
         buildConfigField("String", "BACKEND_URL", "\"$appUrl\"")
+
+        // Panalink OTA: las actualizaciones se distribuyen manualmente desde
+        // el repositorio público dedicado Andresaguiar22/panalink-ota.
+        buildConfigField("String", "GITHUB_OWNER", "\"Andresaguiar22\"")
+        buildConfigField("String", "GITHUB_REPOSITORY", "\"panalink-ota\"")
     }
 
     signingConfigs {

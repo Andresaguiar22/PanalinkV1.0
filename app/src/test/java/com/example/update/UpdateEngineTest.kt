@@ -644,7 +644,6 @@ class UpdateEngineTest {
             isProduction = true,
             githubOwner = "my-owner",
             githubRepo = "my-repo",
-            githubReleaseTag = "v2.0.0"
         )
         
         val mockClient = createMockHttpClient { request ->
@@ -677,7 +676,6 @@ class UpdateEngineTest {
             isProduction = true,
             githubOwner = "my-owner",
             githubRepo = "my-repo",
-            githubReleaseTag = "v2.0.0"
         )
         
         val mockClient = createMockHttpClient { request ->
@@ -708,7 +706,6 @@ class UpdateEngineTest {
             isProduction = true,
             githubOwner = "",
             githubRepo = "",
-            githubReleaseTag = ""
         )
         val repo = GitHubUpdateManifestRepository(config, OkHttpClient())
         val result = repo.fetchUpdateManifest()

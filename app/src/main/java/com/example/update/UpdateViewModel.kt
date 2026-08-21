@@ -14,27 +14,14 @@ class UpdateViewModel(application: Application) : AndroidViewModel(application) 
 
     private val context = application.applicationContext
 
-    // Configure the default manifest URL using BACKEND_URL or GITHUB
-    private val defaultManifestUrl = if (BuildConfig.DEBUG) {
-        "${BuildConfig.BACKEND_URL}/updates/manifest.json"
-    } else {
-        val owner = try { BuildConfig.GITHUB_OWNER } catch (e: Exception) { "placeholder-owner" }
-        val repo = try { BuildConfig.GITHUB_REPOSITORY } catch (e: Exception) { "placeholder-repo" }
-        "https://github.com/$owner/$repo/releases/latest/download/manifest.json"
-    }
-    
-    private val defaultProviderType = if (BuildConfig.DEBUG) {
-        UpdateConfig.ProviderType.CUSTOM_SERVER
-    } else {
-        UpdateConfig.ProviderType.GITHUB_RELEASES
-    }
-
+    // Las actualizaciones siempre se distribuyen desde el repositorio público
+    // dedicado Andresaguiar22/panalink-ota (manifest en raw.githubusercontent.com
+    // y binarios en GitHub Releases). Sin GitHub Actions ni backend propio.
     private val config = UpdateConfig(
-        manifestUrl = defaultManifestUrl,
-        providerType = defaultProviderType,
-        githubOwner = try { BuildConfig.GITHUB_OWNER } catch (e: Exception) { "placeholder-owner" },
-        githubRepo = try { BuildConfig.GITHUB_REPOSITORY } catch (e: Exception) { "placeholder-repo" },
-        githubReleaseTag = try { BuildConfig.GITHUB_RELEASE_TAG } catch (e: Exception) { "v2.0.0" }
+        manifestUrl = "https://raw.githubusercontent.com/Andresaguiar22/panalink-ota/main/manifest.json",
+        providerType = UpdateConfig.ProviderType.GITHUB_RELEASES,
+        githubOwner = BuildConfig.GITHUB_OWNER,
+        githubRepo = BuildConfig.GITHUB_REPOSITORY
     )
 
     private val repository: UpdateManifestRepository = if (config.providerType == UpdateConfig.ProviderType.GITHUB_RELEASES) {

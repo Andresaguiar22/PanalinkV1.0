@@ -21,12 +21,10 @@ class GitHubUpdateManifestRepository(
             return@withContext Result.failure(IllegalArgumentException("GitHub owner or repository is not configured"))
         }
 
-        // Build the manifest URL dynamically
-        val manifestUrl = if (config.githubReleaseTag.isNotBlank() && config.githubReleaseTag != "v2.0.0") {
-            "https://github.com/$owner/$repo/releases/download/${config.githubReleaseTag}/manifest.json"
-        } else {
-            "https://github.com/$owner/$repo/releases/latest/download/manifest.json"
-        }
+        // Metadatos OTA desde raw.githubusercontent.com (rama main), mientras que
+        // el APK binario vive en GitHub Releases. Separar metadatos de binarios
+        // se alinea con el proceso de publicación manual desde Termux.
+        val manifestUrl = "https://raw.githubusercontent.com/$owner/$repo/main/manifest.json"
 
         if (config.isProduction && !manifestUrl.startsWith("https://", ignoreCase = true)) {
             return@withContext Result.failure(SecurityException("Production manifest URL must use HTTPS"))
