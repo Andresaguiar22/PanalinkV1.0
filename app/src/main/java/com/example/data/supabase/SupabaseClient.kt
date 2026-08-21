@@ -865,6 +865,12 @@ object SupabaseClient {
 
     private fun scheduleReconnect() {
         if (!isConfigured) return
+        // Sin internet no tiene sentido quemar intentos de reconexión: cuando vuelva
+        // la señal, el observador de conectividad llamará a connectRealtime() de inmediato.
+        if (!com.example.util.NetworkMonitor.isOnline.value) {
+            Log.d(TAG, "Device offline, skipping realtime reconnect until connectivity returns")
+            return
+        }
         reconnectJob?.cancel()
         reconnectJob = clientScope.launch {
             val delayMs = when (reconnectAttempt) {

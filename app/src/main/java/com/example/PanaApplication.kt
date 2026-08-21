@@ -118,6 +118,7 @@ class PanaApplication : Application(), ImageLoaderFactory, DefaultLifecycleObser
 
         try {
             com.example.util.NetworkMonitor.startMonitoring(this)
+            observeConnectivityRestore()
         } catch (e: Throwable) {
             android.util.Log.e("PanaApplication", "NetworkMonitor start failed safely", e)
         }
@@ -137,6 +138,38 @@ class PanaApplication : Application(), ImageLoaderFactory, DefaultLifecycleObser
         }
 
         scheduleOfflineMediaWarmup()
+    }
+
+    /**
+     * Offline-first como WhatsApp/Telegram: cuando vuelve la conectividad reconectamos
+     * Realtime al instante y disparamos la sincronización de mensajes pendientes, en
+     * lugar de esperar hasta 30s de backoff o a que el usuario recargue manualmente.
+     */
+    private fun observeConnectivityRestore() {
+        applicationScope.launch {
+            var wasOnline = com.example.util.NetworkMonitor.isOnline.value
+            com.example.util.NetworkMonitor.isOnline.collect { isOnline ->
+                if (isOnline && !wasOnline) {
+                    android.util.Log.i("PanaApplication", "Connectivity restored: reconnecting realtime + syncing pending")
+                    try {
+                        SupabaseClient.connectRealtime()
+                    } catch (e: Throwable) {
+                        android.util.Log.e("PanaApplication", "Realtime reconnect on restore failed", e)
+                    }
+                    try {
+                        com.example.data.repository.MessagesRepository.getInstance().scheduleSync()
+                    } catch (e: Throwable) {
+                        android.util.Log.e("PanaApplication", "Sync scheduling on restore failed", e)
+                    }
+                    try {
+                        com.example.data.repository.CdnManager.getCDNUrl(forceRefresh = true)
+                    } catch (e: Throwable) {
+                        android.util.Log.e("PanaApplication", "CDN refresh on restore failed", e)
+                    }
+                }
+                wasOnline = isOnline
+            }
+        }
     }
 
     private fun scheduleOfflineMediaWarmup() {

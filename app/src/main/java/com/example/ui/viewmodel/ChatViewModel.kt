@@ -111,6 +111,27 @@ class ChatViewModel : ViewModel() {
                 _userPresence.value = stringMap
             }
         }
+
+        // Offline-first: al recuperar conectividad recargamos los mensajes del chat
+        // abierto (Room emite el resultado automáticamente al finalizar el fetch)
+        viewModelScope.launch {
+            var wasOnline = com.example.util.NetworkMonitor.isOnline.value
+            com.example.util.NetworkMonitor.isOnline.collect { isOnline ->
+                if (isOnline && !wasOnline) {
+                    val chatId = currentChatId
+                    if (!chatId.isNullOrEmpty()) {
+                        launch(Dispatchers.IO) {
+                            try {
+                                messagesRepo.getMessagesForChatPaged(chatId)
+                            } catch (e: Exception) {
+                                Log.e("ChatViewModel", "Error refreshing chat on connectivity restore", e)
+                            }
+                        }
+                    }
+                }
+                wasOnline = isOnline
+            }
+        }
     }
 
     private val _messageReactions = MutableStateFlow<Map<String, Map<String, String>>>(emptyMap())

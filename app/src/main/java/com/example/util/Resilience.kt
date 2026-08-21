@@ -27,7 +27,15 @@ object Resilience {
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 if (!retryCondition(e)) throw e
-                
+
+                // Sin conectividad no hay nada que reintentar: el backoff solo congela
+                // la app en tormentas de llamadas fallidas. Fallar rápido permite a los
+                // repositorios servir el caché local de inmediato.
+                if (!NetworkMonitor.isOnline.value) {
+                    Log.w(TAG, "Operation failed and device is offline. Failing fast to serve local cache. Error: ${e.message}")
+                    throw e
+                }
+
                 Log.w(TAG, "Operation failed (attempt ${attempt + 1}), retrying in $currentDelay ms... Error: ${e.message}")
             }
             delay(currentDelay)

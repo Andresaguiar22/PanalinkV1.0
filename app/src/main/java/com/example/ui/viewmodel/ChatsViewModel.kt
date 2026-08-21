@@ -97,6 +97,20 @@ class ChatsViewModel(
                 loadContacts(forceRefresh = true)
             }
         }
+
+        // Offline-first: al recuperar conectividad refrescamos datos automáticamente,
+        // como WhatsApp/Telegram, sin que el usuario tenga que recargar a mano
+        viewModelScope.launch(exceptionHandler) {
+            var wasOnline = com.example.util.NetworkMonitor.isOnline.value
+            com.example.util.NetworkMonitor.isOnline.collect { isOnline ->
+                if (isOnline && !wasOnline) {
+                    loadChats(forceRefresh = true)
+                    loadFriendRequests()
+                    loadSentFriendRequests()
+                }
+                wasOnline = isOnline
+            }
+        }
     }
 
     private val _chatsState = MutableStateFlow<ChatsUiState>(ChatsUiState.Loading)
