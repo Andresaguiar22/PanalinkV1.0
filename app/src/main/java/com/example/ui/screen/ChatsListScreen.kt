@@ -18,6 +18,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -936,7 +938,9 @@ fun ChatsListScreen(
                     .navigationBarsPadding()
             ) {
                 Column(
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
                 ) {
                     // Top Header
                     Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -1054,33 +1058,6 @@ fun ChatsListScreen(
                     Text("Más opciones", color = Color.Gray, fontSize = 13.sp)
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    // Publicación
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                showPlusBottomSheet = false
-                                onNavigateToCreateState()
-                            }
-                            .padding(vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(40.dp)
-                                .background(Color(0xFF2D2DB9), RoundedCornerShape(10.dp)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(Icons.Default.List, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp))
-                        }
-                        Spacer(modifier = Modifier.width(16.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("Publicación", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                            Text("Comparte fotos o textos en tu feed.", color = Color.Gray, fontSize = 12.sp)
-                        }
-                        Icon(Icons.Default.KeyboardArrowRight, contentDescription = null, tint = Color.Gray)
-                    }
-
                     // Music Studio
                     Row(
                         modifier = Modifier
@@ -1132,13 +1109,6 @@ fun ChatsListScreen(
                         Column(modifier = Modifier.weight(1f)) {
                             Text("PanaTV", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
                             Text("Canales nacionales en vivo", color = Color.Gray, fontSize = 12.sp)
-                        }
-                        Box(
-                            modifier = Modifier
-                                .background(Color(0xFF4CAF50).copy(alpha = 0.2f), RoundedCornerShape(4.dp))
-                                .padding(horizontal = 6.dp, vertical = 2.dp)
-                        ) {
-                            Text("En vivo", color = Color(0xFF4CAF50), fontSize = 10.sp, fontWeight = FontWeight.Bold)
                         }
                     }
 
@@ -1196,12 +1166,12 @@ fun ChatsListScreen(
                         Icon(Icons.Default.KeyboardArrowRight, contentDescription = null, tint = Color.Gray)
                     }
 
-                    // Canal Option
+                    // Canal (próximamente: aún no hay backend de canales)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable {
-                                showPlusBottomSheet = false
+                                android.widget.Toast.makeText(context, "Canales: próximamente 📢", android.widget.Toast.LENGTH_SHORT).show()
                             }
                             .padding(vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically
@@ -1219,7 +1189,45 @@ fun ChatsListScreen(
                             Text("Canal", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
                             Text("Crea una audiencia y comparte\ndifusiones públicas o privadas.", color = Color.Gray, fontSize = 12.sp, lineHeight = 14.sp)
                         }
-                        Icon(Icons.Default.KeyboardArrowRight, contentDescription = null, tint = Color.Gray)
+                        Box(
+                            modifier = Modifier
+                                .background(Color(0xFFFFB300).copy(alpha = 0.15f), RoundedCornerShape(4.dp))
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Text("Próximamente", color = Color(0xFFFFB300), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    // Sala de voz (próximamente: audio rooms en vivo)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                android.widget.Toast.makeText(context, "Salas de voz: próximamente 🎙️", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                            .padding(vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .background(Color(0xFF7C4DFF), RoundedCornerShape(10.dp)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Default.Mic, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp))
+                        }
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Sala de voz", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                            Text("Conversa en vivo con tus panas\nen salas de audio.", color = Color.Gray, fontSize = 12.sp, lineHeight = 14.sp)
+                        }
+                        Box(
+                            modifier = Modifier
+                                .background(Color(0xFFFFB300).copy(alpha = 0.15f), RoundedCornerShape(4.dp))
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Text("Próximamente", color = Color(0xFFFFB300), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        }
                     }
 
                     Spacer(modifier = Modifier.height(16.dp))
@@ -1255,14 +1263,14 @@ fun ChatsListScreen(
                             }
                         }
 
-                        // Contactos quick access
+                        // Escanear QR quick access
                         Card(
                             modifier = Modifier
                                 .weight(1f)
                                 .height(48.dp)
                                 .clickable {
                                     showPlusBottomSheet = false
-                                    showContactsDialog = true
+                                    showRealQrScanner = true
                                 },
                             shape = RoundedCornerShape(12.dp),
                             colors = CardDefaults.cardColors(containerColor = Color(0xFF161618)),
@@ -1273,9 +1281,9 @@ fun ChatsListScreen(
                                 horizontalArrangement = Arrangement.Center,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(Icons.Default.Person, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                                Icon(Icons.Default.QrCodeScanner, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("Contactos", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                                Text("Escanear QR", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                             }
                         }
                     }
@@ -1429,14 +1437,14 @@ fun ChatsListScreen(
                         tint = colors.accent
                     ) {
                         showQuickProfileDialog = false
-                        android.widget.Toast.makeText(context, "Configuración abierta", android.widget.Toast.LENGTH_SHORT).show()
+                        onNavigateToProfile()
                     }
 
                     // Menu Item: Modo oscuro
                     val isMinimal by com.example.ui.theme.ThemeManager.isMinimalistMode.collectAsState()
                     QuickProfileMenuItem(
                         icon = if (isMinimal) Icons.Default.Check else Icons.Default.Close,
-                        label = "Modo oscuro",
+                        label = "Modo minimalista",
                         tint = Color(0xFF00FF85)
                     ) {
                         val newVal = !isMinimal
