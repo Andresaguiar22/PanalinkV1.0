@@ -3,7 +3,6 @@ package com.example.update
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -20,8 +19,8 @@ class UpdateViewModel(application: Application) : AndroidViewModel(application) 
     private val config = UpdateConfig(
         manifestUrl = "https://raw.githubusercontent.com/Andresaguiar22/panalink-ota/main/manifest.json",
         providerType = UpdateConfig.ProviderType.GITHUB_RELEASES,
-        githubOwner = BuildConfig.GITHUB_OWNER,
-        githubRepo = BuildConfig.GITHUB_REPOSITORY
+        githubOwner = "Andresaguiar22",
+        githubRepo = "panalink-ota"
     )
 
     private val repository: UpdateManifestRepository = if (config.providerType == UpdateConfig.ProviderType.GITHUB_RELEASES) {
