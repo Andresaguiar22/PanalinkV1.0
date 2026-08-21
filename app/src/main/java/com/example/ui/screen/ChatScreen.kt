@@ -245,6 +245,8 @@ fun ChatScreen(
 
     val prefs = remember { context.getSharedPreferences("panalink_prefs", android.content.Context.MODE_PRIVATE) }
     val chatTextSize = remember { prefs.getFloat("chat_text_size_${currentUid}", 15f) }
+    // "Enter para enviar" (Ajustes > Chats): activa el botón IME de enviar.
+    val enterSendsMessage = remember { prefs.getBoolean("chat_enter_sends_${currentUid}", false) }
     var chatWallpaperState by remember { 
         mutableStateOf(prefs.getString("chat_wallpaper_${currentUid}", "dark_slate") ?: "dark_slate") 
     }
@@ -1360,6 +1362,23 @@ fun ChatScreen(
                             androidx.compose.foundation.text.BasicTextField(
                                 value = inputMessage,
                                 onValueChange = { viewModel.onInputMessageChange(it) },
+                                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                                    imeAction = if (enterSendsMessage) androidx.compose.ui.text.input.ImeAction.Send else androidx.compose.ui.text.input.ImeAction.Default
+                                ),
+                                keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                                    onSend = {
+                                        if (inputMessage.isNotBlank()) {
+                                            if (editingMessage != null) {
+                                                viewModel.editMessage(editingMessage!!.id, inputMessage)
+                                                viewModel.clearReplyAndEdit()
+                                            } else {
+                                                viewModel.sendMessage(inputMessage, replyToId = replyingToMessage?.id, context = context)
+                                                viewModel.clearReplyAndEdit()
+                                            }
+                                            viewModel.onInputMessageChange("")
+                                        }
+                                    }
+                                ),
                                 modifier = Modifier
                                     .weight(1f)
                                     .testTag("chat_input_field")

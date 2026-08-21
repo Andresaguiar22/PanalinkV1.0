@@ -153,6 +153,51 @@ object PresenceRepository {
         }
     }
 
+    /** Effective status honoring the Privacy/Presence center settings. */
+    private fun effectiveStatus(): UserPresenceStatus {
+        val raw = try {
+            val uid = SupabaseClient.currentUser?.id ?: "guest"
+            val prefs = com.example.PanaApplication.instance
+                .getSharedPreferences("panalink_prefs", android.content.Context.MODE_PRIVATE)
+            val invisible = prefs.getBoolean("profile_invisibility_$uid", false)
+            val presence = prefs.getString("profile_presence_$uid", "online") ?: "online"
+            when {
+                invisible || presence == "invisible" -> UserPresenceStatus.OFFLINE
+                presence == "busy" -> UserPresenceStatus.BUSY
+                else -> _currentUserStatus.value
+            }
+        } catch (e: Exception) {
+            _currentUserStatus.value
+        }
+        return raw
+    }
+
+    /** True when the user hides their last-seen from everyone. */
+    private fun isLastSeenHidden(): Boolean {
+        return try {
+            val uid = SupabaseClient.currentUser?.id ?: "guest"
+            val prefs = com.example.PanaApplication.instance
+                .getSharedPreferences("panalink_prefs", android.content.Context.MODE_PRIVATE)
+            val invisible = prefs.getBoolean("profile_invisibility_$uid", false)
+            val lastSeenPref = prefs.getString("privacy_last_seen_$uid", "Mis Contactos") ?: "Mis Contactos"
+            invisible || lastSeenPref == "Nadie"
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /** Called by the Presence/Privacy center so the heartbeat picks up manual states. */
+    fun applyManualStatusFromSettings(status: String) {
+        _currentUserStatus.value = when (status) {
+            "busy" -> UserPresenceStatus.BUSY
+            "invisible" -> UserPresenceStatus.OFFLINE
+            else -> UserPresenceStatus.ONLINE
+        }
+        if (SupabaseClient.isConnected) {
+            SupabaseClient.broadcastPresence(effectiveStatus().rawValue)
+        }
+    }
+
     /**
      * Heartbeat cada 30 segundos usando únicamente Realtime Broadcast.
      * CERO escrituras a la base de datos PostgreSQL durante el heartbeat.
@@ -162,7 +207,7 @@ object PresenceRepository {
         heartbeatJob = scope.launch {
             while (true) {
                 if (SupabaseClient.isConnected) {
-                    SupabaseClient.broadcastPresence(_currentUserStatus.value.rawValue)
+                    SupabaseClient.broadcastPresence(effectiveStatus().rawValue)
                 }
                 delay(30_000L) // 30 segundos exactos
             }
@@ -185,7 +230,8 @@ object PresenceRepository {
         PresenceHistoryTracker.recordEvent(currentUid, status)
 
         if (SupabaseClient.isConnected) {
-            SupabaseClient.broadcastPresence(status.rawValue)
+            // Honors Privacy center: invisible users always broadcast offline.
+            SupabaseClient.broadcastPresence(effectiveStatus().rawValue)
         }
 
         // Persistir a PostgreSQL SOLAMENTE en eventos de ciclo de vida/cambio manual
@@ -216,6 +262,11 @@ object PresenceRepository {
     private fun persistPresenceToDatabase(status: UserPresenceStatus) {
         scope.launch {
             try {
+                // Privacy center: never publish last_seen/status when hidden.
+                if (isLastSeenHidden() && status != UserPresenceStatus.OFFLINE) {
+                    Log.d(TAG, "persistPresenceToDatabase skipped: user hides presence")
+                    return@launch
+                }
                 val currentUid = SupabaseClient.currentUser?.id ?: return@launch
                 val service = SupabaseClient.apiService ?: return@launch
                 val nowIso = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US).apply {

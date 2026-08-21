@@ -116,11 +116,29 @@ object NotificationHelper {
             return
         }
 
+        // Pana custom tones map to the bundled raw sounds; everything else
+        // (default/short/long/double/triple/soft_pop/water_drop) uses the
+        // system notification ringtone.
+        when (toneType) {
+            "pana_beep", "pana_pip" -> {
+                com.example.util.PanaLinkSoundManager.play(context, com.example.util.PanaSoundEvent.MESSAGE_RECEIVED)
+                return
+            }
+            "pana_double" -> {
+                com.example.util.PanaLinkSoundManager.play(context, com.example.util.PanaSoundEvent.MESSAGE_READ)
+                return
+            }
+            "pana_high" -> {
+                com.example.util.PanaLinkSoundManager.play(context, com.example.util.PanaSoundEvent.MESSAGE_SEND)
+                return
+            }
+        }
+
         try {
             val defaultUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
             val ringtone = RingtoneManager.getRingtone(context, defaultUri)
             ringtone?.play()
-            Log.d(TAG, "Played default system notification sound")
+            Log.d(TAG, "Played notification sound (tone=$toneType)")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to play custom notification sound", e)
         }
@@ -135,7 +153,13 @@ object NotificationHelper {
         val chatSoundEnabled = prefs.getBoolean("notifications_chat_sound_enabled", true)
         if (!chatSoundEnabled) return
 
-        com.example.util.PanaLinkSoundManager.play(context, com.example.util.PanaSoundEvent.MESSAGE_RECEIVED)
+        // In-chat tone chosen in Notification settings: distinct real sounds.
+        val chatTone = prefs.getString("notifications_chat_sound_tone", "water_drop") ?: "water_drop"
+        val event = when (chatTone) {
+            "soft_pop" -> com.example.util.PanaSoundEvent.MESSAGE_READ
+            else -> com.example.util.PanaSoundEvent.MESSAGE_RECEIVED
+        }
+        com.example.util.PanaLinkSoundManager.play(context, event)
     }
 
     // Gentle sound for sending your own messages

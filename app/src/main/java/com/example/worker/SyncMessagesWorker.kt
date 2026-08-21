@@ -20,6 +20,14 @@ class SyncMessagesWorker(
 
             if (allSynced) {
                 Log.i("SyncMessagesWorker", "Background sync completed successfully")
+                try {
+                    applicationContext.getSharedPreferences("panalink_prefs", Context.MODE_PRIVATE)
+                        .edit()
+                        .putLong(com.example.ui.settings.models.SettingsKeys.LAST_MESSAGES_SYNC_AT, System.currentTimeMillis())
+                        .apply()
+                } catch (e: Exception) {
+                    Log.w("SyncMessagesWorker", "Could not persist last sync timestamp", e)
+                }
                 Result.success()
             } else {
                 // IMPORTANT: never terminate the unique sync chain as FAILED.

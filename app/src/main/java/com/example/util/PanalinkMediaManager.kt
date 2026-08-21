@@ -206,8 +206,17 @@ object PanalinkMediaManager {
             try {
                 // 1. Generate and upload thumbnail if it's an Image or Video
                 if (typeLabel.equals("Image", ignoreCase = true)) {
-                    // Compress image first for the main file
-                    finalMediaFile = compressImage(mediaFile)
+                    // Compress image first for the main file. The "Storage center"
+                    // upload-quality setting controls resolution and JPEG quality.
+                    val qualityPref = try {
+                        context.getSharedPreferences("panalink_prefs", Context.MODE_PRIVATE)
+                            .getString(com.example.ui.settings.models.SettingsKeys.STORAGE_UPLOAD_QUALITY, "auto") ?: "auto"
+                    } catch (_: Exception) { "auto" }
+                    finalMediaFile = when (qualityPref) {
+                        "high" -> compressImage(mediaFile, maxDimension = 2560, quality = 95)
+                        "data_saver" -> compressImage(mediaFile, maxDimension = 1024, quality = 70)
+                        else -> compressImage(mediaFile)
+                    }
                     
                     val thumbFile = generateImageThumbnail(finalMediaFile)
                     if (thumbFile != null) {

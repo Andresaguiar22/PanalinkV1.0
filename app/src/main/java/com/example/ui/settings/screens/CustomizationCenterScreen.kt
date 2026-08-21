@@ -255,7 +255,7 @@ fun CustomizationCenterScreen(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text("Modo Minimalista Futurista 🌐", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                Text("UI ultra limpia sin textos superfluos en botones ni menús.", color = Color(0xFF90A4AE), fontSize = 11.sp, lineHeight = 14.sp)
+                                Text("La barra de navegación inferior muestra solo íconos, sin textos.", color = Color(0xFF90A4AE), fontSize = 11.sp, lineHeight = 14.sp)
                             }
                             Switch(
                                 checked = uiState.isMinimalistMode,

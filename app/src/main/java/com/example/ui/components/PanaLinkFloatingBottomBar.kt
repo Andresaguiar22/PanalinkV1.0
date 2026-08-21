@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
@@ -58,14 +59,20 @@ fun PanaLinkFloatingBottomBar(
     onPageSelected: (Int) -> Unit,
     totalUnreadCount: Int = 0
 ) {
-    val barShape = RoundedCornerShape(32.dp)
-    
-    // Gradient colors for the animated border
+    // Customization center presets (real, reactive): color palette + bar shape.
+    val colorPreset by com.example.ui.theme.ThemeManager.bottomBarColorPreset.collectAsState()
+    val shapePreset by com.example.ui.theme.ThemeManager.bottomBarShapePreset.collectAsState()
+    // Minimalist mode (real): icon-only bar, no text labels.
+    val isMinimalist by com.example.ui.theme.ThemeManager.isMinimalistMode.collectAsState()
+    val barShape = com.example.ui.theme.ThemeManager.getBottomBarShape(shapePreset)
+    val presetPalette = com.example.ui.theme.ThemeManager.getBottomBarColors(colorPreset)
+
+    // Gradient colors for the animated border (from the selected preset palette)
     val gradientColors = listOf(
-        Color(0xFF00E5FF), // Cyan
-        Color(0xFF7C4DFF), // Purple
-        Color(0x0000E5FF), // Transparent for gaps
-        Color(0xFF00E5FF)
+        presetPalette.first(),
+        presetPalette.getOrElse(1) { presetPalette.first() },
+        presetPalette.first().copy(alpha = 0f), // Transparent for gaps
+        presetPalette.first()
     )
 
     val infiniteTransition = rememberInfiniteTransition(label = "halo_transition")
@@ -108,7 +115,7 @@ fun PanaLinkFloatingBottomBar(
             .fillMaxWidth()
             .navigationBarsPadding()
             .padding(horizontal = 16.dp, vertical = 12.dp)
-            .shadow(elevation = 20.dp, shape = barShape, spotColor = Color(0xFF00E5FF).copy(alpha = 0.3f))
+            .shadow(elevation = 20.dp, shape = barShape, spotColor = presetPalette.first().copy(alpha = 0.3f))
             .background(Color.Transparent),
         contentAlignment = Alignment.Center
     ) {
@@ -128,7 +135,7 @@ fun PanaLinkFloatingBottomBar(
                     .drawBehind {
                         drawCircle(
                             brush = Brush.radialGradient(
-                                colors = listOf(Color(0xFF00E5FF).copy(alpha = 0.4f), Color.Transparent),
+                                colors = listOf(presetPalette.first().copy(alpha = 0.4f), Color.Transparent),
                                 center = Offset(animatedGlowX, size.height / 2),
                                 radius = size.height * 1.5f
                             ),
@@ -180,7 +187,7 @@ fun PanaLinkFloatingBottomBar(
                     val selected = currentPage == index
                     
                     val animatedWeight by animateFloatAsState(
-                        targetValue = if (selected) 1.8f else 1f,
+                        targetValue = if (selected && !isMinimalist) 1.8f else 1f,
                         animationSpec = spring(
                             dampingRatio = Spring.DampingRatioMediumBouncy,
                             stiffness = Spring.StiffnessLow
@@ -189,13 +196,13 @@ fun PanaLinkFloatingBottomBar(
                     )
                     
                     val animatedBgColor by animateColorAsState(
-                        targetValue = if (selected) Color(0xFF00E5FF).copy(alpha = 0.15f) else Color.Transparent,
+                        targetValue = if (selected) presetPalette.first().copy(alpha = 0.15f) else Color.Transparent,
                         animationSpec = tween(durationMillis = 350),
                         label = "tab_bg"
                     )
                     
                     val animatedBorderColor by animateColorAsState(
-                        targetValue = if (selected) Color(0xFF00E5FF).copy(alpha = 0.3f) else Color.Transparent,
+                        targetValue = if (selected) presetPalette.first().copy(alpha = 0.3f) else Color.Transparent,
                         animationSpec = tween(durationMillis = 350),
                         label = "tab_border"
                     )
@@ -260,7 +267,7 @@ fun PanaLinkFloatingBottomBar(
                             }
                             
                             AnimatedVisibility(
-                                visible = selected,
+                                visible = selected && !isMinimalist,
                                 enter = fadeIn(animationSpec = tween(200, delayMillis = 100)) + expandHorizontally(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)),
                                 exit = fadeOut(animationSpec = tween(150)) + shrinkHorizontally(animationSpec = spring(stiffness = Spring.StiffnessMediumLow))
                             ) {

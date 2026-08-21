@@ -35,7 +35,11 @@ class PresenceRepository(private val context: Context) {
         val uid = getCurrentUid()
         getPrefs().edit().putString(SettingsKeys.profilePresence(uid), status).apply()
         
-        // Broadcast presence via SupabaseClient if available
+        // Push the manual status into the real presence engine so the 30s
+        // heartbeat and DB persistence honor it immediately.
+        try {
+            com.example.data.repository.PresenceRepository.applyManualStatusFromSettings(status)
+        } catch (_: Exception) { }
         try {
             SupabaseClient.broadcastPresence(if (status == "invisible") "offline" else status)
         } catch (_: Exception) { }
@@ -52,10 +56,16 @@ class PresenceRepository(private val context: Context) {
         if (enabled) {
             getPrefs().edit().putString(SettingsKeys.profilePresence(uid), "invisible").apply()
             try {
+                com.example.data.repository.PresenceRepository.applyManualStatusFromSettings("invisible")
+            } catch (_: Exception) { }
+            try {
                 SupabaseClient.broadcastPresence("offline")
             } catch (_: Exception) { }
         } else {
             getPrefs().edit().putString(SettingsKeys.profilePresence(uid), "online").apply()
+            try {
+                com.example.data.repository.PresenceRepository.applyManualStatusFromSettings("online")
+            } catch (_: Exception) { }
             try {
                 SupabaseClient.broadcastPresence("online")
             } catch (_: Exception) { }

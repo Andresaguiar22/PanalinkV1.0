@@ -24,6 +24,12 @@ class OfflineMediaCacheWorker(
     }
 
     override suspend fun doWork(): Result {
+        // Storage center "auto-download" settings decide whether the warm-up
+        // runs on the current network type.
+        if (!isAutoDownloadAllowedNow()) {
+            Log.d("OfflineMediaCacheWorker", "Auto-download disabled for current network; skipping warm-up")
+            return Result.success()
+        }
         val dao = PanalinkDatabase.getDatabase(applicationContext).messageDao()
         var failures = 0
         var processed = 0
@@ -54,6 +60,28 @@ class OfflineMediaCacheWorker(
         } catch (t: Throwable) {
             Log.w("OfflineMediaCacheWorker", "Warm-up failed: ${t.message}")
             Result.retry()
+        }
+    }
+
+    /** Reads the Storage center prefs and checks the active network transport. */
+    private fun isAutoDownloadAllowedNow(): Boolean {
+        return try {
+            val prefs = applicationContext.getSharedPreferences("panalink_prefs", Context.MODE_PRIVATE)
+            val keys = com.example.ui.settings.models.SettingsKeys
+            val cm = applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+            val caps = cm.getNetworkCapabilities(cm.activeNetwork) ?: return false
+            when {
+                caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) ->
+                    prefs.getBoolean(keys.STORAGE_AUTO_DOWNLOAD_WIFI, true)
+                caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR) ->
+                    if (cm.isActiveNetworkMetered)
+                        prefs.getBoolean(keys.STORAGE_AUTO_DOWNLOAD_MOBILE, true)
+                    else
+                        true
+                else -> prefs.getBoolean(keys.STORAGE_AUTO_DOWNLOAD_WIFI, true)
+            }
+        } catch (t: Throwable) {
+            true
         }
     }
 

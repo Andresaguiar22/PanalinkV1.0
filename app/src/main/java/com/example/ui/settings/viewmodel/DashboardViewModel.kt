@@ -64,10 +64,11 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                 }
 
                 val securitySummaryStr = when {
-                    securityState.hasPin && securityState.is2FaEnabled -> "PIN activo • 2FA activado 🛡️"
-                    securityState.hasPin -> "PIN activo • 2FA desactivado"
-                    securityState.is2FaEnabled -> "2FA activado • Sin PIN"
-                    else -> "Protección básica sin PIN"
+                    securityState.hasPattern && securityState.isBiometricsEnabled -> "Patrón + Biometría activos 🛡️"
+                    securityState.hasPattern -> "Patrón de desbloqueo activo"
+                    securityState.hasPin && securityState.isBiometricsEnabled -> "PIN + Biometría activos 🛡️"
+                    securityState.hasPin -> "PIN de seguridad activo"
+                    else -> "Sin bloqueo de app ⚠️"
                 }
 
                 val storageSummaryStr = "${activityState.storageUsed} utilizados localmente"
@@ -82,7 +83,10 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                     activeDevicesCount = activityState.activeDevices.size,
                     isOnline = activityState.isOnline,
                     storageUsedSummary = activityState.storageUsed,
-                    appVersion = "2.0.0",
+                    appVersion = try {
+                        @Suppress("DEPRECATION")
+                        getApplication<android.app.Application>().packageManager.getPackageInfo(getApplication<android.app.Application>().packageName, 0).versionName ?: "1.0"
+                    } catch (e: Exception) { "1.0" },
                     hasPin = securityState.hasPin,
                     is2FaEnabled = securityState.is2FaEnabled,
                     messagesCount = activityState.messagesCount,
@@ -133,12 +137,22 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun deleteAccount(onComplete: () -> Unit) {
         viewModelScope.launch(Dispatchers.IO) {
+            val application = getApplication<Application>()
             val authManager = com.example.data.supabase.AuthManager()
             authManager.deleteAccount()
             try {
                 com.google.firebase.messaging.FirebaseMessaging.getInstance().unregister()
             } catch (e: Exception) {
                 android.util.Log.e("DashboardViewModel", "Failed to unregister FCM on deleteAccount", e)
+            }
+            // Real local wipe: Room tables, app prefs and caches so nothing
+            // personal survives on this device after the remote deletion.
+            try {
+                com.example.data.database.PanalinkDatabase.getDatabase(application).clearAllTables()
+                application.getSharedPreferences("panalink_prefs", android.content.Context.MODE_PRIVATE).edit().clear().apply()
+                application.cacheDir.deleteRecursively()
+            } catch (e: Exception) {
+                android.util.Log.w("DashboardViewModel", "Local wipe after deleteAccount failed", e)
             }
             kotlinx.coroutines.withContext(Dispatchers.Main) {
                 onComplete()

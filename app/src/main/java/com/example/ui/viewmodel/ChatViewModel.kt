@@ -204,11 +204,17 @@ private var chatJob: kotlinx.coroutines.Job? = null
         com.example.data.supabase.SupabaseClient.activeChatId = chatId
         com.example.data.supabase.SupabaseClient.isChatScreenActive = true
 
-        // Mark thread read & delivered
+        // Mark thread read & delivered.
+        // "Lectura Inteligente" OFF: no automatic read ack on open — read is only
+        // sent when the user replies. Local Room state still clears the badge.
         viewModelScope.launch {
             try {
                 messagesRepo.markThreadDelivered(chatId)
-                messagesRepo.markThreadRead(chatId)
+                if (isSmartReadEnabled()) {
+                    messagesRepo.markThreadRead(chatId)
+                } else {
+                    messagesRepo.markThreadReadLocally(chatId)
+                }
             } catch (e: Exception) {
                 Log.e("ChatViewModel", "Error marking thread read/delivered on load", e)
             }
@@ -350,11 +356,27 @@ private var chatJob: kotlinx.coroutines.Job? = null
         }
     }
 
+    /** True when "Lectura Inteligente" is enabled in the Privacy center. */
+    private fun isSmartReadEnabled(): Boolean {
+        return try {
+            val uid = com.example.data.supabase.SupabaseClient.currentUser?.id ?: "guest"
+            val prefs = com.example.PanaApplication.instance
+                .getSharedPreferences("panalink_prefs", android.content.Context.MODE_PRIVATE)
+            prefs.getBoolean("profile_smart_read_$uid", true)
+        } catch (e: Exception) {
+            true
+        }
+    }
+
     fun markMessagesAsRead(visibleIds: List<String>) {
         val chatId = currentChatId ?: return
         viewModelScope.launch {
             try {
-                messagesRepo.markThreadRead(chatId)
+                if (isSmartReadEnabled()) {
+                    messagesRepo.markThreadRead(chatId)
+                } else {
+                    messagesRepo.markThreadReadLocally(chatId)
+                }
             } catch (e: Exception) {
                 Log.e("ChatViewModel", "Error marking visible messages as read", e)
             }
@@ -405,6 +427,15 @@ private var chatJob: kotlinx.coroutines.Job? = null
         viewModelScope.launch {
             messagesRepo.sendMessage(chatId, text, replyToId = replyToId, receiverUid = otherId, isGhost = _isGhostMode.value)
             _inputMessage.value = ""
+            // Replying implicitly confirms reading: with "Lectura Inteligente" OFF
+            // this is the only moment the read ack is sent to the server.
+            if (!isSmartReadEnabled()) {
+                try {
+                    messagesRepo.markThreadRead(chatId)
+                } catch (e: Exception) {
+                    Log.e("ChatViewModel", "Error marking read on reply", e)
+                }
+            }
         }
     }
 

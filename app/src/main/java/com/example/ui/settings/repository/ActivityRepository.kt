@@ -37,11 +37,44 @@ class ActivityRepository(private val context: Context) {
             connectionStatus = connStatus,
             isOnline = isOnline,
             activeDevices = devices,
-            lastSynchronization = if (isOnline) "Al día" else "Pendiente de red",
-            dataUsageToday = formatBytes(cacheSizeBytes / 2 + 1024 * 512), // Estimate based on cache
+            lastSynchronization = formatLastSync(),
+            dataUsageToday = getRealDataUsage(),
             isLoading = false,
             errorMessage = null
         )
+    }
+
+    /** Real per-app network usage (rx+tx) since last device boot via TrafficStats. */
+    private fun getRealDataUsage(): String {
+        return try {
+            val uid = android.os.Process.myUid()
+            val rx = android.net.TrafficStats.getUidRxBytes(uid)
+            val tx = android.net.TrafficStats.getUidTxBytes(uid)
+            if (rx < 0 || tx < 0) return "No disponible"
+            formatBytes(rx + tx) + " desde el último reinicio"
+        } catch (e: Exception) {
+            "No disponible"
+        }
+    }
+
+    /** Real timestamp of the last successful messages sync (written by SyncMessagesWorker). */
+    private fun formatLastSync(): String {
+        return try {
+            val prefs = context.getSharedPreferences(
+                com.example.ui.settings.models.SettingsKeys.PREFS_NAME, android.content.Context.MODE_PRIVATE
+            )
+            val at = prefs.getLong(com.example.ui.settings.models.SettingsKeys.LAST_MESSAGES_SYNC_AT, 0L)
+            if (at <= 0L) return "Aún no sincronizado"
+            val diffMs = System.currentTimeMillis() - at
+            when {
+                diffMs < 60_000L -> "Ahora mismo"
+                diffMs < 3_600_000L -> "Hace ${diffMs / 60_000L} min"
+                diffMs < 86_400_000L -> "Hace ${diffMs / 3_600_000L} h"
+                else -> "Hace ${diffMs / 86_400_000L} días"
+            }
+        } catch (e: Exception) {
+            "Desconocida"
+        }
     }
 
     private fun getMessagesCount(): Long {
@@ -101,27 +134,17 @@ class ActivityRepository(private val context: Context) {
     }
 
     private fun getActiveDevices(): List<DeviceInfo> {
+        // Only the real current device is known locally; there is no multi-device
+        // session registry in the backend, so we do not fabricate entries.
         val currentDeviceName = "${Build.MANUFACTURER.replaceFirstChar { it.uppercase() }} ${Build.MODEL} (Este dispositivo)"
-        val current = DeviceInfo(
-            name = currentDeviceName,
-            lastActive = "Activo ahora",
-            isCurrent = true,
-            iconType = "smartphone"
-        )
-        val currentUser = SupabaseClient.currentUser
-        return if (currentUser != null) {
-            listOf(
-                current,
-                DeviceInfo(
-                    name = "PanaLink Web (Navegador)",
-                    lastActive = "Sesión activa",
-                    isCurrent = false,
-                    iconType = "computer"
-                )
+        return listOf(
+            DeviceInfo(
+                name = currentDeviceName,
+                lastActive = "Activo ahora",
+                isCurrent = true,
+                iconType = "smartphone"
             )
-        } else {
-            listOf(current)
-        }
+        )
     }
 
     private fun formatBytes(bytes: Long): String {

@@ -61,6 +61,40 @@ class SecurityViewModel(application: Application) : AndroidViewModel(application
                     )
                 }
             }
+            is SecurityAction.SetPattern -> {
+                if (action.pattern.size < 4) {
+                    _uiState.update {
+                        it.copy(errorMessage = "El patrón debe conectar al menos 4 puntos")
+                    }
+                    return
+                }
+                repository.savePattern(action.pattern)
+                _uiState.update {
+                    it.copy(
+                        hasPattern = true,
+                        isPatternDialogVisible = false,
+                        successMessage = "Patrón de desbloqueo configurado 🔐"
+                    )
+                }
+            }
+            is SecurityAction.RemovePattern -> {
+                repository.removePattern()
+                _uiState.update {
+                    it.copy(
+                        hasPattern = false,
+                        successMessage = "Patrón de desbloqueo eliminado"
+                    )
+                }
+            }
+            is SecurityAction.SetAutoLock -> {
+                repository.saveAutoLock(action.delayMs)
+                _uiState.update {
+                    it.copy(
+                        autoLockMs = action.delayMs,
+                        successMessage = "Bloqueo automático actualizado"
+                    )
+                }
+            }
             is SecurityAction.Toggle2Fa -> {
                 repository.save2Fa(action.enabled)
                 _uiState.update {
@@ -71,6 +105,18 @@ class SecurityViewModel(application: Application) : AndroidViewModel(application
                 }
             }
             is SecurityAction.ToggleBiometrics -> {
+                if (action.enabled && !_uiState.value.biometricsAvailable) {
+                    _uiState.update {
+                        it.copy(errorMessage = "Este dispositivo no tiene biometría configurada")
+                    }
+                    return
+                }
+                if (action.enabled && !_uiState.value.hasPin && !_uiState.value.hasPattern) {
+                    _uiState.update {
+                        it.copy(errorMessage = "Primero configura un PIN o patrón como respaldo")
+                    }
+                    return
+                }
                 repository.saveBiometrics(action.enabled)
                 _uiState.update {
                     it.copy(
@@ -81,6 +127,9 @@ class SecurityViewModel(application: Application) : AndroidViewModel(application
             }
             is SecurityAction.ShowPinDialog -> {
                 _uiState.update { it.copy(isPinDialogVisible = action.show) }
+            }
+            is SecurityAction.ShowPatternDialog -> {
+                _uiState.update { it.copy(isPatternDialogVisible = action.show) }
             }
             is SecurityAction.ShowQrDialog -> {
                 _uiState.update { it.copy(isQrDialogVisible = action.show) }

@@ -50,12 +50,15 @@ class CustomizationViewModel(application: Application) : AndroidViewModel(applic
             }
             is CustomizationAction.SetBottomBarColor -> {
                 _uiState.update { it.copy(bottomBarColorChoice = action.preset) }
+                // Live-apply so the bottom bar reacts instantly, not only after restart.
+                com.example.ui.theme.ThemeManager.bottomBarColorPreset.value = action.preset
                 viewModelScope.launch(Dispatchers.IO) {
                     repository.saveBottomBarPreset(action.preset, _uiState.value.bottomBarShapeChoice)
                 }
             }
             is CustomizationAction.SetBottomBarShape -> {
                 _uiState.update { it.copy(bottomBarShapeChoice = action.preset) }
+                com.example.ui.theme.ThemeManager.bottomBarShapePreset.value = action.preset
                 viewModelScope.launch(Dispatchers.IO) {
                     repository.saveBottomBarPreset(_uiState.value.bottomBarColorChoice, action.preset)
                 }
@@ -74,6 +77,7 @@ class CustomizationViewModel(application: Application) : AndroidViewModel(applic
             }
             is CustomizationAction.SetMinimalistMode -> {
                 _uiState.update { it.copy(isMinimalistMode = action.enabled) }
+                com.example.ui.theme.ThemeManager.isMinimalistMode.value = action.enabled
                 viewModelScope.launch(Dispatchers.IO) {
                     repository.saveMinimalistMode(action.enabled)
                 }

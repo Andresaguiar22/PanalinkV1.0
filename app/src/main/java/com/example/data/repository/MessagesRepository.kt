@@ -1889,8 +1889,18 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
         
         val isBlueTicksHidden = com.example.data.repository.PrivacyManager.isPremiumFeatureActive("hide_blue_ticks")
         val sendOnReply = com.example.data.repository.PrivacyManager.isPremiumFeatureActive("send_blue_tick_on_reply")
-        
-        if (isBlueTicksHidden || sendOnReply) {
+
+        // Free privacy toggle (Centro de Privacidad): if the user disabled read
+        // receipts we keep the local Room update but never ack the server.
+        val readReceiptsEnabled = try {
+            val ctx = com.example.PanaApplication.instance
+            val prefs = ctx.getSharedPreferences("panalink_prefs", android.content.Context.MODE_PRIVATE)
+            prefs.getBoolean("privacy_read_receipts_$currentUid", true)
+        } catch (e: Exception) {
+            true
+        }
+
+        if (isBlueTicksHidden || sendOnReply || !readReceiptsEnabled) {
             return@withContext Result.success(true)
         }
         if (!SupabaseClient.isConfigured) return@withContext Result.success(true)
@@ -1912,6 +1922,19 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
             Result.success(false)
         } catch (e: Exception) {
             Log.e(TAG, "Error marking thread read: ${e.localizedMessage}", e)
+            Result.failure(e)
+        }
+    }
+
+    /** Marks messages read ONLY in Room (clears badges) without notifying the server. */
+    suspend fun markThreadReadLocally(chatId: String): Result<Boolean> = withContext(Dispatchers.IO) {
+        val currentUid = SupabaseClient.currentUser?.id ?: ""
+        val nowStr = SupabaseClient.getNowIsoString()
+        try {
+            messageDao.markChatMessagesAsRead(chatId, currentUid, nowStr)
+            Result.success(true)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error updating local messages as read: ${e.localizedMessage}", e)
             Result.failure(e)
         }
     }

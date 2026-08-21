@@ -37,4 +37,13 @@ object SettingsKeys {
     fun securityPin(uid: String) = "security_pin_$uid"
     fun security2Fa(uid: String) = "security_2fa_$uid"
     fun securityBiometrics(uid: String) = "security_biometrics_$uid"
+    fun securityPattern(uid: String) = "security_pattern_$uid"
+    fun securityAutoLock(uid: String) = "security_autolock_$uid"
+
+    // Storage & data
+    const val STORAGE_AUTO_DOWNLOAD_MOBILE = "storage_auto_download_mobile"
+    const val STORAGE_AUTO_DOWNLOAD_WIFI = "storage_auto_download_wifi"
+    const val STORAGE_AUTO_DOWNLOAD_ROAMING = "storage_auto_download_roaming"
+    const val STORAGE_UPLOAD_QUALITY = "storage_upload_quality"
+    const val LAST_MESSAGES_SYNC_AT = "last_messages_sync_at"
 }

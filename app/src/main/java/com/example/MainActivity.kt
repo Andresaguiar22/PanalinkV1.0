@@ -59,7 +59,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 
 @UnstableApi
-class MainActivity : ComponentActivity() {
+class MainActivity : androidx.fragment.app.FragmentActivity() {
     private val currentIntentState = androidx.compose.runtime.mutableStateOf<Intent?>(null)
 
     override fun onNewIntent(intent: Intent) {
@@ -80,6 +80,24 @@ class MainActivity : ComponentActivity() {
                 android.util.Log.e("MainActivity", "Error during onResume session sync", e)
             }
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        try {
+            com.example.security.AppLockManager.onAppForegrounded(this)
+        } catch (e: Throwable) {
+            android.util.Log.e("MainActivity", "AppLock foreground check failed", e)
+        }
+    }
+
+    override fun onStop() {
+        try {
+            com.example.security.AppLockManager.onAppBackgrounded()
+        } catch (e: Throwable) {
+            android.util.Log.e("MainActivity", "AppLock background hook failed", e)
+        }
+        super.onStop()
     }
 
     override fun onUserLeaveHint() {
@@ -109,6 +127,11 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         val splashScreen = installSplashScreen()
         super.onCreate(savedInstanceState)
+        try {
+            com.example.security.AppLockManager.onAppLaunched(this)
+        } catch (e: Throwable) {
+            android.util.Log.e("MainActivity", "AppLock launch check failed", e)
+        }
         
         val authViewModel = androidx.lifecycle.ViewModelProvider(this)[com.example.ui.viewmodel.AuthViewModel::class.java]
         splashScreen.setKeepOnScreenCondition {
@@ -159,6 +182,7 @@ class MainActivity : ComponentActivity() {
 
         enableEdgeToEdge()
         setContent {
+            val isAppLocked by com.example.security.AppLockManager.isLocked.collectAsState()
             val activeThemeKey by com.example.ui.theme.ThemeManager.themeKey.collectAsState()
             val customPrimary by com.example.ui.theme.ThemeManager.customPrimary.collectAsState()
             val customBackground by com.example.ui.theme.ThemeManager.customBackground.collectAsState()
@@ -1111,6 +1135,11 @@ class MainActivity : ComponentActivity() {
                 }
                 }
             }
-        }
+        
+            // App Lock overlay: drawn last so it covers the whole UI when locked.
+            if (isAppLocked) {
+                com.example.ui.security.LockScreen()
+            }
+}
     }
 }
