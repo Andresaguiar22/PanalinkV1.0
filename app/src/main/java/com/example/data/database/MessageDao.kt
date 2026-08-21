@@ -187,10 +187,12 @@ interface MessageDao {
             else -> remote.status ?: local.status
         }
 
+        // Un evento remoto con contenido vacío (broadcast parcial, fila legacy
+        // sin text_content) nunca debe borrar el texto ya conocido localmente.
         val finalContent = if (local.editPending) {
             local.content
         } else {
-            remote.content ?: local.content
+            remote.content?.takeIf { it.isNotEmpty() } ?: local.content
         }
 
         val finalDeletedAt = if (local.deletePending) {

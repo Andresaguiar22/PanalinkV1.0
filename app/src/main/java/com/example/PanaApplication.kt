@@ -102,6 +102,13 @@ class PanaApplication : Application(), ImageLoaderFactory, DefaultLifecycleObser
             android.util.Log.e("PanaApplication", "FirebaseApp initialization failed safely", e)
         }
 
+        // Los canales deben existir desde el arranque: FCM los usa incluso con la app cerrada
+        try {
+            com.example.service.NotificationHelper.createNotificationChannels(this)
+        } catch (e: Throwable) {
+            android.util.Log.e("PanaApplication", "Notification channel creation failed safely", e)
+        }
+
         try {
             SessionManager.init(this)
             com.example.data.repository.CdnManager.init(this)

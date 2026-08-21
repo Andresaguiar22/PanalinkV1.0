@@ -717,9 +717,12 @@ object SupabaseClient {
                                     return@onMessage
                                 }
                                 val senderId = record.optString("sender_id", "")
+                                // Preferir text_content (columna real de thread_messages). Algunos eventos
+                                // (broadcasts parciales o filas legacy) traen "content" como null, y elegirlo
+                                // por sobre text_content vacía las burbujas.
                                 val content = when {
-                                    record.has("content") -> record.optString("content", "")
-                                    record.has("text_content") -> record.optString("text_content", "")
+                                    record.has("text_content") && !record.isNull("text_content") -> record.optString("text_content", "")
+                                    record.has("content") && !record.isNull("content") -> record.optString("content", "")
                                     else -> ""
                                 }
                                 val createdAt = record.optString("created_at", getNowIsoString())

@@ -63,3 +63,14 @@ To confirm Phase 1 success, the following metrics must be tracked and presented:
 4. Resumption time after app force close.
 5. Temp files generated vs. successfully cleaned up.
 6. Number of full-read `readBytes()` calls eliminated from the main UI thread.
+
+---
+
+## 🧠 Repo Knowledge (learned 2026-08-21)
+
+- **DB en vivo**: proyecto Supabase `tivqjfgjdxgzicrridaz`. `thread_messages.text_content` es la columna de texto (NO existe `content`). `social.user_stories` / `social.user_reels` viven en el esquema `social` (Realtime topics `realtime:social:*`); `audio_url` no existía (ver migración `20260821010000_social_stories_audio_url.sql`).
+- **Probar columnas sin JWT**: `GET /rest/v1/<tabla>?select=<col>` con anon key: `42501` = columna existe (RLS bloquea), `42703` = columna NO existe. `PGRST205` = tabla no existe en ese schema (probar header `Accept-Profile: social`).
+- **Room guarda contenido YA DESENCRIPTADO** de mensajes (collector realtime desencripta antes de merge). Nunca re-aplicar desencriptación al leer de Room: convierte texto plano en "[Mensaje cifrado]".
+- **Merge realtime**: un evento con `content` vacío nunca debe pisar contenido local no vacío (`MessageDao.mergeEntities`). El mapeo realtime debe preferir `text_content` sobre `content` y tratar JSON null como ausente.
+- **FCM app cerrada**: declarar `com.google.firebase.messaging.default_notification_channel_id` = `panalink_messages_v3` en el manifest y crear canales en `PanaApplication.onCreate`.
+- **Compilación**: el sandbox no tiene JDK ni Android SDK; verificar sintaxis a mano o instalar toolchain antes de `./gradlew`.

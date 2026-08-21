@@ -65,7 +65,8 @@ class MessagesRepository private constructor() {
             launch {
                 SupabaseClient.realtimeMessages.collect { msg ->
                     try {
-                        val decryptedMsg = com.example.util.CryptoManager.decryptMessageIfNeeded(msg)
+                        val repairedMsg = repairMessageContentIfNeeded(msg)
+                        val decryptedMsg = com.example.util.CryptoManager.decryptMessageIfNeeded(repairedMsg)
                         val effectiveClearedAt = getEffectiveClearedAt(decryptedMsg.chatId, null)
                         val shouldKeep = com.example.util.MessageFilter.shouldKeepMessage(
                             messageId = decryptedMsg.id,
@@ -83,6 +84,51 @@ class MessagesRepository private constructor() {
                     }
                 }
             }
+        }
+    }
+
+    /**
+     * Si un evento realtime llega sin texto ni multimedia (broadcast parcial o fila
+     * legacy sin text_content), consulta la fila completa al servidor para no
+     * persistir burbujas vacías en Room.
+     */
+    private suspend fun repairMessageContentIfNeeded(msg: Message): Message {
+        if (!msg.content.isNullOrEmpty() || !msg.mediaUrl.isNullOrEmpty()) return msg
+        if (!SupabaseClient.isConfigured) return msg
+        val service = SupabaseClient.apiService ?: return msg
+        return try {
+            val response = if (!msg.clientMessageUuid.isNullOrBlank()) {
+                runCall { auth ->
+                    service.getThreadMessageByClientUuid(
+                        apiKey = SupabaseClient.supabaseAnonKey,
+                        authorization = auth,
+                        clientUuidFilter = "eq.${msg.clientMessageUuid}"
+                    )
+                }
+            } else {
+                runCall { auth ->
+                    service.getThreadMessages(
+                        apiKey = SupabaseClient.supabaseAnonKey,
+                        authorization = auth,
+                        threadIdFilter = "eq.${msg.chatId}",
+                        createdAtFilter = "gte.${msg.createdAt}",
+                        limit = 1
+                    )
+                }
+            }
+            val fullMsg = response?.takeIf { it.isSuccessful }?.body()?.firstOrNull()?.toMessage()
+            if (fullMsg != null && (!fullMsg.content.isNullOrEmpty() || !fullMsg.mediaUrl.isNullOrEmpty())) {
+                fullMsg.copy(
+                    status = msg.status ?: fullMsg.status,
+                    deliveredAt = msg.deliveredAt ?: fullMsg.deliveredAt,
+                    seenAt = msg.seenAt ?: fullMsg.seenAt
+                )
+            } else {
+                msg
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "repairMessageContentIfNeeded failed for ${msg.id}", e)
+            msg
         }
     }
 
@@ -258,7 +304,7 @@ class MessagesRepository private constructor() {
         }
 
         val cachedEntities = messageDao.getMessagesForChatPaged(chatId, limit, oldestTimestamp)
-        var messagesList = decryptMessages(cachedEntities.map { it.toMessage() }.sortedBy { it.createdAt })
+        var messagesList = cachedEntities.map { it.toMessage() }.sortedBy { it.createdAt }
 
         val lastSync = lastSyncTimestamps[chatId] ?: 0L
         val now = System.currentTimeMillis()
@@ -281,7 +327,7 @@ class MessagesRepository private constructor() {
                 val demoList = SupabaseClient.demoMessages.filter { it.chatId == chatId }.sortedBy { it.createdAt }
                 val entities = demoList.map { MessageEntity.fromMessage(it) }
                 messageDao.insertOrMergeMessages(entities)
-                messagesList = decryptMessages(demoList.takeLast(limit))
+                messagesList = demoList.takeLast(limit)
             }
             return@withContext Result.success(messagesList)
         }
@@ -409,7 +455,7 @@ class MessagesRepository private constructor() {
                             deletedMessageIds = userDeletedIds
                         )
                     }
-                    return@withContext Result.success(decryptMessages(validLocal.map { it.toMessage() }.sortedBy { it.createdAt }))
+                    return@withContext Result.success(validLocal.map { it.toMessage() }.sortedBy { it.createdAt })
                 } else {
                     val errBody = response.errorBody()?.string() ?: "No error body"
                     Log.e(TAG, "🚨 getMessagesForChatPaged (thread_messages) FAILED: code=${response.code()}, error=$errBody")
@@ -470,7 +516,7 @@ class MessagesRepository private constructor() {
                             deletedMessageIds = userDeletedIds
                         )
                     }
-                    return@withContext Result.success(decryptMessages(validLocal.map { it.toMessage() }.sortedBy { it.createdAt }))
+                    return@withContext Result.success(validLocal.map { it.toMessage() }.sortedBy { it.createdAt })
                 } else {
                     val errBody = legacyResponse?.errorBody()?.string() ?: "No error body"
                     Log.e(TAG, "getMessagesForChatPaged (legacy messages) FAILED: code=${legacyResponse?.code()}, error=$errBody")
@@ -662,7 +708,7 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
 
     suspend fun getCachedMessages(chatId: String): List<Message> = withContext(Dispatchers.IO) {
         val entities = messageDao.getMessagesForChat(chatId)
-        decryptMessages(entities.map { it.toMessage() }.sortedBy { it.createdAt })
+        entities.map { it.toMessage() }.sortedBy { it.createdAt }
     }
 
     fun scheduleSync() {
@@ -1802,70 +1848,6 @@ suspend fun insertLocalMessage(msg: Message) = withContext(Dispatchers.IO) {
         }
     }
 
-    private suspend fun decryptMessages(messages: List<Message>): List<Message> {
-        if (messages.isEmpty() || !com.example.util.CryptoManager.ENABLE_E2EE) return messages
-
-        // Group messages by chatId to pre-fetch chat and profile details efficiently
-        val chatGroups = messages.groupBy { it.chatId }
-        val decryptedList = mutableListOf<Message>()
-
-        val currentUid = try { SupabaseClient.currentUser?.id ?: "" } catch (e: Throwable) { "" }
-
-        for ((chatId, groupMessages) in chatGroups) {
-            try {
-                // 1. Get chat details
-                val chatEntity = db.chatDao().getChatById(chatId)
-                val chatType = chatEntity?.type
-                val otherUserId = chatEntity?.otherUserId
-
-                // 2. Resolve other participant's public key
-                var otherPubKey: String? = null
-                if (!otherUserId.isNullOrEmpty()) {
-                    otherPubKey = com.example.util.CryptoManager.publicKeyCache[otherUserId]
-                    if (otherPubKey.isNullOrEmpty()) {
-                        // Pre-fetch using UserKeysRepository
-                        val fetchedKey = com.example.data.repository.UserKeysRepository.getPublicKeyForUser(otherUserId)
-                        if (!fetchedKey.isNullOrEmpty()) {
-                            otherPubKey = fetchedKey
-                        }
-                    }
-                }
-
-                // Decrypt each message using decryptMessagePure
-                for (msg in groupMessages) {
-                    var finalPubKey = otherPubKey
-                    // If msg sender is not me and not otherUserId, check that sender's key (e.g. group chats / community)
-                    if (msg.senderId != currentUid && msg.senderId.isNotEmpty() && msg.senderId != otherUserId) {
-                        val msgSenderId = msg.senderId
-                        var senderKey = com.example.util.CryptoManager.publicKeyCache[msgSenderId]
-                        if (senderKey.isNullOrEmpty()) {
-                            val fetchedKey = com.example.data.repository.UserKeysRepository.getPublicKeyForUser(msgSenderId)
-                            if (!fetchedKey.isNullOrEmpty()) {
-                                senderKey = fetchedKey
-                            }
-                        }
-                        if (!senderKey.isNullOrEmpty()) {
-                            finalPubKey = senderKey
-                        }
-                    }
-
-                    val decryptedMsg = com.example.util.CryptoManager.decryptMessagePure(msg, chatType, finalPubKey)
-                    decryptedList.add(decryptedMsg)
-                }
-
-            } catch (e: Exception) {
-                Log.e(TAG, "Error batch decrypting messages for chat $chatId: ${e.localizedMessage}", e)
-                // Fallback to individual decryption if anything goes wrong to ensure robustness (Cero Regresiones)
-                for (msg in groupMessages) {
-                    decryptedList.add(com.example.util.CryptoManager.decryptMessageIfNeeded(msg))
-                }
-            }
-        }
-
-        // Return messages sorted/positioned in their original order
-        val messageOrderMap = messages.withIndex().associate { it.value.id to it.index }
-        return decryptedList.sortedBy { messageOrderMap[it.id] ?: Int.MAX_VALUE }
-    }
 
     // Stream new messages from Supabase Realtime channel and insert into Room (ciphertext) and emit
 

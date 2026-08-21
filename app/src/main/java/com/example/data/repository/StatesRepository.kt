@@ -479,17 +479,30 @@ class StatesRepository {
                 )
                 service.createReel(apiKey, bearer, reelDto)
             } else {
+                // Filtrar nulos: claves ausentes evitan errores 42703 si una columna
+                // opcional aún no existe en el esquema remoto.
                 val stateMap = mutableMapOf<String, Any?>(
                     "id" to stateId,
                     "author_id" to currentUid,
                     "media_url" to mediaUrl,
-                    "audio_url" to audioUrl,
                     "media_type" to mediaType,
                     "caption" to caption,
                     "created_at" to nowStr,
                     "expires_at" to expiresAtStr
-                )
-                service.createStory(apiKey, bearer, stateMap)
+                ).filterValues { it != null }
+                if (audioUrl != null) {
+                    val withAudio = stateMap + ("audio_url" to audioUrl)
+                    val response = service.createStory(apiKey, bearer, withAudio)
+                    if (!response.isSuccessful && response.code() == 400) {
+                        // Columna audio_url no existe en el backend: reintentar sin ella
+                        Log.w(TAG, "createStory con audio_url falló (400). Reintentando sin audio_url")
+                        service.createStory(apiKey, bearer, stateMap)
+                    } else {
+                        response
+                    }
+                } else {
+                    service.createStory(apiKey, bearer, stateMap)
+                }
             }
 
             if (createResponse.isSuccessful) {
