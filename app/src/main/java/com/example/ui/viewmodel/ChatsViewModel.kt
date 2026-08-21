@@ -87,6 +87,16 @@ class ChatsViewModel(
                 }
             }
         }
+
+        // Recargar solicitudes de contacto apenas llegan cambios por Realtime
+        // (nueva solicitud recibida o solicitud enviada aceptada/rechazada)
+        viewModelScope.launch(exceptionHandler) {
+            com.example.data.supabase.SupabaseClient.realtimeFriendRequests.collect {
+                loadFriendRequests()
+                loadSentFriendRequests()
+                loadContacts(forceRefresh = true)
+            }
+        }
     }
 
     private val _chatsState = MutableStateFlow<ChatsUiState>(ChatsUiState.Loading)

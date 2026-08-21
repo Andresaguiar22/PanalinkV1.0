@@ -93,6 +93,10 @@ object SupabaseClient {
     private val _realtimeMessageDeletions = MutableSharedFlow<String>(extraBufferCapacity = 64)
     val realtimeMessageDeletions: SharedFlow<String> = _realtimeMessageDeletions
 
+    // Señal de cambios en friend_requests (solicitudes de contacto) para refrescar la UI en vivo
+    private val _realtimeFriendRequests = MutableSharedFlow<Unit>(extraBufferCapacity = 16)
+    val realtimeFriendRequests: SharedFlow<Unit> = _realtimeFriendRequests
+
     private val _realtimeStatuses = MutableSharedFlow<UserState>(extraBufferCapacity = 64)
     val realtimeStatuses: SharedFlow<UserState> = _realtimeStatuses
 
@@ -306,6 +310,30 @@ object SupabaseClient {
                     put("ref", "2")
                 }
                 webSocket.send(joinThreadMessages.toString())
+
+                // Join friend_requests channel (solicitudes de contacto en tiempo real)
+                val joinFriendRequests = JSONObject().apply {
+                    put("topic", "realtime:public:friend_requests")
+                    put("event", "phx_join")
+                    put("payload", JSONObject().apply {
+                        put("config", JSONObject().apply {
+                            val pgChanges = org.json.JSONArray().apply {
+                                put(JSONObject().apply {
+                                    put("event", "*")
+                                    put("schema", "public")
+                                    put("table", "friend_requests")
+                                })
+                            }
+                            put("postgres_changes", pgChanges)
+                        })
+                        if (!currentTokenLocal.isNullOrEmpty()) {
+                            put("user_token", currentTokenLocal)
+                            put("access_token", currentTokenLocal)
+                        }
+                    })
+                    put("ref", "friend_req_1")
+                }
+                webSocket.send(joinFriendRequests.toString())
 
                 // Join channel_messages channel
                 val joinChannelMessages = JSONObject().apply {
@@ -698,6 +726,16 @@ object SupabaseClient {
                                     clientScope.launch {
                                         Log.d(TAG, "Realtime notification received for user: $dto")
                                         _realtimeNotifications.emit(dto)
+                                    }
+                                }
+                            } else if (table == "friend_requests" || topic.contains("friend_requests")) {
+                                val senderId = record.optString("sender_id", "")
+                                val receiverId = record.optString("receiver_id", "")
+                                val currentUid = currentUser?.id ?: ""
+                                // Solo nos interesan los cambios donde participo yo
+                                if (senderId == currentUid || receiverId == currentUid) {
+                                    clientScope.launch {
+                                        _realtimeFriendRequests.emit(Unit)
                                     }
                                 }
                             } else if (table.startsWith("music_")) {
