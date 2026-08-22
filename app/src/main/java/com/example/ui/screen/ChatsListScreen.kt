@@ -249,7 +249,8 @@ fun ChatsListScreen(
     onNavigateToUserProfile: ((String) -> Unit)? = null,
     onNavigateToNotifications: () -> Unit = {},
     onNavigateToFavorites: () -> Unit = {},
-    onNavigateToMusic: () -> Unit = {}
+    onNavigateToMusic: () -> Unit = {},
+    onNavigateToVoiceRoom: () -> Unit = {}
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var selectedChatIds by remember { mutableStateOf(emptySet<String>()) }
@@ -1198,12 +1199,13 @@ fun ChatsListScreen(
                         }
                     }
 
-                    // Sala de voz (próximamente: audio rooms en vivo)
+                    // Sala de voz (modulo independiente com.example.rooms)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable {
-                                android.widget.Toast.makeText(context, "Salas de voz: próximamente 🎙️", android.widget.Toast.LENGTH_SHORT).show()
+                                showPlusBottomSheet = false
+                                onNavigateToVoiceRoom()
                             }
                             .padding(vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically
@@ -1223,10 +1225,10 @@ fun ChatsListScreen(
                         }
                         Box(
                             modifier = Modifier
-                                .background(Color(0xFFFFB300).copy(alpha = 0.15f), RoundedCornerShape(4.dp))
+                                .background(Color(0xFF4CAF50).copy(alpha = 0.15f), RoundedCornerShape(4.dp))
                                 .padding(horizontal = 6.dp, vertical = 2.dp)
                         ) {
-                            Text("Próximamente", color = Color(0xFFFFB300), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            Text("Beta", color = Color(0xFF4CAF50), fontSize = 10.sp, fontWeight = FontWeight.Bold)
                         }
                     }
 

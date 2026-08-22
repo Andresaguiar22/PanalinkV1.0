@@ -625,7 +625,15 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                                     },
                                     onNavigateToNotifications = { mainNavController.navigate("notifications") { launchSingleTop = true } },
                                     onNavigateToFavorites = { mainNavController.navigate("favorites") { launchSingleTop = true } },
-                                    onNavigateToMusic = { mainNavController.navigate("musicHome") { launchSingleTop = true } }
+                                    onNavigateToMusic = { mainNavController.navigate("musicHome") { launchSingleTop = true } },
+                                    onNavigateToVoiceRoom = { mainNavController.navigate("voiceRoom") { launchSingleTop = true } }
+                                )
+                            }
+
+                            // Sala de Voz (modulo independiente com.example.rooms)
+                            composable("voiceRoom") {
+                                com.example.rooms.ui.VoiceRoomScreen(
+                                    onBack = { mainNavController.popBackStack() }
                                 )
                             }
 
